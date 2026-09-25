@@ -68,3 +68,47 @@ relative to their volatility. Reported as a ratio, with no threshold.
 
 Anything short of 1–3 is reported as **not supported on this record**. It is
 not tuned, and not re-run with different parameters under this name.
+
+---
+
+## Result — run once, 2026-09-25, `notebooks/donchian_ensemble.py`
+
+*Appended after the run. Nothing above this line was changed.*
+
+The four registered trials and buy-and-hold were scored over the same 1,216
+days (2023-05-28 → 2026-09-24): from the first day the sized ensemble has a
+position, which is when 90 returns exist for its volatility.
+
+| trial | ticker | Sharpe, annual | total net | max drawdown |
+|---|---|---|---|---|
+| donchian sized | BTC | 0.97 | +52.5% | −15.0% |
+| donchian unsized | BTC | 0.96 | +102.6% | −20.1% |
+| buy and hold | BTC | 0.97 | +214.6% | −53.0% |
+| donchian sized | ETH | 0.72 | +30.4% | −14.0% |
+| donchian unsized | ETH | 0.58 | +50.8% | −34.0% |
+| buy and hold | ETH | 0.50 | +46.9% | −67.6% |
+
+**The registered criteria, for the sized ensemble on BTC:**
+1. DSR at N = 4: **0.921**. **Not met** (≥ 0.95). At N = 70 it is 0.824.
+2. Sharpe against buy-and-hold BTC: **0.966 against 0.975**. **Not met**, by 0.01.
+3. PBO by CSCV (16 blocks, five columns): **0.631**. **Not met** (< 0.5).
+
+**Verdict: not supported on this record.**
+
+**Grobys et al.'s claim, relative to each trial's own volatility:** sized
+BTC's worst day was −7.4 σ against −5.2 σ unsized, and its 1% expected
+shortfall −4.1 σ against −4.0 σ. For ETH: −4.9 σ against −5.7 σ, and −3.7 σ
+against −3.7 σ. The 1% shortfall is unchanged by sizing on both, relative to
+the risk taken, as they said. The worst day went the other way on each:
+worse sized on BTC, better sized on ETH. It is one day each, so it is read
+as noise.
+
+**Observed, not registered** (post hoc, so it tests nothing):
+- The ensemble cut the maximum drawdown to about a quarter of buy-and-hold's
+  on both perps, at the same or a better Sharpe.
+- On ETH, the sized ensemble's Sharpe (0.72) was above buy-and-hold's (0.50).
+
+These are what a trend filter is expected to do, but they are observations
+made after seeing the data. They could only become a test under a new
+registration, run on data after 2026-09-25. Funding was not charged, which
+flatters every long position here, the ensemble's included.

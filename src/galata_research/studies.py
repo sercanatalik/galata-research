@@ -60,6 +60,79 @@ def momentum(
     return pl.concat(frames)
 
 
+DONCHIAN_LOOKBACKS = (5, 10, 20, 30, 60, 90, 150, 250, 360)
+
+
+def donchian_ensemble(
+    bars: pl.LazyFrame | pl.DataFrame,
+    *,
+    lookbacks: Iterable[int] = DONCHIAN_LOOKBACKS,
+    target_vol: float = 0.25,
+    vol_window: int = 90,
+    max_leverage: float = 1.0,
+    periods_per_year: int = 365,
+    sized: bool = True,
+    fee: float = backtest.TAKER_FEE,
+) -> pl.DataFrame:
+    """Zarattini, Pagani and Barbon's Donchian ensemble, as pre-registered.
+
+    `planning/preregistered/donchian-ensemble.md` freezes these rules. Per
+    lookback L, at each close t, with `high`, `low` and `mid` taken over the
+    previous L closes (t is excluded):
+    1. if open and the close is below the stop set by earlier closes, close;
+    2. if flat and the close is above `high`, open, with the stop at `mid`;
+    3. if open, ratchet the stop to `max(stop, mid)`.
+    The signal is the fraction of lookbacks open. The position is the signal
+    times `min(max_leverage, target_vol / σ)`, with σ the annualised
+    deviation of the last `vol_window` returns, or the signal alone when
+    `sized=False`. Long-only. The position acts from the next bar.
+    """
+    lookbacks = list(lookbacks)
+    frame = bars.lazy().sort("ticker", "ts").collect()
+    positions = []
+    for (ticker,), group in frame.group_by("ticker", maintain_order=True):
+        closes = group["close"].to_list()
+        signal = _donchian_signal(closes, lookbacks)
+        if sized:
+            rets = [None] + [closes[i] / closes[i - 1] - 1 for i in range(1, len(closes))]
+            scale = []
+            for i in range(len(closes)):
+                window = rets[max(1, i - vol_window + 1) : i + 1]
+                if len(window) < vol_window:
+                    scale.append(None)
+                    continue
+                mean = sum(window) / len(window)
+                sd = (sum((r - mean) ** 2 for r in window) / (len(window) - 1)) ** 0.5 * periods_per_year**0.5
+                scale.append(min(max_leverage, target_vol / sd) if sd > 0 else max_leverage)
+            signal = [None if k is None else s * k for s, k in zip(signal, scale)]
+        positions.append(group.select("ticker", "ts").with_columns(pl.Series("_position", signal, dtype=pl.Float64)))
+    with_positions = frame.join(pl.concat(positions), on=["ticker", "ts"], how="left")
+    name = f"donchian {'sized' if sized else 'unsized'}"
+    return _trial(with_positions, pl.col("_position"), name, fee)
+
+
+def _donchian_signal(closes: list[float], lookbacks: list[int]) -> list[float]:
+    """The fraction of lookbacks open after each close, by the three registered steps."""
+    open_ = {L: False for L in lookbacks}
+    stop = {L: 0.0 for L in lookbacks}
+    out = []
+    for t, close in enumerate(closes):
+        for L in lookbacks:
+            if t < L:
+                continue
+            previous = closes[t - L : t]
+            high, low = max(previous), min(previous)
+            mid = (high + low) / 2
+            if open_[L] and close < stop[L]:
+                open_[L] = False
+            elif not open_[L] and close > high:
+                open_[L], stop[L] = True, mid
+            if open_[L]:
+                stop[L] = max(stop[L], mid)
+        out.append(sum(open_.values()) / len(lookbacks))
+    return out
+
+
 def summary(frame: pl.DataFrame, periods_per_year: float | None = None) -> pl.DataFrame:
     """One row per `(trial, ticker)`: per-period Sharpe, periods, skewness, raw kurtosis, turnover, total.
 

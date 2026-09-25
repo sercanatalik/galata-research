@@ -87,6 +87,16 @@ out-of-sample median **69%** of the time, with a degradation slope of −0.64.
 The first-half winner, `ma 10/20 long_flat` on BTC at a Sharpe of 2.00, earned
 −0.23 in the second half, ranking 58th of 66.
 
+## A pre-registered test
+
+`planning/preregistered/donchian-ensemble.md` froze the Donchian ensemble of
+Zarattini, Pagani and Barbon (SSRN 5209907) as four trials, and named what
+would count as support, before any code ran it. Run once, on BTC the sized
+ensemble had a DSR of 0.921 at N = 4, a Sharpe of 0.97 against buy-and-hold's
+0.97, and a PBO of 0.63: **not supported on this record.** Its drawdown was a
+quarter of buy-and-hold's, but that was observed after the fact, so it tests
+nothing. `notebooks/donchian_ensemble.py` reruns it.
+
 ## Running it
 
 ```bash
