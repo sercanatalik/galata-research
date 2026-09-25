@@ -159,6 +159,11 @@ how much is just being long.
 
 ![Against its random twins](assets/screenshots/random_timing.png)
 
+**The whole set.** White's Reality Check and Hansen's SPA over all 70 trials,
+at three block lengths, and the trials a search would pick.
+
+![Does anything in the set beat its benchmark?](assets/screenshots/whole_set.png)
+
 ---
 
 ## Quick start
@@ -222,7 +227,7 @@ Over the busiest BTC minute, 3,426 trades matched with a median staleness of
 
 ## Studies
 
-`gr.stats` (Sharpe, PSR, the expected maximum Sharpe, DSR, PBO, the permutation percentile),
+`gr.stats` (Sharpe, PSR, the expected maximum Sharpe, DSR, PBO, the permutation percentile, the stationary bootstrap, the Reality Check and SPA),
 `gr.backtest.returns` (next-bar, fees on turnover, holes not spanned,
 `modelled` on every row) and `gr.studies` (trial families that return every
 trial, so N is the true N) back these notebooks:
@@ -235,6 +240,7 @@ trial, so N is the true N) back these notebooks:
 | `overfitting.py` | does choosing on the past choose well? PBO 0.69 over 12,870 splits: **no** |
 | `donchian_ensemble.py` | the pre-registered test below |
 | `random_timing.py` | is it the timing, or just the exposure? Each trial against 1,000 twins with its own runs shuffled: **none beats its twins at 5%** |
+| `whole_set.py` | does *anything* in the set beat its benchmark? White's Reality Check and Hansen's SPA over 70 trials: **no**, against buy-and-hold (p ≈ 0.7) or cash (p ≥ 0.07) |
 
 **A pre-registered test.** `planning/preregistered/donchian-ensemble.md` froze
 the Donchian ensemble of Zarattini, Pagani and Barbon (SSRN 5209907) as four
@@ -321,6 +327,7 @@ uv run marimo check notebooks/*.py     # every notebook, as CI runs it
 | Statistics: DSR and PBO, pinned to their papers; example studies | done |
 | A pre-registered test of a published strategy | done: not supported |
 | A random-timing baseline, matched on exposure, for every study | done: none beats its twins at 5% |
+| White's Reality Check and Hansen's SPA over the whole set | done: nothing beats buy-and-hold or cash at 5% |
 | My fills, funding payments and transfers | waiting for the account to trade; the ledger records them since 2026-09-25 |
 | Charging funding in backtests | blocked on a deeper settled-funding walk in galata-datawatch |
 | A typed projection of the ledger, so fills need no second decoder | proposed for galata-datawatch |

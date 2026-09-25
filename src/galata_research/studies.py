@@ -251,6 +251,21 @@ def matrix(frame: pl.DataFrame) -> pl.DataFrame:
     )
 
 
+def excess(frame: pl.DataFrame, benchmark: str) -> pl.DataFrame:
+    """Every `(trial, ticker)` minus the `benchmark` trial on the same ticker and day, on the shared calendar.
+
+    `benchmark="cash"` is zero: the matrix itself.
+    """
+    grid = matrix(frame)
+    if benchmark == "cash":
+        return grid
+    columns = [c for c in grid.columns if c != "ts" and not c.startswith(f"{benchmark} | ")]
+    missing = sorted({c.rsplit(" | ", 1)[1] for c in columns} - {c.rsplit(" | ", 1)[1] for c in grid.columns if c.startswith(f"{benchmark} | ")})
+    if missing:
+        raise ValueError(f"no {benchmark!r} trial for {', '.join(missing)}")
+    return grid.select("ts", *[(pl.col(c) - pl.col(f"{benchmark} | {c.rsplit(' | ', 1)[1]}")).alias(c) for c in columns])
+
+
 def _trial(bars, position: pl.Expr, name: str, fee: float) -> pl.DataFrame:
     r = backtest.returns(bars, position, fee=fee)
     return r.select(pl.lit(name).alias("trial"), "ticker", "ts", "position", "bar_return", "gross", "net")

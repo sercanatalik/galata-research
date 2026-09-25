@@ -190,3 +190,98 @@ def pbo(matrix: pl.DataFrame, *, blocks: int = 16) -> dict:
         "dropped": dropped,
         "trials": n_cols,
     }
+
+
+def stationary_bootstrap_indices(n: int, block: float, rng) -> list[int]:
+    """Politis and Romano's (1994) stationary bootstrap: blocks of geometric length, mean `block`.
+
+    Each index continues the last one (wrapping at `n`) with probability
+    `1 − 1/block`, and otherwise starts a new block at a uniform position.
+    """
+    if n < 1 or block < 1:
+        raise Refused(f"n={n}, block={block}: a stationary bootstrap needs n ≥ 1 and block ≥ 1")
+    p = 1.0 / block
+    out = [rng.randrange(n)]
+    for _ in range(n - 1):
+        out.append(rng.randrange(n) if rng.random() < p else (out[-1] + 1) % n)
+    return out
+
+
+def reality_check(excess: pl.DataFrame, *, reps: int = 1000, block: float | None = None, seed: int = 0) -> dict:
+    """White's Reality Check (2000) and Hansen's SPA (2005): does any column beat its benchmark?
+
+    `excess` is T × K per-period returns minus each column's benchmark
+    (higher is better; a `ts` column is ignored). The null is that no column
+    beats its benchmark on average, after searching all K.
+    - **Reality Check:** `max_k √T d̄_k`, against the stationary bootstrap of
+      `max_k √T (d̄*_k − d̄_k)`. Not studentized; this is arch's `upper`.
+    - **SPA:** Hansen's studentized `max(max_k √T d̄_k / ω̂_k, 0)`, recentred
+      `lower` (max(d̄, 0)), `consistent` (d̄ where it is above
+      −√(ω̂²/T · 2 log log T), else 0) or `upper` (d̄). Then
+      p_lower ≤ p_consistent ≤ p_upper.
+    ω̂² is the stationary-bootstrap variance of √T d̄ (Politis and Romano),
+    as in arch. `block` defaults to √T, as in arch. p-values count
+    replicates at or above the statistic.
+    """
+    import random
+    from math import log
+
+    frame = excess.drop("ts") if "ts" in excess.columns else excess
+    columns = frame.columns
+    t = frame.height
+    if not columns:
+        raise Refused("the excess matrix has no columns")
+    nulls = [c for c in columns if frame[c].null_count()]
+    if nulls:
+        raise Refused(f"the excess matrix has nulls in {', '.join(nulls[:5])}; align it first (studies.excess)")
+    if t < 10:
+        raise Refused(f"{t} rows are too few to bootstrap")
+    frame = frame.select(pl.all().cast(pl.Float64))
+    block = block if block is not None else int(sqrt(t))
+    means = frame.mean().row(0)
+
+    demeaned = frame.select([(pl.col(c) - m).alias(c) for c, m in zip(columns, means)])
+    p = 1.0 / block
+    variance = [v / t for v in (demeaned.select(pl.all().pow(2)).sum().row(0))]
+    for i in range(1, t):
+        kappa = (1 - i / t) * (1 - p) ** i + (i / t) * (1 - p) ** (t - i)
+        if kappa < 1e-12:
+            continue
+        lagged = (demeaned.head(t - i) * demeaned.tail(t - i)).sum().row(0)
+        variance = [v + 2 * kappa * x / t for v, x in zip(variance, lagged)]
+    flat = [c for c, v in zip(columns, variance) if v <= 0]
+    if flat:
+        raise Refused(f"no variation in {', '.join(flat[:5])}; a constant excess cannot be studentized")
+    omega = [sqrt(v) for v in variance]
+    root = sqrt(t)
+
+    threshold = [-sqrt(v / t * 2 * log(log(t))) for v in variance]
+    centres = {
+        "lower": [max(m, 0.0) for m in means],
+        "consistent": [m if m >= th else 0.0 for m, th in zip(means, threshold)],
+        "upper": list(means),
+    }
+    rc_stat = max(root * m for m in means)
+    spa_stat = max(max(root * m / w for m, w in zip(means, omega)), 0.0)
+
+    rng = random.Random(seed)
+    rc_hits, spa_hits = 0, {name: 0 for name in centres}
+    for _ in range(reps):
+        star = frame[stationary_bootstrap_indices(t, block, rng)].mean().row(0)
+        if max(root * (s - m) for s, m in zip(star, means)) >= rc_stat:
+            rc_hits += 1
+        for name, mu in centres.items():
+            if max(max(root * (s - c) / w for s, c, w in zip(star, mu, omega)), 0.0) >= spa_stat:
+                spa_hits[name] += 1
+
+    best = max(range(len(columns)), key=lambda k: means[k] / omega[k])
+    return {
+        "reality_check": rc_hits / reps,
+        "spa": {name: hits / reps for name, hits in spa_hits.items()},
+        "best": columns[best],
+        "columns": pl.DataFrame({"column": columns, "mean": means, "omega": omega, "t": [root * m / w for m, w in zip(means, omega)]}),
+        "block": block,
+        "reps": reps,
+        "seed": seed,
+        "rows": t,
+    }

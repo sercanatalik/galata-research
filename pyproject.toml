@@ -17,7 +17,11 @@ dependencies = [
 ]
 
 [dependency-groups]
-dev = ["pytest>=8"]
+dev = [
+    "pytest>=8",
+    # Only to cross-check the Reality Check against a reference; the library itself stays free of numpy.
+    "arch>=8",
+]
 
 [build-system]
 requires = ["hatchling"]
