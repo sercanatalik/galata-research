@@ -8,7 +8,7 @@ from galata_research import Refused, market
 DAY = utc("2026-09-25T00:00"), utc("2026-09-26T00:00")
 
 
-def masked_trades(tape, **kwargs) -> pl.DataFrame:
+def _masked_trades(tape, **kwargs) -> pl.DataFrame:
     return gr.mask_gaps(market.trades("BTC", *DAY), "trades", **kwargs).collect()
 
 
@@ -43,7 +43,7 @@ def a_replayed_trade_inside_a_gap_is_marked(tape):
     tape.trade("BTC", "2026-09-25T10:05:00", "2026-09-25T10:05:00.3", "after")
     tape.gap("BTC", "trades", "2026-09-25T10:00", "2026-09-25T10:01")
     tape.write()
-    got = masked_trades(tape)
+    got = _masked_trades(tape)
     assert got.select("trade_id", "in_gap", "gap_cause").rows() == [("replayed", True, "downtime"), ("after", False, None)]
 
 
@@ -86,7 +86,7 @@ def a_row_inside_two_overlapping_gaps_is_marked_once(tape):
     tape.gap("BTC", "trades", "2026-09-25T10:00", "2026-09-25T12:00", cause="downtime")
     tape.gap("BTC", "trades", "2026-09-25T10:30", "2026-09-25T11:00", cause="crash_unflushed")
     tape.write()
-    got = masked_trades(tape)
+    got = _masked_trades(tape)
     assert got.select("in_gap", "gap_cause").rows() == [(True, "crash_unflushed,downtime")]
 
 
@@ -95,7 +95,7 @@ def no_row_is_dropped_by_the_mask(tape):
         tape.trade("BTC", f"2026-09-25T10:0{minute}:30", f"2026-09-25T10:0{minute}:31", str(minute))
     tape.gap("BTC", "trades", "2026-09-25T10:02", "2026-09-25T10:05")
     tape.write()
-    got = masked_trades(tape)
+    got = _masked_trades(tape)
     assert got.drop("in_gap", "gap_cause").equals(market.trades("BTC", *DAY).collect())
     assert got["in_gap"].sum() == 3
 

@@ -13,10 +13,10 @@ clock and the cast are applied once, here, so a notebook never reads a
 re-fetched bar twice or a bar's open as its close.
 """
 
-from . import account, market
+from . import account, backtest, market, stats, studies
 from ._errors import Refused
 from ._frontier import frontier
 from .clocks import join_recv
 from .gaps import mask_gaps
 
-__all__ = ["Refused", "account", "frontier", "join_recv", "market", "mask_gaps"]
+__all__ = ["Refused", "account", "backtest", "frontier", "join_recv", "market", "mask_gaps", "stats", "studies"]

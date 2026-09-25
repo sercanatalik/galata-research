@@ -108,7 +108,7 @@ def a_mark_from_before_a_gap_is_not_carried_across_it(tape):
     assert gr.join_recv(trades, marks, tolerance=None).collect()["mark_recv"].to_list() == [99.0]
 
 
-def two_venue_timed_frames_are_refused(tape):
+def a_second_venue_timed_frame_is_refused(tape):
     tape.trade("BTC", "2026-09-25T10:00", "2026-09-25T10:00:00.3", "1").write()
     trades = market.trades("BTC", *DAY)
     with pytest.raises(Refused, match="right has ts, a venue clock"):

@@ -67,6 +67,18 @@ gr.frontier()
 | 5 · snapshots ✓ | the account half, decoded from the ledger |
 | 6 · fills | my fills, once datawatch records them |
 
+## Example studies
+
+`notebooks/moving_average.py`, `notebooks/momentum.py` and
+`notebooks/deflated_sharpe.py` show the method end to end: a position decided
+at a close earns the next bar (`gr.backtest`), each family hands back every
+trial (`gr.studies`), and the best is deflated by all of them (`gr.stats`,
+pinned to Bailey and López de Prado's own example). On the record today,
+the best of 66 daily trials, `ma 5/100 long_flat` on BTC, has an annual
+Sharpe of 1.08 against 0.84 expected from luck, for a DSR of 0.67: **not
+significant**. Figures are modelled, taker fees are charged, and funding is
+not (the record holds days of it).
+
 ## Running it
 
 ```bash
