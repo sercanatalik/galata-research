@@ -67,10 +67,9 @@ def _(benchmark, mo, pl, stats, studies, trials):
     excess = studies.excess(trials, benchmark.value)
     root = int(excess.height**0.5)
     runs = []
-    for mult in (0.5, 1, 2):
-        block = max(1, int(mult * root))
+    for block in (max(1, int(0.5 * root)), root, 2 * root, "auto"):
         r = stats.reality_check(excess, reps=1000, block=block, seed=0)
-        runs.append({"block": block, "reality_check": r["reality_check"], **{f"spa_{k}": v for k, v in r["spa"].items()}, "best": r["best"]})
+        runs.append({"choice": "Politis–White (auto)" if block == "auto" else f"{block / root:.1f} × √T", "block": float(r["block"]), "reality_check": r["reality_check"], **{f"spa_{k}": v for k, v in r["spa"].items()}, "best": r["best"]})
     table = pl.DataFrame(runs)
     main = stats.reality_check(excess, reps=1000, seed=0)
     worst = max(main["spa"]["consistent"], main["reality_check"])
@@ -86,7 +85,7 @@ def _(benchmark, mo, pl, stats, studies, trials):
                 justify="start",
             ),
             mo.md("**Nothing in the set beats its benchmark at 5%.**" if worst > 0.05 else "**At least one trial beats its benchmark at 5%.**"),
-            mo.md("The same test at half, one and two times the default block (√T): a verdict that flips with the block is not a verdict."),
+            mo.md("The same test at half, one and two times the default block (√T), and at the block the data chooses (Politis and White, 2004, corrected 2009; the median of the columns' blocks). A verdict that flips with the block is not a verdict."),
             table,
         ]
     )
