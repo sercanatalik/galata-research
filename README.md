@@ -34,6 +34,7 @@ a person.
 
 - [Where it fits in Galata](#where-it-fits-in-galata)
 - [Features](#features)
+- [Screenshots](#screenshots)
 - [Quick start](#quick-start)
 - [The library](#the-library)
 - [Two clocks](#two-clocks)
@@ -113,6 +114,44 @@ The full framework architecture and roadmap are in the
   frame.
 - **polars by default, DuckDB on request.** The rules exist once, in polars
   expressions. `engine="duckdb"` runs DuckDB over their output.
+
+---
+
+## Screenshots
+
+The marimo notebooks, run on the record as it stood on 2026-09-25.
+
+**Candles.** How far each dataset goes, coverage per ticker, closes placed at
+each bar's close, and an `as_of` slider where a bar appears only once it has
+closed.
+
+![Candles](assets/screenshots/candles.png)
+
+**Two clocks.** Every BTC trade in the busiest minute, with the mark, oracle
+and mid received by its time, and funding settled, live and at its premium,
+each on its own clock and broken where capture was down.
+
+![Two clocks](assets/screenshots/clocks.png)
+
+**Moving-average crossover.** A Sharpe landscape across fast × slow, and the
+best trial's growth, gross and net of fees.
+
+![Moving-average crossover](assets/screenshots/moving_average.png)
+
+**The Deflated Sharpe Ratio.** The best of 66 trials against what luck would
+give, and how the verdict moves with N.
+
+![The Deflated Sharpe Ratio](assets/screenshots/deflated_sharpe.png)
+
+**Overfitting.** PBO over 12,870 splits, the logit distribution, performance
+degradation, and one hold-out.
+
+![Probability of Backtest Overfitting](assets/screenshots/overfitting.png)
+
+**A pre-registered test.** The Donchian ensemble run once against the criteria
+frozen before it: the trials, growth, the verdict and the tails.
+
+![The pre-registered Donchian ensemble](assets/screenshots/donchian_ensemble.png)
 
 ---
 

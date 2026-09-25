@@ -73,11 +73,23 @@ def _(EVER, alt, gr, mo, pl):
         .collect()
         .select(pl.col("recv_ts").alias("at"), "rate", pl.lit("premium, hourly mean (recv_ts)").alias("series"))
     )
-    rates = pl.concat([settled, live, premium])
+    # A line is broken wherever two points are more than two hours apart, so a
+    # capture outage shows as a hole, not as a flat line nobody received.
+    rates = (
+        pl.concat([settled, live, premium])
+        .sort("series", "at")
+        .with_columns(
+            ((pl.col("at") - pl.col("at").shift(1).over("series")) > pl.duration(hours=2))
+            .fill_null(False)
+            .cum_sum()
+            .over("series")
+            .alias("stretch")
+        )
+    )
     funding_chart = (
         alt.Chart(rates)
         .mark_line(interpolate="step-after", point=True, strokeWidth=1)
-        .encode(x=alt.X("at:T", title="time (each series on its own clock)"), y="rate:Q", color="series:N")
+        .encode(x=alt.X("at:T", title="time (each series on its own clock)"), y="rate:Q", color="series:N", detail="stretch:N")
         .properties(height=240, width="container")
     )
     mo.vstack(

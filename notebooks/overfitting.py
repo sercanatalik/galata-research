@@ -95,14 +95,23 @@ def _(blocks, grid, mo, stats, time):
 
 
 @app.cell
-def _(alt, mo, result):
+def _(alt, mo, pl, result):
+    # Binned here, not in the browser: 12,870 rows would be 10 MB of chart data.
+    width = 0.1
+    binned = (
+        result["combinations"]
+        .select(((pl.col("logit") / width).floor() * width).alias("logit"))
+        .group_by("logit")
+        .len("splits")
+        .sort("logit")
+    )
     logits = (
-        alt.Chart(result["combinations"])
-        .mark_bar()
-        .encode(x=alt.X("logit:Q", bin=alt.Bin(maxbins=40), title="λ, the in-sample winner's out-of-sample logit"), y="count():Q")
+        alt.Chart(binned)
+        .mark_bar(width=6)
+        .encode(x=alt.X("logit:Q", title="λ, the in-sample winner's out-of-sample logit"), y="splits:Q")
         .properties(height=200, width="container")
     )
-    zero = alt.Chart(result["combinations"].head(1)).mark_rule(strokeDash=[4, 4]).encode(x=alt.datum(0))
+    zero = alt.Chart(binned.head(1)).mark_rule(strokeDash=[4, 4]).encode(x=alt.datum(0))
     mo.vstack([mo.md("## The logit distribution: left of the dashed line is overfit"), logits + zero])
     return
 
