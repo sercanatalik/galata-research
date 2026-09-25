@@ -79,6 +79,14 @@ Sharpe of 1.08 against 0.84 expected from luck, for a DSR of 0.67: **not
 significant**. Figures are modelled, taker fees are charged, and funding is
 not (the record holds days of it).
 
+`notebooks/overfitting.py` asks the sharper question, the **Probability of
+Backtest Overfitting** by combinatorially symmetric cross-validation
+(`gr.stats.pbo`). Over 12,870 splits of the shared daily calendar, the
+in-sample winner of the same 66 trials finished at or below the
+out-of-sample median **69%** of the time, with a degradation slope of −0.64.
+The first-half winner, `ma 10/20 long_flat` on BTC at a Sharpe of 2.00, earned
+−0.23 in the second half, ranking 58th of 66.
+
 ## Running it
 
 ```bash

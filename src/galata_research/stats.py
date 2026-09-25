@@ -101,3 +101,86 @@ def deflate(summary: pl.DataFrame) -> dict:
 def _series(returns) -> pl.Series:
     s = returns if isinstance(returns, pl.Series) else pl.Series(list(returns), dtype=pl.Float64)
     return s.drop_nulls().cast(pl.Float64)
+
+
+def pbo(matrix: pl.DataFrame, *, blocks: int = 16) -> dict:
+    """The Probability of Backtest Overfitting, by combinatorially symmetric cross-validation.
+
+    Bailey, Borwein, López de Prado and Zhu, "The Probability of Backtest
+    Overfitting", *Journal of Computational Finance*, 2017, §2.2 steps a–g.
+    `matrix` is T × N per-period returns on a shared calendar (a `ts` column
+    is ignored), with no nulls: `studies.matrix` builds one. Rows are split
+    into `blocks` equal blocks, the remainder dropped from the start so that
+    the latest data is kept. Every choice of `blocks/2` blocks is a training
+    set, and its complement the test set. The training winner's test rank,
+    as a logit, says whether choosing on the past chose well. PBO is the
+    share at or below zero: at or under the median out of sample.
+    """
+    from itertools import combinations
+    from math import comb, log
+
+    frame = matrix.drop("ts") if "ts" in matrix.columns else matrix
+    columns = frame.columns
+    if blocks < 2 or blocks % 2:
+        raise Refused(f"blocks={blocks}: CSCV needs an even number of blocks, at least 2")
+    if len(columns) < 2:
+        raise Refused(f"{len(columns)} column(s): overfitting is a statement about choosing among at least 2")
+    nulls = [c for c in columns if frame[c].null_count()]
+    if nulls:
+        raise Refused(f"the matrix has nulls in {', '.join(nulls[:5])}{' …' if len(nulls) > 5 else ''}; align it first (studies.matrix)")
+    if frame.height < 2 * blocks:
+        raise Refused(f"{frame.height} rows cannot fill {blocks} blocks of at least 2")
+
+    dropped = frame.height % blocks
+    frame = frame.slice(dropped)
+    size = frame.height // blocks
+    cols = [frame[c].cast(pl.Float64).to_list() for c in columns]
+    # Per block and column: the sum and the sum of squares. A set's Sharpe is
+    # pooled from its blocks' sums, so no combination re-reads a return.
+    sums = [[sum(col[b * size : (b + 1) * size]) for col in cols] for b in range(blocks)]
+    squares = [[sum(x * x for x in col[b * size : (b + 1) * size]) for col in cols] for b in range(blocks)]
+    total_s = [sum(v) for v in zip(*sums)]
+    total_q = [sum(v) for v in zip(*squares)]
+    half = blocks // 2
+    n = size * half
+    n_cols = len(columns)
+
+    def sharpe_of(s: list[float], q: list[float]) -> list[float | None]:
+        out = []
+        for sj, qj in zip(s, q):
+            var = (qj - sj * sj / n) / (n - 1)
+            out.append(sj / n / sqrt(var) if var > 1e-18 else None)
+        return out
+
+    rows = []
+    for index, train in enumerate(combinations(range(blocks), half)):
+        train_s = [sum(v) for v in zip(*(sums[b] for b in train))]
+        train_q = [sum(v) for v in zip(*(squares[b] for b in train))]
+        is_sr = sharpe_of(train_s, train_q)
+        oos_sr = sharpe_of([t - x for t, x in zip(total_s, train_s)], [t - x for t, x in zip(total_q, train_q)])
+        # The training winner: the highest Sharpe, the first column on a tie; no Sharpe ranks lowest.
+        best = max(range(n_cols), key=lambda j: (float("-inf") if is_sr[j] is None else is_sr[j], -j))
+        v = float("-inf") if oos_sr[best] is None else oos_sr[best]
+        test = [float("-inf") if x is None else x for x in oos_sr]
+        # Rank 1 is the worst; ties take their average rank.
+        rank = sum(x < v for x in test) + (sum(x == v for x in test) + 1) / 2
+        omega = rank / (n_cols + 1)
+        rows.append({"combination": index, "best": columns[best], "is_sharpe": is_sr[best], "oos_sharpe": oos_sr[best], "rank": rank, "logit": log(omega / (1 - omega))})
+
+    table = pl.DataFrame(rows)
+    assert table.height == comb(blocks, half)
+    paired = table.drop_nulls(["is_sharpe", "oos_sharpe"])
+    slope = None
+    if paired.height > 1 and paired["is_sharpe"].var() > 0:
+        slope = float(paired.select(pl.cov("is_sharpe", "oos_sharpe")).item() / paired["is_sharpe"].var())
+    return {
+        # At or below zero: exactly the median is not outperforming it.
+        "pbo": float((table["logit"] <= 0).mean()),
+        "prob_loss": float((paired["oos_sharpe"] < 0).mean()) if paired.height else None,
+        "slope": slope,
+        "combinations": table,
+        "blocks": blocks,
+        "rows_per_block": size,
+        "dropped": dropped,
+        "trials": n_cols,
+    }

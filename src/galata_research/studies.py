@@ -87,6 +87,22 @@ def summary(frame: pl.DataFrame, periods_per_year: float | None = None) -> pl.Da
     return out
 
 
+def matrix(frame: pl.DataFrame) -> pl.DataFrame:
+    """Every `(trial, ticker)` as a column, `"<trial> | <ticker>"`, on `ts`, where all have a net return.
+
+    PBO compares strategies over the same periods, so a warm-up, or a day
+    one trial has no return for, is dropped for all of them rather than
+    filled.
+    """
+    return (
+        frame.drop_nulls("net")
+        .with_columns(pl.concat_str("trial", pl.lit(" | "), "ticker").alias("_column"))
+        .pivot(on="_column", index="ts", values="net", aggregate_function=None)
+        .sort("ts")
+        .drop_nulls()
+    )
+
+
 def _trial(bars, position: pl.Expr, name: str, fee: float) -> pl.DataFrame:
     r = backtest.returns(bars, position, fee=fee)
     return r.select(pl.lit(name).alias("trial"), "ticker", "ts", "position", "gross", "net")
