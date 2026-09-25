@@ -133,6 +133,81 @@ def _donchian_signal(closes: list[float], lookbacks: list[int]) -> list[float]:
     return out
 
 
+RANDOM_TIMING_NULL = "runs shuffled, exposure-matched (Masters MCP)"
+
+
+def random_timing(
+    trials: pl.DataFrame,
+    *,
+    samples: int = 1000,
+    seed: int = 0,
+    fee: float = backtest.TAKER_FEE,
+) -> pl.DataFrame:
+    """Each trial against its own random twins: the same runs of position, in a random order.
+
+    Per `(trial, ticker)`, the held positions (bars with a return only) are
+    cut into maximal runs of one position, and the runs are shuffled.
+    Trade count, holding times, side mix and exposure match exactly, so the
+    twin earns the same drift from being long, and only the timing is
+    random. Each shuffle is replayed over the same bar returns with the same
+    fee on turnover. Sample k uses `Random(f"{seed}:{trial}:{ticker}:{k}")`.
+    `percentile` is `(1 + #{twin ≥ observed}) / (samples + 1)`: small is
+    better than chance.
+    """
+    import random
+
+    from . import stats
+
+    rows = []
+    for (trial, ticker), group in trials.sort("ts").group_by("trial", "ticker", maintain_order=True):
+        kept = group.drop_nulls(["position", "bar_return"])
+        positions, returns = kept["position"].to_list(), kept["bar_return"].to_list()
+        runs = _runs(positions)
+        observed = stats.sharpe(_replay(positions, returns, fee))
+        twins = []
+        for k in range(samples):
+            order = runs[:]
+            random.Random(f"{seed}:{trial}:{ticker}:{k}").shuffle(order)
+            path = [value for value, length in order for _ in range(length)]
+            twins.append(stats.sharpe(_replay(path, returns, fee)))
+        scored = sorted(t for t in twins if t is not None)
+        rows.append(
+            {
+                "trial": trial,
+                "ticker": ticker,
+                "observed": observed,
+                "percentile": None if observed is None else stats.percentile(observed, scored),
+                "random_median": scored[len(scored) // 2] if scored else None,
+                "random_p95": scored[int(0.95 * (len(scored) - 1))] if scored else None,
+                "samples": samples,
+                "runs": len(runs),
+                "seed": seed,
+                "null": RANDOM_TIMING_NULL,
+            }
+        )
+    return pl.DataFrame(rows)
+
+
+def _runs(positions: list[float]) -> list[tuple[float, int]]:
+    """Maximal stretches of one position, as (position, length)."""
+    runs: list[tuple[float, int]] = []
+    for p in positions:
+        if runs and runs[-1][0] == p:
+            runs[-1] = (p, runs[-1][1] + 1)
+        else:
+            runs.append((p, 1))
+    return runs
+
+
+def _replay(positions: list[float], returns: list[float], fee: float) -> list[float]:
+    """Net returns of a position path over bar returns: position × return − fee × turnover."""
+    out, previous = [], 0.0
+    for p, r in zip(positions, returns):
+        out.append(p * r - fee * abs(p - previous))
+        previous = p
+    return out
+
+
 def summary(frame: pl.DataFrame, periods_per_year: float | None = None) -> pl.DataFrame:
     """One row per `(trial, ticker)`: per-period Sharpe, periods, skewness, raw kurtosis, turnover, total.
 
@@ -178,4 +253,4 @@ def matrix(frame: pl.DataFrame) -> pl.DataFrame:
 
 def _trial(bars, position: pl.Expr, name: str, fee: float) -> pl.DataFrame:
     r = backtest.returns(bars, position, fee=fee)
-    return r.select(pl.lit(name).alias("trial"), "ticker", "ts", "position", "gross", "net")
+    return r.select(pl.lit(name).alias("trial"), "ticker", "ts", "position", "bar_return", "gross", "net")

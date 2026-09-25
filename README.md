@@ -153,6 +153,12 @@ frozen before it: the trials, growth, the verdict and the tails.
 
 ![The pre-registered Donchian ensemble](assets/screenshots/donchian_ensemble.png)
 
+**Against its random twins.** Each trial's own runs of position shuffled into
+1,000 random orders over the same bars: how much of a Sharpe is timing, and
+how much is just being long.
+
+![Against its random twins](assets/screenshots/random_timing.png)
+
 ---
 
 ## Quick start
@@ -216,7 +222,7 @@ Over the busiest BTC minute, 3,426 trades matched with a median staleness of
 
 ## Studies
 
-`gr.stats` (Sharpe, PSR, the expected maximum Sharpe, DSR, PBO),
+`gr.stats` (Sharpe, PSR, the expected maximum Sharpe, DSR, PBO, the permutation percentile),
 `gr.backtest.returns` (next-bar, fees on turnover, holes not spanned,
 `modelled` on every row) and `gr.studies` (trial families that return every
 trial, so N is the true N) back these notebooks:
@@ -228,6 +234,7 @@ trial, so N is the true N) back these notebooks:
 | `deflated_sharpe.py` | does the best of 66 trials beat what luck would give? DSR 0.67 daily: **no** |
 | `overfitting.py` | does choosing on the past choose well? PBO 0.69 over 12,870 splits: **no** |
 | `donchian_ensemble.py` | the pre-registered test below |
+| `random_timing.py` | is it the timing, or just the exposure? Each trial against 1,000 twins with its own runs shuffled: **none beats its twins at 5%** |
 
 **A pre-registered test.** `planning/preregistered/donchian-ensemble.md` froze
 the Donchian ensemble of Zarattini, Pagani and Barbon (SSRN 5209907) as four
@@ -313,6 +320,7 @@ uv run marimo check notebooks/*.py     # every notebook, as CI runs it
 | Two clocks: settled and live funding, marks, `join_recv` | done |
 | Statistics: DSR and PBO, pinned to their papers; example studies | done |
 | A pre-registered test of a published strategy | done: not supported |
+| A random-timing baseline, matched on exposure, for every study | done: none beats its twins at 5% |
 | My fills, funding payments and transfers | waiting for the account to trade; the ledger records them since 2026-09-25 |
 | Charging funding in backtests | blocked on a deeper settled-funding walk in galata-datawatch |
 | A typed projection of the ledger, so fills need no second decoder | proposed for galata-datawatch |

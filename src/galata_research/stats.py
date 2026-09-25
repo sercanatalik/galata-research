@@ -72,6 +72,12 @@ def dsr(sr: float, periods: int, skew: float, kurt: float, trials: int, variance
     return psr(sr, periods, skew, kurt, benchmark=expected_max_sharpe(trials, variance))
 
 
+def percentile(observed: float, randoms) -> float:
+    """`(1 + #{r ≥ observed}) / (N + 1)`: the permutation p-value of `observed` among `randoms` (nulls ignored)."""
+    draws = [r for r in randoms if r is not None]
+    return (1 + sum(r >= observed for r in draws)) / (len(draws) + 1)
+
+
 def deflate(summary: pl.DataFrame) -> dict:
     """The best trial of `summary` (one row per trial: sharpe, periods, skew, kurt), deflated by all of them.
 

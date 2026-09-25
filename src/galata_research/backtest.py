@@ -21,7 +21,8 @@ def returns(bars: pl.LazyFrame | pl.DataFrame, position: pl.Expr, *, fee: float 
     `bars` are candles from `gr.market.candles` (closed, one row per bar).
     `position` is an expression over them, using only data up to each bar's
     close, and is evaluated per ticker. Columns: `ticker, ts, close_ts,
-    position, gross, cost, net, modelled, funding_charged`.
+    position, bar_return, gross, cost, net, modelled, funding_charged`;
+    `bar_return` is the close-to-close return the held position earned.
     """
     if fee < 0:
         raise Refused(f"fee={fee} is negative")
@@ -46,12 +47,13 @@ def returns(bars: pl.LazyFrame | pl.DataFrame, position: pl.Expr, *, fee: float 
         .with_columns(
             pl.when(pl.col("_next")).then(pl.col("_held") * pl.col("_ret")).alias("gross"),
             pl.when(pl.col("_next")).then(pl.col("_turn") * fee).alias("cost"),
+            pl.when(pl.col("_next")).then(pl.col("_ret")).alias("bar_return"),
         )
         .with_columns(
             (pl.col("gross") - pl.col("cost")).alias("net"),
             pl.lit(True).alias("modelled"),
             pl.lit(False).alias("funding_charged"),
         )
-        .select("ticker", "ts", "close_ts", pl.col("_held").alias("position"), "gross", "cost", "net", "modelled", "funding_charged")
+        .select("ticker", "ts", "close_ts", pl.col("_held").alias("position"), "bar_return", "gross", "cost", "net", "modelled", "funding_charged")
         .collect()
     )
