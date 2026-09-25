@@ -1,0 +1,21 @@
+/target
+
+# The run store and any local copy of the record. A study's rows are data,
+# not source, and they are measured in the same hundreds of megabytes.
+/var
+
+# The maintainer's local tooling, as in galata-datawatch.
+/.claude/
+/openspec/
+
+# Visual-check evidence the chart tool writes beside the chart: screenshots
+# and receipts regenerated on demand, not the chart itself.
+/design/charts/*.visual-check.*
+
+# No token is ever tracked.
+*.gvt
+*.gvkit
+
+.DS_Store
+/py/.venv/
+__pycache__/
