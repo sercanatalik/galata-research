@@ -1,87 +1,68 @@
 # galata-research
 
-**Research and replay for Galata: find out whether a strategy is worth trading
-before building the thing that trades it.**
+**Galata's Python research environment: the record galata-datawatch keeps,
+loaded as polars or DuckDB, explored in marimo.**
 
 > **Status: designed, not proposed.** No code yet. Argued in
 > [`planning/galata-research.md`](planning/galata-research.md); the mechanism is
-> [`design/galata-research.md`](design/galata-research.md), with its chart
-> [`design/charts/galata-research.html`](design/charts/galata-research.html).
+> [`design/galata-research.md`](design/galata-research.md).
 > Next: the OpenSpec changes the design lists, in order.
 
 ## Where it fits in Galata
 
-Galata is a low-latency algorithmic trading framework in Rust: multi-venue
-market data capture, signal generation, deterministic portfolio risk
-controls, and agentic strategy execution driven by a fine-tuned decision
-model. Research is the second layer. It reads the record that
-[galata-datawatch](https://github.com/sercanatalik/galata-datawatch) keeps,
-and it comes **before** the trading half. Three earlier rewrites built
-trading first and deferred research, and two of them never got back to it.
+Galata is a low-latency algorithmic trading framework: multi-venue market data
+capture, signal generation, deterministic portfolio risk controls, and agentic
+strategy execution. Research reads the record that
+[galata-datawatch](https://github.com/sercanatalik/galata-datawatch) keeps. It
+never captures, and it never talks to a venue.
 
 ```text
-  galata-datawatch   the record and the tape          built
-  galata-research    replay, fills, runs, verdicts     ← this
-  signals · risk · decision model · execution         planned
+  galata-datawatch   capture · archive · tape · ledger      built
+  galata-research    load · explore · study                 ← this
+  signals · risk · decision model · execution               planned
 ```
 
 ## What it will provide
 
-- **Point-in-time replay.** A strategy is handed events in order by a virtual
-  clock and only ever sees what that clock has reached. The host's lookbacks
-  use a view of the tape *as it stood at time T*
-  ([`bound-the-replay`](https://github.com/sercanatalik/galata-datawatch/blob/main/planning/bound-the-replay.md),
-  planned in galata-datawatch).
-- **One strategy seam, shared with live.** A backtest that runs a different
-  implementation from the live one measures that other implementation.
-- **One fill model**, pessimistic by default: queue position defaults to the
-  back of the queue, funding is charged, liquidation is simulated, and every
-  figure it produces is labelled *modelled*.
-- **A run manifest**: study, trial, and selection recorded as an event, with
-  a hash per row. Failed and pruned trials count toward N, because the
-  Deflated Sharpe Ratio needs the true N.
-- **Coverage and gaps as reported figures.** Data coverage, not the harness,
-  was the binding constraint every time before.
+- **A Python library** that loads market data (candles, quotes, trades,
+  funding, marks, gaps) and **my own fills, per venue**, as a polars
+  `LazyFrame` by default or a DuckDB relation on request.
+- **The full series**, from the oldest walked bar to the tape's frontier,
+  with `gr.frontier()` saying how far each dataset is durable.
+- **Exact time.** `at_micros`, the venue's time, is the one time axis, as
+  `ts`. A candle is known at `close_ts`, not its open. Data with no venue time
+  (marks, the live funding rate) is on a second, named clock, `recv_ts`, and is
+  joined to `ts` only explicitly.
+- **The record's semantics, applied once**: re-fetched candles and replayed
+  trades deduped, trade-less bars filtered, settled and live funding split,
+  gaps marked, never interpolated. Decimals become `f64` on load.
+- **marimo notebooks**, one per question, over the library.
 
-Rust runs the strategies, because the seam is shared with live. Python and
-polars judge the results: PBO, Deflated Sharpe, the stationary bootstrap.
+## A first surface
 
-## Roadmap: the first cut
+```python
+import galata_research as gr
+
+gr.market.candles(["BTC", "ETH"], "4h", start, end, as_of=t)   # pl.LazyFrame
+gr.market.trades(["BTC"], start, end, engine="duckdb")          # duckdb relation
+gr.market.marks(["BTC"], start, end)                            # recv_ts, not ts
+gr.account.fills("main", "hyperliquid", start, end)             # after datawatch Tier 13
+gr.frontier()
+```
+
+## Roadmap
 
 | Step | Scope |
 |---|---|
-| 0 · history | walk candles and funding back as far as each venue serves; report coverage and holes per instrument before any strategy runs |
-| 1 · the seam | a `Strategy` trait, a virtual clock, and a hashed decision log with no prices in it |
-| 2 · fills | the one `FillModel`, every parameter swept; a parameter whose range fits inside one observation interval is reported as unmeasurable |
-| 3 · runs | the study/trial manifest and its storage |
-| 4 · first runs | score against random agents first, then permute the lookback, then the trend family |
-
-## The line it holds
-
-**It reports a landscape; it never deploys.** A research result reaches a
-live configuration only through a person. Selecting a winner is a timed event
-in the run store, never an overwrite, and nothing here gates, sizes or
-retires anything live.
-
-## Settled in planning (2026-09-25)
-
-- **The seam** is a shared `galata-strategy` crate: `evaluate(now, inputs) ->
-  Book`, where strategies return **views in units of R** (never sizes) and
-  receive **declared measures**, handed by the host from one pure measures
-  library shared with live. The clock is the cadence grid.
-- **History is measured, and leaving.** The venue serves ~5,000 bars per
-  interval on a rolling window, and datawatch keeps only `1m`. Keeping `1h`,
-  `4h` and `1d` (`walk-the-coarse-candles`, in galata-datawatch) is step 0.
-  Daily bars before 2023-02-26 carry no trades and are filtered out of every
-  run.
-- **Runs** live in `galata-segments` under their own root, not in the
-  deletable scheduler store or beside the tape, which is a cache.
-- **Data** is the mainnet record, so the first execution a verdict points at
-  is a paper venue on mainnet quotes, sharing this fill model.
-
-Still open: a view with two legs (funding carry).
+| 1 · candles | the package, the record's root, the loader pipeline, candles, `frontier()` |
+| 2 · ticks | quotes and trades |
+| 3 · two clocks | settled funding, live funding, marks, `join_recv` |
+| 4 · gaps | `gaps` and `mask_gaps` |
+| 5 · snapshots | the account half, decoded from the ledger |
+| 6 · fills | my fills, once datawatch records them |
 
 ## Depends on
 
-`galata-wire`, `galata-segments` and the tape schema, published with
-galata-datawatch 0.1.0.
+The tape and ledger layouts of galata-datawatch, read as Parquet from its
+`var/` (`GALATA_VAR`). No Rust crate is linked. Python ≥ 3.11, uv, polars,
+duckdb, marimo.

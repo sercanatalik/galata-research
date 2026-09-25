@@ -1,14 +1,15 @@
-/target
-
-# The run store and any local copy of the record. A study's rows are data,
-# not source, and they are measured in the same hundreds of megabytes.
+# Any local copy of the record. It is data, not source, and it is measured
+# in hundreds of megabytes.
 /var
+
+# marimo's per-notebook state and exports.
+__marimo__/
 
 # The maintainer's local tooling, as in galata-datawatch.
 /.claude/
 /openspec/
 
-# Visual-check evidence the chart tool writes beside the chart: screenshots
+# Visual-check evidence the chart tool writes beside a chart: screenshots
 # and receipts regenerated on demand, not the chart itself.
 /design/charts/*.visual-check.*
 
@@ -17,5 +18,5 @@
 *.gvkit
 
 .DS_Store
-/py/.venv/
+/.venv/
 __pycache__/

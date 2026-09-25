@@ -1,0 +1,33 @@
+# galata-research: the record galata-datawatch keeps, loaded as polars or
+# DuckDB, explored in marimo. It reads the record and links no Rust crate.
+
+[project]
+name = "galata-research"
+version = "0.1.0"
+description = "Galata's research environment over the galata-datawatch record"
+requires-python = ">=3.11"
+dependencies = [
+    "polars>=1.21",
+    "duckdb>=1.1",
+    "pyarrow>=17",
+    "marimo>=0.9",
+    "altair>=5",
+]
+
+[dependency-groups]
+dev = ["pytest>=8"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/galata_research"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# Tests are named after the claim they defend, as in galata-datawatch's
+# py/pyproject.toml, so pytest collects them by that shape.
+python_files = ["*.py"]
+python_functions = ["a_*", "an_*", "the_*", "every_*", "no_*"]
+markers = ["record: reads the real record under the resolved root; skipped when it is absent"]

@@ -1,225 +1,175 @@
 # galata-research — design
 
 *The mechanism behind [`planning/galata-research.md`](../planning/galata-research.md),
-which argues for it and settles its four questions. Chart:
-[`charts/galata-research.html`](charts/galata-research.html), with its source
-[`charts/galata-research.architecture.json`](charts/galata-research.architecture.json).
-Written 2026-09-25. Nothing here is proposed yet; the OpenSpec changes it
-implies are listed at the end, in order.*
+which argues for it. Rewritten 2026-09-25 for the redesign: a Python research
+environment, not a backtest harness. The chart is to be redrawn. Nothing here
+is proposed yet; the OpenSpec changes it implies are listed at the end, in
+order.*
 
 ```
-  record + tape ──in order──▶ replay host ──bars──▶ measures ──held/absent──▶ strategy
-        │                          ▲                                      ▲       │
-        └──────▶ view as of T ─────┘ lookbacks            live host ─ ─ ─┘       │ Book
-                 (bound-the-replay)                        (later, same seam)      ▼
-  a person ◀──landscape── judge ◀──all N── run store ◀──trips── fill model ◀─ ─ random agents
-                          (polars)         (var/research)        │  (one)        (matched exposure)
-                                                                  └ ─ ─▶ paper venue (later, same model)
+  ../galata-datawatch/var            galata_research                         you
+  ───────────────────────            ───────────────                         ───
+  tape/kind=<k>/date=<d>/*.parquet ─▶ scan ─▶ rules ─▶ cast ─▶ clock ─┬─▶ pl.LazyFrame  ─▶ marimo
+  ledger/venue=/account=/kind=/…  ─▶ decode ─┘                        └─▶ duckdb relation
+                 │
+                 └─ segment names ─▶ frontier()   (a listing, no decode)
 ```
 
 ---
 
-## The run, end to end
+## One loader, end to end
 
-A **study** is a declared question: one strategy family, a parameter space, a
-window, a market set, and a sample split. A **trial** is one point of that
-space, run over the window. A trial is this, and only this:
+Every `gr.market.*` and `gr.account.*` call is the same five steps. Only the
+rules differ per dataset.
 
-1. **The replay host** reads the record's candles for the declared markets
-   and widths, filtered to `trade_count > 0` (the filter is written into the
-   study). It deduplicates on `(ticker, interval, at_micros)`, keeping the
-   final bar: the tape holds a re-fetched bar more than once, by design.
-2. **The virtual clock is the cadence grid.** The host steps through `due`
-   positions (`start + k × cadence`). At each one it has handed the strategy
-   everything up to `due` and nothing after. **An overrun skips and never
-   queues** (galata-legacy's runner), so a backtest reproduces the live rule
-   exactly.
-3. **The measures library** turns the bars up to `due` into each declared
-   measure, `held(value)` or `absent(reason)`: *not enough bars*, *a gap in
-   the window*, *trade-less bars*. A strategy that declared nothing gets
-   nothing; one that reads an undeclared measure fails to compile, not to run.
-4. **The strategy** evaluates: `evaluate(&mut self, due, &Inputs) -> Book`.
-   The book is complete over its declared markets, and each market's view is
-   `Held { facing, conviction, ratio, entry, protect } | Flat | Absent`.
-5. **The fill model** turns the sequence of books into **modelled trips**. It
-   enters by `entry`, exits by `protect` (stop, trail, take) or by the next
-   `Flat`, and charges fees and funding, each in R.
-6. **The run store** appends the trial row and its per-period return series.
-   The trial counter is the store's own sequence.
+1. **Scan.** `pl.scan_parquet` over `kind=<k>/date=<d>/*.parquet`, with
+   `hive_partitioning=True`. Only the `date=` directories the window touches
+   are listed. `date` is the event's venue-time day, or its receipt day when
+   it has no venue time. A rule that needs the rest of the record (candle
+   closure: is there a later bar?) reads the columns it needs from every
+   segment, not a widened window.
+2. **Rules.** The dataset's dedupe and filters (below), as polars
+   expressions, before anything is collected.
+3. **Cast.** Every `DECIMAL(38,18)` column becomes `Float64`, once, here.
+   Integers stay integers: `trade_count`, `stream_seq`, `*_micros`.
+4. **Clock.** `at_micros` becomes `ts: Datetime("us", "UTC")`. Candles gain
+   `close_ts = ts + interval`. Datasets without a venue time get `recv_ts`
+   instead, and **no `ts` column at all**, so a join on `ts` fails to resolve
+   rather than joining the wrong clock.
+5. **Bound.** `start ≤ ts < end`, then `as_of`: `ts ≤ as_of`, or
+   `close_ts ≤ as_of` for candles.
 
-The **judge** reads the store after the study is sealed. The **person** reads
-the judge.
+The result is a `pl.LazyFrame`. `engine="duckdb"` hands the same lazy plan to
+DuckDB (`duckdb.from_arrow` over its streamed batches), so **the rules exist
+once, in polars**, and DuckDB is a place to run SQL over their output, not a
+second implementation of them.
 
-## The components
+## The rules, per dataset
 
-### `galata-strategy` (new crate, shared with live)
+| dataset | clock | dedupe | default filters |
+|---|---|---|---|
+| `candles` | `ts` (open) · `close_ts` | `(venue, ticker, interval, at_micros)`, latest `recv_micros` | `is_final`; `trade_count > 0` (`traded_only`) |
+| `quotes` | `ts` | none: each is a distinct top of book | — |
+| `trades` | `ts` | `(venue, ticker, trade_id)`, first receipt | — |
+| `funding` | `ts` | `(venue, ticker, at_micros)` | rows **with** `at_micros`: settled |
+| `funding_live` | `recv_ts` | consecutive identical rows collapsed | rows **without** `at_micros`: predicted |
+| `marks` | `recv_ts` | consecutive identical rows collapsed | — |
+| `gaps` | `from_ts`, `to_ts` | none | — |
 
-The trading vocabulary `galata-wire` left behind, plus the seam. It depends on
-`galata-wire` only.
+Each default is an argument, so it can be turned off, and a turned-off
+default is visible in the call. The measurements that chose them are in the
+planning file's table.
 
-```rust
-pub trait Algo {
-    /// What this algo needs and how often, checked before the first evaluate.
-    fn declares(&self) -> Declaration;
-    /// One cadence position. `due` is the virtual or live clock; the algo reads no other.
-    fn evaluate(&mut self, due_micros: i64, inputs: &Inputs<'_>) -> Book;
-}
+**Why the latest receipt for candles:** a bar is re-fetched by the history
+walk and pushed live, and the latest receipt of a final bar is the venue's
+last word on it. **Why the first receipt for trades:** a replayed execution
+is the same execution, and its first receipt is when it was first known.
 
-pub struct Declaration {
-    pub markets: Vec<Market>,
-    pub measures: Vec<MeasureDecl>,    // e.g. range(high/low, 20 bars, 1d)
-    pub cadence_micros: i64,           // the grid
-    pub warm_up_micros: i64,           // finite; checked by the Divergence harness
-}
-
-pub enum View {
-    Held { facing: Facing, conviction: Unit, ratio: RMultiple, entry: Entry, protect: Protect },
-    Flat { reason: String },
-    Absent { reason: String },
-}
-```
-
-`Inputs` holds the declared measures by `(market, measure)`, each `held` or
-`absent(reason)`, and nothing else: no positions, no fills, no other
-algo's views. Carried from galata-legacy `crates/algo/src/seam.rs:166` and
-`crates/wire/src/trading.rs`, with two departures. **No history accessor in
-the first cut**: slow-tier lookbacks are measures, so the strategy never holds
-a reader at all. **No `StatisticsHanded`**: σ and ρ are the allocator's, and
-there is no allocator here.
-
-**Two proofs of determinism, both in the crate:**
-- `conform(build, positions)`: a continuous instance against one warmed over
-  `warm_up` only, position by position, returning `Divergence { at, market,
-  continuous, warmed }` on the first disagreement (vade `spotter/src/replay.rs`,
-  galata-legacy `conformance.rs`). It proves the declared warm-up is enough.
-- **A decision log**: each position's `(due, market, view)` with **no prices
-  in it**, hashed with sha256 per trial (vade-trader `lab/src/rig.rs`). It
-  proves a rerun is the same run, and it's the log `diff-the-views` compares
-  against what a live host published.
-
-### The measures library (new crate, shared with live)
-
-`Vec<Bar> + MeasureDecl → Measure`, pure: no I/O, no clock, no reader.
-galata-legacy's `crates/statistics` was already this shape. The first measures
-are the ones the trend family needs (gaps-vs-literature §2.1):
-`range(high, low, n)`, `ret(horizon)`, `atr(n)`, and funding over a horizon
-(the long side's carry, measured at about 11.6% a year at a neutral premium).
-**Each states its own floor**: fewer bars than `n`, a gap inside the window,
-or a trade-less bar in it gives `absent` with that reason, never a value
-computed over a hole.
-
-### The replay host (galata-research)
-
-It owns the virtual clock, reads the record, calls the measures library and
-the strategy, and writes the decision log. It is **the only thing that reads
-the tape** in a run. Its lookbacks go through `bound-the-replay`'s view at `T`
-once that exists; until then, over **closed** days only, it reads the tape
-whole and cuts at `due` itself. That's sound because a closed day's tape
-doesn't change, and the cut is tested position by position against the
-warmed instance.
-
-### The fill model (galata-research, later shared with the paper venue)
-
-`Book` sequence + bars → trips. It **guesses against the strategy** (v/D-025):
-- an `Entry::Market` fills at the bar's worse extreme plus
-  `max_slippage_bps`, not at the mark;
-- a `Limit` fills only if the bar trades **through** it, never just touches it
-  (the back of the queue);
-- a stop that sits inside a bar with both stop and take inside it is taken as
-  the **stop**;
-- funding is charged hourly on the position, from the record's funding rows;
-- liquidation is simulated at the venue's maintenance margin, because without
-  it the model assumes infinite leverage (v/D-026).
-
-**Every figure is labelled `modelled`.** Every parameter above is swept per
-study, and a parameter whose swept range sits inside one bar is reported as
-**unmeasurable** at that width, not as a number (vade-trader's carried-forward
-simrig requirements). Output is in R: a trip's R-multiple is its P&L over the
-risk its `protect.stop` stated at entry.
-
-### Random agents (galata-research)
-
-`score-against-random`'s baseline, as ordinary `Algo`s through the same host,
-fill model and store. Each is **matched** to the strategy's realised trade
-count, holding-time distribution, side mix and exposure, and seeded, with the
-seed in the trial row. The report is the strategy's percentile,
-`(1 + #{random ≥ observed}) / (N + 1)`, with the null named. A permuted-bar
-null (Masters) is a second null, stated beside the first, never merged with it.
-
-### The run store (`galata-segments` under `var/research/`)
-
-Three append-only datasets, each segment footer-labelled with its `study` and
-`schema_version`:
+## The two clocks
 
 ```
-  trials       (study, seq) · params · seed · state (ok | failed | pruned)
-               · decision-log sha256 · T · mean R · SR · skew · kurtosis
-  returns      (study, seq, period) · return in R        ← PBO and DSR read this
-  selections   (study, at) · seq chosen · by whom · why  ← an event, never an overwrite
+  EXACT: ts (venue time)                 ARRIVAL: recv_ts
+  candles · quotes · trades              marks (mark, oracle, mid, OI)
+  funding (settled) · gaps · fills       funding_live (predicted rate)
+            │                                       │
+            └──── gr.join_recv(left, right, on="ticker", tolerance=…) ────┘
+                   an explicit backward asof of left.ts onto right.recv_ts;
+                   every joined column is suffixed _recv
 ```
 
-A study has its own manifest row (the search-space hash, the window, the
-markets, the split, whether the out-of-sample half has been read, the binary
-hash, and the filters) and is **sealed** before the judge reads it. Failed and
-pruned trials are rows, because the Deflated Sharpe Ratio needs the true `N`.
+`join_recv` is the only function that crosses the clocks, and its output
+names what it did. A notebook that wants "the mark at this trade" writes it,
+and the `_recv` suffix follows the column into every chart.
 
-### The judge (Python, polars)
+## Gaps
 
-It reads the sealed study, and computes and renders: the landscape across the
-parameter space (System Parameter Permutation's median, not its peak), PBO by
-combinatorially symmetric cross-validation, the Deflated Sharpe Ratio, the
-stationary bootstrap of trips, and the percentile against random. It writes a
-dated report. **It writes no configuration anywhere.** The only output that
-reaches a live declaration is a person's.
+`gr.mask_gaps(df, dataset)` adds `in_gap: bool` and `gap_cause`: a row is in
+a gap when its `ts` falls inside a `gaps` row for the same venue, ticker and
+series. Nothing is dropped or interpolated. A caller who wants holes to
+refuse a window filters on `in_gap`. For candles, a bar is in a gap when any
+part of `[ts, close_ts)` is.
+
+## Where the record is, and how far it goes
+
+- **The root.** `GALATA_VAR`, else `var_root` in `galata-research.toml`,
+  else `../galata-datawatch/var`. A missing root is refused by name, never
+  treated as empty.
+- **`gr.frontier()`**, one row per dataset:
+  `(dataset, last_stream_seq, max_ts, max_recv_ts, days)`. A segment's
+  filename is its `stream_seq` range (`s-<first>_<last>.parquet`, measured
+  2026-09-25), so the durable position is a directory listing. `max_ts` comes
+  from the newest day's Parquet footer statistics. The tape keeps statistics
+  for `venue`, `ticker` and `at_micros` only, so `max_recv_ts` reads one
+  column of that day. Older days are listed, never opened.
+- **Intraday.** The tape is projected hourly, so the frontier is up to an
+  hour behind capture. The library reads the tape and states it. It never
+  parses the archive.
+
+## The account half
+
+`gr.account.snapshots(account, venue)` reads `ledger/…/kind=margin` and
+`kind=accounts`. Those are verbatim payloads (a `payload BLOB` per row), so
+the library decodes them. **That is a second parser, and it is temporary**:
+it ends when datawatch projects the ledger into typed datasets, as it
+projects the tape. Until then it decodes Hyperliquid's `clearinghouseState`
+only, and refuses any other channel by name.
+
+`gr.account.fills(account, venue)` reads `ledger/…/kind=fills` once datawatch
+Tier 13 writes it. It has `ts` (the fill's venue time), is deduped on the
+venue's fill id, and is on the exact clock. It is not built until the data
+exists.
 
 ## What goes where
 
 ```
-  galata-research/                 (this repo: a Rust workspace plus py/)
-    crates/galata-strategy/        the seam and vocabulary   → published, the live host links it
-    crates/galata-measures/        the pure measures         → published, the live host links it
-    crates/galata-research/        host · fills · random · store · the `research` binary
-    py/judge/                      polars: PBO · DSR · bootstrap · reports
+  galata-research/
+    pyproject.toml                 uv · polars · duckdb · marimo · pyarrow
+    src/galata_research/
+      __init__.py                  gr.market · gr.account · gr.frontier · gr.join_recv · gr.mask_gaps
+      _root.py                     locating the record
+      _scan.py                     partition listing, window widening, cast, clock
+      market.py                    one function per dataset, its rules
+      account.py                   snapshots now, fills later
+      frontier.py
+    notebooks/                     marimo, one per question
+    tests/                         against a fixture tape written in the test
     design/ · planning/ · openspec/
 ```
 
-The two shared crates live here first and are published before the live host
-exists. That's the order the planning file argues for: research defines the
-seam, the live host links it later.
+Tests follow datawatch's Python convention: named after the claim
+(`a_refetched_candle_is_counted_once`, `no_marks_row_has_a_ts`), collected
+by `python_functions = ["a_*", "an_*", "the_*", "every_*", "no_*"]`.
 
-## Decisions carried, and departed from
+## Decisions
 
-| | carried from | here |
+| | chosen | instead of |
 |---|---|---|
-| handed, never read (time and inputs) | all three predecessors | same |
-| views in R, never sizes | galata-legacy `View` | same; vade-trader's sized `Target` not carried |
-| declared inputs, refused at boot | vade, galata-legacy | as measures from one library |
-| cadence grid, skip never queue | galata-legacy runner | same, as the virtual clock |
-| warm-up Divergence **and** decision-log hash | vade · vade-trader | both |
-| one fill model, guessing against the strategy | v/D-025, vt/D-083 | same, swept and labelled |
-| a history accessor on the slow tier | galata-legacy `View` via reader | **departed**: lookbacks are measures |
-| Python replayed | never (vt/D-078) | the judge is Python; strategies are Rust |
+| the rules' one home | polars expressions | SQL views run by both engines (two SQL dialects, so the rules would exist twice and drift) |
+| money | `Float64` on load | `Decimal` (exact, slow, and unsupported by much of polars) |
+| time | `at_micros`, as `ts` | `recv_micros` filled in where venue time is missing |
+| data without venue time | `recv_ts`, no `ts` column | an estimated `ts` (recv minus measured socket lag) |
+| intraday | the tape's frontier, stated | parsing today's archive in Python |
+| fills | read from the ledger | fetched from each venue by research |
 
 ## The OpenSpec changes, in order
 
-1. **`add-galata-strategy`**: the crate, the vocabulary, `conform`, the
-   decision log. No host yet; tested by fixtures.
-2. **`add-galata-measures`**: the four trend measures, their floors, and the
-   `absent` reasons.
-3. **`replay-a-closed-window`**: the host, the virtual clock, the dedup and
-   filter rules, one strategy end to end into a decision log.
-4. **`model-the-fills`**: the fill model, its sweep and the `modelled` label.
-5. **`record-the-runs`**: the store, the study manifest and sealing.
-6. **`score-against-random`**: the first study, and the judge's first report.
+1. **`load-the-candles`**: the package, the root, the scan-rules-cast-clock
+   pipeline, candles with dedupe, `close_ts` and `as_of`, and `frontier()`.
+2. **`load-the-ticks`**: quotes and trades.
+3. **`keep-two-clocks`**: settled `funding`, `funding_live`, `marks`,
+   `recv_ts` and `join_recv`.
+4. **`mask-the-gaps`**: `gaps` and `mask_gaps`.
+5. **`decode-the-snapshots`**: the account half, interim decode.
+6. **`load-my-fills`**: after datawatch Tier 13.
 
-`bound-the-replay` (in galata-datawatch) is needed by 3 only for open days,
-and is proposed when the host first needs a view at an open `T`.
+Each lands with a marimo notebook that uses it.
 
 ## Open
 
-- **A view with two legs** (funding carry): undecided, deliberately. The first
-  family has one leg.
-- **Where the judge's reports live** (beside the run store, or the tower):
-  decided with `score-against-random`.
-- **`bound-the-replay`'s lag** (declare a lag, record the commit time, or state
-  it): decided when the host first reads an open day.
+- **`refresh=True`**, projecting today on demand under the `galata-record`
+  lock: needed, or is an hour-old frontier enough?
+- **Legacy fills**: a one-off import of existing fills history, or none.
+- **Research methods** from the earlier plan (random baselines, Deflated
+  Sharpe, PBO): notebooks over this library, or not at all.
+- **Multi-venue fills**: datawatch has no ledger plan yet for Robinhood Crypto
+  or Robinhood Chain.

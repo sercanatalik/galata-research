@@ -16,4 +16,4 @@ proposed.
 
 | feature | named | from |
 |---|---|---|
-| [`galata-research`](./galata-research.md) | 2026-09-25 | the three legacy stacks' research plans, read against `galata-datawatch` |
+| [`galata-research`](./galata-research.md) | 2026-09-25 | redesigned: a Python research environment over the datawatch record |
