@@ -7,6 +7,7 @@ import polars as pl
 
 from . import _root, _scan
 from ._errors import Refused
+from .clocks import funding, funding_live, marks
 from .gaps import gaps
 
 INTERVALS = {
@@ -83,7 +84,7 @@ def candles(
         .agg(pl.col("at_micros").max().alias("latest_at"))
         .collect()
     )
-    wanted = _wanted(tickers, sorted(latest["ticker"].unique()), f"{interval} candles")
+    wanted = _scan.wanted(tickers, sorted(latest["ticker"].unique()), f"{interval} candles")
 
     columns = dict(CANDLE_SCHEMA)
     if not closed_only:
@@ -228,7 +229,7 @@ def _ticks(kind, fields, tickers, start, end, as_of, engine) -> pl.LazyFrame | N
     _scan.require_columns(every[-1], set(read))
 
     held = sorted(_scan.tickers(every))
-    wanted = _wanted(tickers, held, kind)
+    wanted = _scan.wanted(tickers, held, kind)
     files = _scan.partitions(dataset, lo, hi)
     if not files:
         return None
@@ -246,13 +247,3 @@ def _ticks_out(lf: pl.LazyFrame, floats: list[str], schema: dict) -> pl.LazyFram
         _scan.clock("recv_micros", "recv_ts"),
         *_scan.floats(*floats),
     ).select(list(schema))
-
-
-def _wanted(tickers, held: list[str], what: str) -> list[str]:
-    if tickers is None:
-        return held
-    wanted = [tickers] if isinstance(tickers, str) else list(tickers)
-    unknown = [t for t in wanted if t not in held]
-    if unknown:
-        raise Refused(f"the record holds no {what} for {', '.join(unknown)}; it holds {', '.join(held) or 'none'}")
-    return wanted

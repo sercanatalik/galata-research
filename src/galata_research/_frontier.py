@@ -13,7 +13,7 @@ import pyarrow.parquet as pq
 from . import _root, _scan
 
 # The datasets this library loads. Each later loader adds its own.
-DATASETS = ("candles", "gaps", "quotes", "trades")
+DATASETS = ("candles", "funding", "gaps", "marks", "quotes", "trades")
 
 
 def frontier() -> pl.DataFrame:

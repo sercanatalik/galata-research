@@ -131,3 +131,25 @@ def every_snapshot_is_on_the_venue_clock():
         pytest.skip(str(absent))
     lag = got["recv_ts"] - got["ts"]
     assert (lag.dt.total_microseconds() >= 0).all() and (lag.dt.total_seconds() < 60).all()
+
+
+# Two clocks
+
+
+def no_marks_row_on_the_record_has_a_venue_time():
+    got = gr.market.marks(None, *EVER).collect()
+    assert "ts" not in got.columns and got.height > 0
+
+
+def every_settled_rate_is_venue_timed_and_unique():
+    got = gr.market.funding(None, *EVER).collect()
+    assert got["ts"].is_not_null().all()
+    assert got.select("venue", "ticker", "ts").is_duplicated().sum() == 0
+
+
+def every_trade_matched_to_a_mark_was_matched_backwards():
+    day = utc("2026-09-25T14:00"), utc("2026-09-25T15:00")
+    got = gr.join_recv(gr.market.trades("BTC", *day), gr.market.marks("BTC", *day)).collect()
+    matched = got.filter(pl.col("matched_recv_ts").is_not_null())
+    assert matched.height > 0
+    assert (matched["matched_recv_ts"] <= matched["ts"]).all()

@@ -59,7 +59,9 @@ GAPS = pa.schema(
     [*_TICK, ("series", pa.string()), ("from_micros", pa.int64()), ("to_micros", pa.int64()),
      ("cause", pa.string()), ("clipped", pa.string())]
 )  # fmt: skip
-SCHEMAS = {"candles": CANDLES, "trades": TRADES, "quotes": QUOTES, "gaps": GAPS}
+MARKS = pa.schema([*_TICK, *[(c, DECIMAL) for c in ["mark", "index", "oracle", "open_interest", "mid", "premium"]]])
+FUNDING = pa.schema([*_TICK, ("rate", DECIMAL), ("next_micros", pa.int64())])
+SCHEMAS = {"candles": CANDLES, "trades": TRADES, "quotes": QUOTES, "gaps": GAPS, "marks": MARKS, "funding": FUNDING}
 
 
 def us(iso: str) -> int:
@@ -151,6 +153,24 @@ class Tape:
             "bid_spread": None, "ask_spread": None,
         }  # fmt: skip
         return self._tick("quotes", ticker, at, received, venue, seq, at_micros, fields)
+
+    def mark(self, ticker, received, *, mark="100", oracle="99", mid="100.5", premium="0.0002", venue="hyperliquid", seq=None) -> "Tape":
+        """An asset context's mark row: the venue gives it no time, so it is dated by receipt."""
+        fields = {
+            "mark": Decimal(mark), "index": None, "oracle": Decimal(oracle), "open_interest": Decimal("10"),
+            "mid": Decimal(mid), "premium": Decimal(premium),
+        }  # fmt: skip
+        self._tick("marks", ticker, received, received, venue, seq, None, fields)
+        self.rows[-1]["at_micros"] = None
+        return self
+
+    def live_rate(self, ticker, received, rate, *, venue="hyperliquid", seq=None) -> "Tape":
+        self._tick("funding", ticker, received, received, venue, seq, None, {"rate": Decimal(rate), "next_micros": None})
+        self.rows[-1]["at_micros"] = None
+        return self
+
+    def settled_rate(self, ticker, at, received, rate, *, venue="hyperliquid", seq=None) -> "Tape":
+        return self._tick("funding", ticker, at, received, venue, seq, None, {"rate": Decimal(rate), "next_micros": None})
 
     def gap(self, ticker, series, since, until, *, cause="downtime", venue="hyperliquid", seq=None) -> "Tape":
         """A gap as datawatch publishes one: at = from, received at the restart."""

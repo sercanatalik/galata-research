@@ -83,6 +83,17 @@ def tickers(files: list[Path]) -> set[str]:
     return held
 
 
+def wanted(tickers, held: list[str], what: str) -> list[str]:
+    """The tickers asked for, or every held one; an unheld one is refused with the list."""
+    if tickers is None:
+        return held
+    asked = [tickers] if isinstance(tickers, str) else list(tickers)
+    unknown = [t for t in asked if t not in held]
+    if unknown:
+        raise Refused(f"the record holds no {what} for {', '.join(unknown)}; it holds {', '.join(held) or 'none'}")
+    return asked
+
+
 def require_columns(file: Path, columns: set[str]) -> None:
     """Refuse, by column name, a segment written with a schema this loader doesn't read."""
     missing = columns - set(pl.read_parquet_schema(file))
