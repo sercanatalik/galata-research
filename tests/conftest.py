@@ -7,6 +7,7 @@ write of one day is one segment of one row group, so rows written together
 share a row group, tickers mixed.
 """
 
+import json
 from collections import defaultdict
 from datetime import UTC, datetime
 from decimal import Decimal
@@ -184,3 +185,59 @@ def tape(tmp_path, monkeypatch) -> Tape:
 
 def load(*args, **kwargs) -> pl.DataFrame:
     return market.candles(*args, **kwargs).collect()
+
+
+LEDGER = pa.schema(
+    [
+        ("seq", pa.uint64()),
+        ("recv_micros", pa.int64()),
+        ("venue", pa.string()),
+        ("channel", pa.string()),
+        ("symbol", pa.string()),
+        ("origin", pa.string()),
+        ("payload", pa.binary()),
+        ("schema_version", pa.uint16()),
+    ]
+)
+
+
+def position(coin="BTC", szi="-0.83", value="53120.0", liquidation="71000", **overrides) -> dict:
+    """A position in legacy's fixture shape (galata-legacy wire.rs:614-617)."""
+    p = {
+        "coin": coin, "szi": szi, "entryPx": "60000", "positionValue": value, "unrealizedPnl": "12.5",
+        "liquidationPx": liquidation, "marginUsed": "200", "leverage": {"type": "cross", "value": 20},
+        "maxLeverage": 50, "returnOnEquity": "0.01",
+        "cumFunding": {"allTime": "3.21", "sinceOpen": "1.5", "sinceChange": "1.5"},
+    }  # fmt: skip
+    p.update(overrides)
+    return {"type": "oneWay", "position": p}
+
+
+def snapshot(dex="", time_ms=1790347182376, positions=(), mode="unifiedAccount", value="0.0") -> dict:
+    summary = {"accountValue": value, "totalNtlPos": "0.0", "totalRawUsd": "0.0", "totalMarginUsed": "0.0"}
+    return {
+        "dex": dex,
+        "mode": {"answer": mode, "recv_micros": 1790347182465855},
+        "clearinghouseState": {
+            "marginSummary": summary, "crossMarginSummary": dict(summary), "crossMaintenanceMarginUsed": "0.0",
+            "withdrawable": "0.0", "assetPositions": list(positions), "time": time_ms,
+        },
+    }  # fmt: skip
+
+
+def ledger(root: Path, rows: list[dict], *, account="main", venue="hyperliquid", day="2026-09-25") -> None:
+    """Ledger rows as datawatch writes them; the alias is a directory level only."""
+    directory = root / "ledger" / f"venue={venue}" / f"account={account}" / "kind=margin" / f"date={day}"
+    directory.mkdir(parents=True, exist_ok=True)
+    table = pa.Table.from_pylist(
+        [
+            {
+                "seq": n + 1, "recv_micros": r.get("recv", 1790347182465855), "venue": venue,
+                "channel": r.get("channel", "clearinghouseState"), "symbol": None, "origin": "fetched",
+                "payload": json.dumps(r["payload"]).encode(), "schema_version": r.get("schema_version", 1),
+            }  # fmt: skip
+            for n, r in enumerate(rows)
+        ],
+        schema=LEDGER,
+    )
+    pq.write_table(table, directory / f"t-{len(list(directory.iterdir()))}.parquet")

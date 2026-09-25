@@ -3,8 +3,8 @@
 **Galata's Python research environment: the record galata-datawatch keeps,
 loaded as polars or DuckDB, explored in marimo.**
 
-> **Status: candles, trades and quotes load, and gaps mark them.** The rest
-> of the market data and the account half follow the roadmap below. Argued in
+> **Status: candles, trades and quotes load, gaps mark them, and my margin
+> snapshots decode.** Funding, marks and fills follow the roadmap below. Argued in
 > [`planning/galata-research.md`](planning/galata-research.md); the mechanism is
 > [`design/galata-research.md`](design/galata-research.md).
 
@@ -48,6 +48,8 @@ gr.market.trades(["BTC"], start, end, engine="duckdb")          # duckdb relatio
 gr.market.quotes(["BTC"], start, end, as_of=t)                  # the book's top, as received
 gr.mask_gaps(gr.market.trades(["BTC"], start, end), "trades")  # + in_gap, gap_cause
 gr.market.marks(["BTC"], start, end)                            # recv_ts, not ts
+gr.account.margin("main", start, end)                           # per snapshot, per dex
+gr.account.positions("main", start, end)                        # signed size, derived mark
 gr.account.fills("main", "hyperliquid", start, end)             # after datawatch Tier 13
 gr.frontier()
 ```
@@ -60,7 +62,7 @@ gr.frontier()
 | 2 · ticks ✓ | quotes and trades |
 | 3 · two clocks | settled funding, live funding, marks, `join_recv` |
 | 4 · gaps ✓ | `gaps` and `mask_gaps` |
-| 5 · snapshots | the account half, decoded from the ledger |
+| 5 · snapshots ✓ | the account half, decoded from the ledger |
 | 6 · fills | my fills, once datawatch records them |
 
 ## Running it

@@ -108,3 +108,26 @@ def every_masked_trade_count_matches_a_direct_count():
     """).fetchone()[0]
     masked = gr.mask_gaps(gr.market.trades(None, *EVER), "trades").filter(pl.col("in_gap")).collect()
     assert masked.height == direct
+
+
+# The ledger
+
+
+def every_stored_snapshot_decodes():
+    try:
+        got = gr.account.margin(None, *EVER).collect()
+    except Refused as absent:
+        if "no margin snapshots" in str(absent):
+            pytest.skip(str(absent))
+        raise
+    gr.account.positions(None, *EVER).collect()
+    assert got.height > 0
+
+
+def every_snapshot_is_on_the_venue_clock():
+    try:
+        got = gr.account.margin(None, *EVER).collect()
+    except Refused as absent:
+        pytest.skip(str(absent))
+    lag = got["recv_ts"] - got["ts"]
+    assert (lag.dt.total_microseconds() >= 0).all() and (lag.dt.total_seconds() < 60).all()
