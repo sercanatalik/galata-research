@@ -164,6 +164,12 @@ at three block lengths, and the trials a search would pick.
 
 ![Does anything in the set beat its benchmark?](assets/screenshots/whole_set.png)
 
+**Against markets with no structure.** The bars permuted as mcpt permutes
+them (each bar's shape kept, their order random), and the whole search re-run
+on each: the real best against the permuted bests.
+
+![Against markets with no structure](assets/screenshots/permuted_bars.png)
+
 ---
 
 ## Quick start
@@ -241,6 +247,7 @@ trial, so N is the true N) back these notebooks:
 | `donchian_ensemble.py` | the pre-registered test below |
 | `random_timing.py` | is it the timing, or just the exposure? Each trial against 1,000 twins with its own runs shuffled: **none beats its twins at 5%** |
 | `whole_set.py` | does *anything* in the set beat its benchmark? White's Reality Check and Hansen's SPA over 70 trials: **no**, against buy-and-hold (p ≈ 0.7) or cash (p ≥ 0.07) |
+| `permuted_bars.py` | is there structure to find at all? The whole search re-run on 200 markets with the bars permuted: the real best (1.08) is **below** the permuted median (1.13), p = 0.59 |
 
 **A pre-registered test.** `planning/preregistered/donchian-ensemble.md` froze
 the Donchian ensemble of Zarattini, Pagani and Barbon (SSRN 5209907) as four
@@ -328,6 +335,7 @@ uv run marimo check notebooks/*.py     # every notebook, as CI runs it
 | A pre-registered test of a published strategy | done: not supported |
 | A random-timing baseline, matched on exposure, for every study | done: none beats its twins at 5% |
 | White's Reality Check and Hansen's SPA over the whole set | done: nothing beats buy-and-hold or cash at 5% |
+| The bar-permutation null (Masters, mcpt), whole search re-run | done: the real best is below the permuted median |
 | My fills, funding payments and transfers | waiting for the account to trade; the ledger records them since 2026-09-25 |
 | Charging funding in backtests | blocked on a deeper settled-funding walk in galata-datawatch |
 | A typed projection of the ledger, so fills need no second decoder | proposed for galata-datawatch |

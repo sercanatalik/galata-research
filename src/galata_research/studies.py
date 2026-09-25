@@ -208,6 +208,92 @@ def _replay(positions: list[float], returns: list[float], fee: float) -> list[fl
     return out
 
 
+PERMUTATION_NULL = "bars permuted (mcpt), whole search re-run"
+
+
+def permute_bars(bars: pl.LazyFrame | pl.DataFrame, rng) -> pl.DataFrame:
+    """A market with the same bars in a random order: mcpt's permutation, in log prices.
+
+    Per ticker, each bar's shape (high, low and close relative to its open)
+    is shuffled under one permutation, and the gaps (open against the
+    previous close) under another. The first bar is kept, and the series is
+    rebuilt forward, so the last close is unchanged. **The same two
+    permutations serve every ticker**, so a day's BTC bar travels with that
+    day's ETH bar. Trend persistence and volatility clustering are
+    destroyed; each bar's shape, the gaps and the co-movement survive.
+    """
+    from math import exp, log
+
+    frame = bars.lazy().collect().sort("ticker", "ts")
+    tickers = frame["ticker"].unique(maintain_order=True).to_list()
+    groups = {t: frame.filter(pl.col("ticker") == t) for t in tickers}
+    calendar = groups[tickers[0]]["ts"]
+    for t in tickers[1:]:
+        if not groups[t]["ts"].equals(calendar):
+            raise ValueError(f"{t} is on another calendar than {tickers[0]}; permute tickers that share their days")
+    n = calendar.len()
+    shapes, gaps = list(range(1, n)), list(range(1, n))
+    rng.shuffle(shapes)
+    rng.shuffle(gaps)
+    out = []
+    for t in tickers:
+        g = groups[t]
+        lo, lh, ll, lc = ([log(v) for v in g[c].to_list()] for c in ("open", "high", "low", "close"))
+        o, h, low, c = [lo[0]], [lh[0]], [ll[0]], [lc[0]]
+        for i in range(n - 1):
+            s_, gp = shapes[i], gaps[i]
+            o.append(c[-1] + (lo[gp] - lc[gp - 1]))
+            h.append(o[-1] + (lh[s_] - lo[s_]))
+            low.append(o[-1] + (ll[s_] - lo[s_]))
+            c.append(o[-1] + (lc[s_] - lo[s_]))
+        # The anchor bar keeps its own values exactly, not their exp(log(·)).
+        rebuilt = {name: g[name][:1].to_list() + [exp(v) for v in series[1:]] for name, series in (("open", o), ("high", h), ("low", low), ("close", c))}
+        out.append(g.with_columns(*(pl.Series(name, values) for name, values in rebuilt.items())))
+    return pl.concat(out)
+
+
+def permutation_test(bars: pl.LazyFrame | pl.DataFrame, search, *, samples: int = 200, seed: int = 0) -> dict:
+    """The whole search, on the real market and on `samples` permuted ones (Masters; mcpt).
+
+    `search(bars)` returns a trial frame. The statistic is the best
+    per-period Sharpe over the search, the number reported after searching,
+    so `p_best` is selection-aware: `(1 + #{permuted best ≥ real best}) / (N + 1)`.
+    Each trial's own `p` compares it with itself on permuted markets and is
+    not selection-aware. Permutation k is seeded `f"{seed}:{k}"`.
+    """
+    import random
+
+    real_bars = bars.lazy().collect()
+
+    def scored(frame):
+        s = summary(search(frame)).drop_nulls("sharpe")
+        return {(r["trial"], r["ticker"]): r["sharpe"] for r in s.iter_rows(named=True)}
+
+    real = scored(real_bars)
+    if not real:
+        raise ValueError("the search scored no trial on the real bars")
+    best_key = max(real, key=real.get)
+    bests, above = [], {k: 0 for k in real}
+    for k in range(samples):
+        permuted = scored(permute_bars(real_bars, random.Random(f"{seed}:{k}")))
+        bests.append(max(permuted.values()) if permuted else float("-inf"))
+        for key, value in real.items():
+            if permuted.get(key, float("-inf")) >= value:
+                above[key] += 1
+    trials = pl.DataFrame(
+        [{"trial": t, "ticker": tk, "sharpe": v, "p": (1 + above[(t, tk)]) / (samples + 1)} for (t, tk), v in real.items()]
+    ).sort("sharpe", descending=True)
+    return {
+        "best": {"trial": best_key[0], "ticker": best_key[1], "sharpe": real[best_key]},
+        "p_best": (1 + sum(b >= real[best_key] for b in bests)) / (samples + 1),
+        "permuted_bests": bests,
+        "trials": trials,
+        "samples": samples,
+        "seed": seed,
+        "null": PERMUTATION_NULL,
+    }
+
+
 def summary(frame: pl.DataFrame, periods_per_year: float | None = None) -> pl.DataFrame:
     """One row per `(trial, ticker)`: per-period Sharpe, periods, skewness, raw kurtosis, turnover, total.
 
