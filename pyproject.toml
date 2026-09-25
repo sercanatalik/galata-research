@@ -6,6 +6,8 @@ name = "galata-research"
 version = "0.1.0"
 description = "Galata's research environment over the galata-datawatch record"
 requires-python = ">=3.11"
+license = "MIT"
+license-files = ["LICENSE-MIT"]
 dependencies = [
     "polars>=1.21",
     "duckdb>=1.1",

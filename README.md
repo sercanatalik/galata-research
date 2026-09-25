@@ -1,115 +1,294 @@
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/logo-on-dark.svg">
+  <img src="assets/logo.svg" alt="" width="72" align="right">
+</picture>
+
 # galata-research
 
-**Galata's Python research environment: the record galata-datawatch keeps,
-loaded as polars or DuckDB, explored in marimo.**
+[![check](https://github.com/sercanatalik/galata-research/actions/workflows/check.yml/badge.svg)](https://github.com/sercanatalik/galata-research/actions/workflows/check.yml)
+[![MIT](https://img.shields.io/badge/licence-MIT-blue.svg)](LICENSE-MIT)
+[![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-3776ab.svg)](pyproject.toml)
+[![polars](https://img.shields.io/badge/frames-polars-cd792c.svg)](https://pola.rs)
+[![marimo](https://img.shields.io/badge/notebooks-marimo-1c7ed6.svg)](https://marimo.io)
 
-> **Status: the market data loads on both clocks, gaps mark it, and my margin
-> snapshots decode.** Fills follow, once datawatch records them. Argued in
-> [`planning/galata-research.md`](planning/galata-research.md); the mechanism is
-> [`design/galata-research.md`](design/galata-research.md).
+**Galata's research environment: the record galata-datawatch keeps, loaded as
+polars or DuckDB with its semantics applied once, and studied in marimo
+notebooks that say how much of a result survives.**
+
+galata-research reads what
+[galata-datawatch](https://github.com/sercanatalik/galata-datawatch) has
+captured: candles, trades, quotes, marks, funding, gaps, and my own account's
+margin snapshots. It hands them over deduplicated, on the right clock, and
+with every gap marked. It never captures, never talks to a venue, and never
+writes a configuration. A research result reaches a live system only through
+a person.
+
+> **Status: 0.x.** The market data loads on both clocks, gaps mark it, my
+> margin snapshots decode, and the statistics that judge a backtest (the
+> Deflated Sharpe Ratio and the Probability of Backtest Overfitting) are
+> pinned to their papers' own examples. Fills follow once the account trades.
+
+---
+
+## Contents
+
+- [Where it fits in Galata](#where-it-fits-in-galata)
+- [Features](#features)
+- [Quick start](#quick-start)
+- [The library](#the-library)
+- [Two clocks](#two-clocks)
+- [Studies](#studies)
+- [Architecture](#architecture)
+- [Development](#development)
+- [Roadmap](#roadmap)
+- [Related repositories](#related-repositories)
+- [Licence](#licence)
+
+---
 
 ## Where it fits in Galata
 
-Galata is a low-latency algorithmic trading framework: multi-venue market data
-capture, signal generation, deterministic portfolio risk controls, and agentic
-strategy execution. Research reads the record that
-[galata-datawatch](https://github.com/sercanatalik/galata-datawatch) keeps. It
-never captures, and it never talks to a venue.
+Galata is a low-latency algorithmic trading framework in Rust. It covers
+multi-venue market data capture, signal generation, deterministic portfolio
+risk controls, and agentic strategy execution driven by a fine-tuned decision
+model. Research is the second layer. It comes **before** the trading half,
+because three earlier rewrites built trading first and deferred research, and
+two of them never got back to it.
 
-```text
-  galata-datawatch   capture · archive · tape · ledger      built
-  galata-research    load · explore · study                 ← this
-  signals · risk · decision model · execution               planned
+```mermaid
+flowchart LR
+    CAP["galata-datawatch<br/>capture, one per venue"]
+    ARC[("archive<br/>the record")]
+    TAPE[("tape<br/>Parquet cache")]
+    LED[("ledger<br/>my accounts")]
+
+    subgraph RES["galata-research (Python)"]
+        LIB["galata_research<br/>load · clean · clock"]
+        STAT["stats · backtest · studies<br/>DSR · PBO"]
+        NB["marimo notebooks"]
+    end
+
+    CAP --> ARC -- galata-tape-rebuild --> TAPE
+    CAP --> LED
+    TAPE -- Parquet --> LIB
+    LED -- Parquet --> LIB
+    LIB --> STAT --> NB
+    NB -. "a person reads a landscape" .-> YOU(["you"])
 ```
 
-## What it will provide
+| It reads | Through | Never |
+|---|---|---|
+| the tape | Parquet, with partition listings and footer statistics | parses the archive, or writes to the record |
+| the ledger | the verbatim `clearinghouseState` answers, decoded strictly | fetches from a venue, or reads an address |
+| the frontier | segment filenames and footers | scans a dataset to say how far it goes |
 
-- **A Python library** that loads market data (candles, quotes, trades,
-  funding, marks, gaps) and **my own fills, per venue**, as a polars
-  `LazyFrame` by default or a DuckDB relation on request.
-- **The full series**, from the oldest walked bar to the tape's frontier,
-  with `gr.frontier()` saying how far each dataset is durable.
-- **Exact time.** `at_micros`, the venue's time, is the one time axis, as
-  `ts`. A candle is known at `close_ts`, not its open. Data with no venue time
-  (marks, the live funding rate) is on a second, named clock, `recv_ts`, and is
-  joined to `ts` only explicitly.
-- **The record's semantics, applied once**: re-fetched candles and replayed
-  trades deduped, trade-less bars filtered, settled and live funding split,
-  gaps marked, never interpolated. Decimals become `f64` on load.
-- **marimo notebooks**, one per question, over the library.
+The full framework architecture and roadmap are in the
+[galata-datawatch README](https://github.com/sercanatalik/galata-datawatch#galata-at-a-glance).
 
-## A first surface
+---
+
+## Features
+
+- **One row per event.** Re-fetched candles (about three rows per 1h bar on
+  the tape) keep their latest receipt. Replayed trades (2.75% of rows, resent
+  17 s to 708 s after a reconnect) keep their first.
+- **Closure by the record.** A bar is closed when a later bar exists or it was
+  received after its close. The venue's `is_final` flag is not trusted: the
+  history walk stamps the still-forming bar final.
+- **No lookahead.** A candle is known at `close_ts`, not at its open, and
+  `as_of` filters on that. A backtest position decided at a close earns the
+  next bar. Each guard has a test that fails when the guard is removed.
+- **Exact time, and its absence stated.** `ts` is the venue's own time (whole
+  milliseconds on Hyperliquid). Marks and live funding carry none, so they
+  are on `recv_ts` only, and `join_recv` is the one way across.
+- **Gaps marked, never filled.** `mask_gaps` adds `in_gap` and `gap_cause`. A
+  bar the venue restated after an outage is whole, and is not marked.
+- **My account.** Margin and positions per snapshot per dex, on the venue's
+  clock, decoded strictly: an undocumented shape is refused by its path.
+- **Statistics that are checked against their papers.** The Deflated Sharpe
+  Ratio reproduces Bailey and López de Prado's example (0.9004), and PBO by
+  CSCV follows Bailey, Borwein, López de Prado and Zhu step for step.
+- **Refusal by name.** An unknown ticker, a naive datetime, a missing root or
+  an old schema is refused with what exists, never answered with an empty
+  frame.
+- **polars by default, DuckDB on request.** The rules exist once, in polars
+  expressions. `engine="duckdb"` runs DuckDB over their output.
+
+---
+
+## Quick start
+
+```bash
+git clone https://github.com/sercanatalik/galata-research
+cd galata-research
+uv sync
+uv run pytest                          # fixture tapes, plus the real record when found
+uv run marimo edit notebooks/candles.py
+```
+
+The record is found at `GALATA_VAR`, else `var_root` in
+`./galata-research.toml`, else `../galata-datawatch/var`, the layout a
+checkout beside galata-datawatch already has.
 
 ```python
 import galata_research as gr
 
-gr.market.candles(["BTC", "ETH"], "4h", start, end, as_of=t)   # pl.LazyFrame
-gr.market.trades(["BTC"], start, end, engine="duckdb")          # duckdb relation
-gr.market.quotes(["BTC"], start, end, as_of=t)                  # the book's top, as received
-gr.mask_gaps(gr.market.trades(["BTC"], start, end), "trades")  # + in_gap, gap_cause
-gr.market.marks(["BTC"], start, end)                            # recv_ts, not ts
-gr.market.funding(["BTC"], start, end)                          # settled, on ts
-gr.join_recv(trades, gr.market.marks(["BTC"], start, end))      # mark_recv, matched_recv_ts
-gr.account.margin("main", start, end)                           # per snapshot, per dex
-gr.account.positions("main", start, end)                        # signed size, derived mark
-gr.account.fills("main", "hyperliquid", start, end)             # after datawatch Tier 13
-gr.frontier()
+bars = gr.market.candles(["BTC", "ETH"], "4h", "2026-01-01T00:00Z", "2026-09-01T00:00Z")
+bars.collect()                          # a polars LazyFrame, collected
+gr.frontier()                           # how far each dataset is durable
 ```
+
+---
+
+## The library
+
+| Call | Returns | The rule it owns |
+|---|---|---|
+| `gr.market.candles(tickers, interval, start, end, *, as_of, traded_only, closed_only)` | bars on `ts`, with `close_ts` | latest receipt per bar; closure by the record; `as_of` on `close_ts`; trade-less bars dropped |
+| `gr.market.trades(tickers, start, end, *, as_of)` | executions on `ts` | first receipt per `(venue, ticker, trade_id)`; the venue's order within a message |
+| `gr.market.quotes(tickers, start, end, *, as_of)` | top of book on `ts` | as received |
+| `gr.market.funding(tickers, start, end, *, as_of)` | settled funding on `ts` | only the rows the venue timed |
+| `gr.market.funding_live(...)`, `gr.market.marks(...)` | the predicted rate; mark, oracle, mid, OI, premium | on `recv_ts` only; `collapse=True` on request |
+| `gr.market.gaps(tickers, start, end, *, series)` | gap events on the receipt clock | `from_recv_ts`, `to_recv_ts`, no `ts` |
+| `gr.mask_gaps(frame, dataset, *, margin="1s")` | the frame plus `in_gap`, `gap_cause` | a tick inside `[from − margin, to)`; a bar overlapping and not restated |
+| `gr.join_recv(left, right, *, tolerance="5s")` | `left` plus `<c>_recv`, `matched_recv_ts` | backward only, bounded, named |
+| `gr.account.margin(...)`, `gr.account.positions(...)` | my snapshots per dex | venue time; `equity_held` false on a unified account |
+| `gr.frontier()` | one row per dataset | from names and footers, no scan |
+
+Every loader returns a `pl.LazyFrame`, or a DuckDB relation with
+`engine="duckdb"`. Prices are `Float64` from the tape's `DECIMAL(38,18)`.
+
+---
+
+## Two clocks
+
+| | Venue time, `ts` | Receipt time, `recv_ts` |
+|---|---|---|
+| **what it is** | when the venue says it happened | when capture received it |
+| **on it** | candles (`close_ts` too), trades, quotes, settled funding | marks (mark, oracle, mid, OI, premium), the live funding rate, gap bounds |
+| **why** | the venue stamps these | Hyperliquid's asset context carries no time at all |
+| **never** | filled from receipt | joined to `ts` except through `join_recv` |
+
+`join_recv` gives each venue-timed row the last value received by its `ts`.
+Over the busiest BTC minute, 3,426 trades matched with a median staleness of
+416 ms, and none matched forward.
+
+---
+
+## Studies
+
+`gr.stats` (Sharpe, PSR, the expected maximum Sharpe, DSR, PBO),
+`gr.backtest.returns` (next-bar, fees on turnover, holes not spanned,
+`modelled` on every row) and `gr.studies` (trial families that return every
+trial, so N is the true N) back these notebooks:
+
+| Notebook | Asks |
+|---|---|
+| `candles.py`, `ticks.py`, `gaps.py`, `clocks.py`, `account.py` | what the record holds, and how the loaders read it |
+| `moving_average.py`, `momentum.py` | a Sharpe landscape for two example families |
+| `deflated_sharpe.py` | does the best of 66 trials beat what luck would give? DSR 0.67 daily: **no** |
+| `overfitting.py` | does choosing on the past choose well? PBO 0.69 over 12,870 splits: **no** |
+| `donchian_ensemble.py` | the pre-registered test below |
+
+**A pre-registered test.** `planning/preregistered/donchian-ensemble.md` froze
+the Donchian ensemble of Zarattini, Pagani and Barbon (SSRN 5209907) as four
+trials, and said what would count as support, and was committed before any
+code ran it. Run once, the sized ensemble on BTC had a DSR of 0.921 at N = 4,
+a Sharpe of 0.97 against buy-and-hold's 0.97, and a PBO of 0.63: **not
+supported on this record.**
+
+Every figure is modelled at Hyperliquid's 0.045% taker fee. **Funding is not
+charged**, because the record holds only days of settled funding, and every
+row says so.
+
+---
+
+## Architecture
+
+```text
+  src/galata_research/
+    _root.py       locating the record: GALATA_VAR → galata-research.toml → ../galata-datawatch/var
+    _scan.py       the shared pipeline: partitions, footers, decimal → f64, the clock, the engine
+    market.py      candles, trades, quotes; re-exports gaps and the two-clock loaders
+    clocks.py      settled and live funding, marks, join_recv
+    gaps.py        gaps on the receipt clock, and mask_gaps
+    account.py     margin and positions, decoded from the ledger (interim, one channel)
+    _frontier.py   how far the record goes
+    stats.py       Sharpe, moments, PSR, expected maximum, DSR, PBO by CSCV
+    backtest.py    positions to modelled returns
+    studies.py     trial families, summaries, the shared-calendar matrix
+  notebooks/       marimo, one per question
+  tests/           fixture tapes written per test, plus claims about the real record
+  planning/        features before they are changes; preregistered/ for studies
+  design/          the mechanism
+```
+
+Four rules shape it:
+
+- **The library owns the record's semantics, not its I/O.** DuckDB and polars
+  read the tape with no flags. What they get wrong without an error is the
+  product.
+- **A defect in the record is fixed in the record.** When `marks.index` turned
+  out to be the book's mid, the fix went into galata-datawatch's adapter and a
+  tape rebuild, not into a rename here.
+- **Research reports a landscape and never writes a declaration.** Nothing
+  here gates, sizes or retires anything.
+- **A claim is registered before it is tested.** A study that tunes, then
+  reports its best, is measuring its own tuning.
+
+---
+
+## Development
+
+```bash
+uv run pytest -q -rs                   # every test; record tests skip without a record
+uv run pytest -m record                # only the claims about the real record
+uv run marimo check notebooks/*.py     # every notebook, as CI runs it
+```
+
+- **Tests are named after the claim they defend**, such as
+  `a_bar_open_at_as_of_is_not_known`. pytest collects only names that start
+  `a_`, `an_`, `the_`, `every_` or `no_`, and
+  `no_test_function_escapes_collection` fails on any other public test
+  function, because one did escape once and was never run.
+- **A guard is proven by removing it.** Every lookahead, dedupe and ordering
+  rule has a test that was run against the code with that rule taken out,
+  and failed.
+- **Changes go through OpenSpec**: `planning/` → `design/` →
+  `openspec/changes/` → `openspec/specs/`. `openspec/` is local tooling and
+  is not tracked, as in galata-datawatch.
+- **CI** (`.github/workflows/check.yml`) runs the fixture tests and checks
+  every notebook. The record tests need the captured data, so they run where
+  the record lives.
+
+---
 
 ## Roadmap
 
-| Step | Scope |
+| Item | Status |
 |---|---|
-| 1 · candles ✓ | the package, the record's root, the loader pipeline, candles, `frontier()` |
-| 2 · ticks ✓ | quotes and trades |
-| 3 · two clocks ✓ | settled funding, live funding, marks, `join_recv` |
-| 4 · gaps ✓ | `gaps` and `mask_gaps` |
-| 5 · snapshots ✓ | the account half, decoded from the ledger |
-| 6 · fills | my fills, once datawatch records them |
+| Candles: dedupe, closure by the record, `close_ts`, `as_of`, the frontier | done |
+| Trades and quotes: one row per execution, the venue's order | done |
+| Gaps: loaded on the receipt clock, `mask_gaps` for ticks and bars | done |
+| My margin snapshots and positions, decoded strictly | done |
+| Two clocks: settled and live funding, marks, `join_recv` | done |
+| Statistics: DSR and PBO, pinned to their papers; example studies | done |
+| A pre-registered test of a published strategy | done: not supported |
+| My fills, funding payments and transfers | waiting for the account to trade; the ledger records them since 2026-09-25 |
+| Charging funding in backtests | blocked on a deeper settled-funding walk in galata-datawatch |
+| A typed projection of the ledger, so fills need no second decoder | proposed for galata-datawatch |
 
-## Example studies
+---
 
-`notebooks/moving_average.py`, `notebooks/momentum.py` and
-`notebooks/deflated_sharpe.py` show the method end to end: a position decided
-at a close earns the next bar (`gr.backtest`), each family hands back every
-trial (`gr.studies`), and the best is deflated by all of them (`gr.stats`,
-pinned to Bailey and López de Prado's own example). On the record today,
-the best of 66 daily trials, `ma 5/100 long_flat` on BTC, has an annual
-Sharpe of 1.08 against 0.84 expected from luck, for a DSR of 0.67: **not
-significant**. Figures are modelled, taker fees are charged, and funding is
-not (the record holds days of it).
+## Related repositories
 
-`notebooks/overfitting.py` asks the sharper question, the **Probability of
-Backtest Overfitting** by combinatorially symmetric cross-validation
-(`gr.stats.pbo`). Over 12,870 splits of the shared daily calendar, the
-in-sample winner of the same 66 trials finished at or below the
-out-of-sample median **69%** of the time, with a degradation slope of −0.64.
-The first-half winner, `ma 10/20 long_flat` on BTC at a Sharpe of 2.00, earned
-−0.23 in the second half, ranking 58th of 66.
+- [**galata-datawatch**](https://github.com/sercanatalik/galata-datawatch):
+  the record this reads, with capture, the archive, the tape and the ledger.
+- [**galata-tower**](https://github.com/sercanatalik/galata-tower): the
+  operator UI for the same record.
+- [**galata-vault**](https://github.com/sercanatalik/galata-vault):
+  end-to-end-encrypted configuration and secrets.
 
-## A pre-registered test
+## Licence
 
-`planning/preregistered/donchian-ensemble.md` froze the Donchian ensemble of
-Zarattini, Pagani and Barbon (SSRN 5209907) as four trials, and named what
-would count as support, before any code ran it. Run once, on BTC the sized
-ensemble had a DSR of 0.921 at N = 4, a Sharpe of 0.97 against buy-and-hold's
-0.97, and a PBO of 0.63: **not supported on this record.** Its drawdown was a
-quarter of buy-and-hold's, but that was observed after the fact, so it tests
-nothing. `notebooks/donchian_ensemble.py` reruns it.
-
-## Running it
-
-```bash
-uv sync
-uv run pytest                     # fixture tapes, plus the real record when found (`-m record` for only those)
-uv run marimo edit notebooks/candles.py
-```
-
-The record is found at `GALATA_VAR`, else `var_root` in `./galata-research.toml`,
-else `../galata-datawatch/var`.
-
-## Depends on
-
-The tape and ledger layouts of galata-datawatch, read as Parquet from its
-`var/` (`GALATA_VAR`). No Rust crate is linked. Python ≥ 3.11, uv, polars,
-duckdb, marimo.
+MIT. See [LICENSE-MIT](LICENSE-MIT).

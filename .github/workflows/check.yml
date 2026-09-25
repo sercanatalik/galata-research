@@ -1,0 +1,36 @@
+# The same check the tree runs locally, on every push.
+#
+# **The real record is not here.** Tests marked `record` read
+# ../galata-datawatch/var and skip when it is absent, which it always is on
+# a runner: it is hundreds of megabytes of captured market data, and the
+# ledger under it is an account's. So CI proves the fixture tests (every
+# rule, every lookahead guard, and the published figures the statistics are
+# pinned to), and the record tests are run where the record lives. The skip
+# count is printed, so it is visible, not silent.
+name: check
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.12"
+      - name: Sync
+        run: uv sync --locked
+      - name: Tests
+        # -rs reports each skip and why, so a record test that stopped
+        # skipping for the wrong reason would show.
+        run: uv run pytest -q -rs
+      - name: Notebooks
+        run: uv run marimo check notebooks/*.py
