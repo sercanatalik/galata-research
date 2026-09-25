@@ -51,3 +51,32 @@ def the_first_traded_btc_daily_bar_opens_on_2023_02_26():
 def no_trade_less_bar_is_returned_by_default():
     got = gr.market.candles(None, "1d", *EVER).collect()
     assert got.filter(pl.col("trade_count") == 0).height == 0
+
+
+# Ticks
+
+
+def no_execution_is_returned_twice():
+    got = gr.market.trades(None, *EVER).collect()
+    assert got.select("venue", "ticker", "trade_id").is_duplicated().sum() == 0
+
+
+def no_trade_id_carries_two_contents():
+    # The loader keeps the first receipt without comparing; this holds that
+    # every replay is the same execution, so nothing is lost by it.
+    raw = pl.scan_parquet(gr._root.root() / "tape" / "kind=trades" / "**" / "*.parquet", hive_partitioning=False)
+    contents = raw.group_by("venue", "ticker", "trade_id").agg(
+        pl.struct("at_micros", "price", "size", "aggressor").n_unique().alias("contents")
+    )
+    assert contents.filter(pl.col("contents") > 1).collect().height == 0
+
+
+def no_quote_repeats_a_venue_ticker_ts():
+    got = gr.market.quotes(None, *EVER).collect()
+    assert got.select("venue", "ticker", "ts").is_duplicated().sum() == 0
+
+
+def every_tick_is_a_whole_millisecond_on_hyperliquid():
+    for loader in (gr.market.trades, gr.market.quotes):
+        got = loader(None, *EVER).filter(pl.col("venue") == "hyperliquid").collect()
+        assert (got["ts"].dt.microsecond() % 1000 == 0).all(), loader.__name__

@@ -2,7 +2,9 @@
 
 Every test states its own rows, so what a claim rests on is in the test.
 Segments are named as datawatch names them, `s-<first>_<last>.parquet` over
-`stream_seq`, under `tape/kind=candles/date=<UTC day of at_micros>/`.
+`stream_seq`, under `tape/kind=<dataset>/date=<UTC day of at_micros>/`. One
+write of one day is one segment of one row group, so rows written together
+share a row group, tickers mixed.
 """
 
 from collections import defaultdict
@@ -37,6 +39,22 @@ CANDLES = pa.schema(
         ("is_final", pa.bool_()),
     ]
 )
+
+
+_TICK = [
+    ("venue", pa.string()),
+    ("ticker", pa.string()),
+    ("at_micros", pa.int64()),
+    ("recv_micros", pa.int64()),
+    ("stream_seq", pa.uint64()),
+]
+TRADES = pa.schema(
+    [*_TICK, ("price", DECIMAL), ("size", DECIMAL), ("aggressor", pa.string()), ("trade_id", pa.string())]
+)
+QUOTES = pa.schema(
+    [*_TICK, *[(c, DECIMAL) for c in ["bid_px", "ask_px", "bid_sz", "ask_sz", "bid_spread", "ask_spread"]]]
+)
+SCHEMAS = {"candles": CANDLES, "trades": TRADES, "quotes": QUOTES}
 
 
 def us(iso: str) -> int:
@@ -91,20 +109,58 @@ class Tape:
                 "trade_count": trade_count,
                 "is_final": is_final,
                 "_day": opens[:10],
+                "_kind": "candles",
             }
         )
         return self
 
-    def write(self, kind: str = "candles", schema: pa.Schema = CANDLES) -> "Tape":
-        """One segment per day for the rows added since the last write."""
-        by_day = defaultdict(list)
+    def _tick(self, kind, ticker, at, received, venue, seq, at_micros, fields) -> "Tape":
+        self.seq += 1
+        self.rows.append(
+            {
+                "venue": venue,
+                "ticker": ticker,
+                "at_micros": us(at) if at_micros is None else at_micros,
+                "recv_micros": us(received),
+                "stream_seq": self.seq if seq is None else seq,
+                **fields,
+                "_day": at[:10],
+                "_kind": kind,
+            }
+        )
+        return self
+
+    def trade(
+        self, ticker, at, received, trade_id, *, price="100", size="1", aggressor="bid",
+        venue="hyperliquid", seq=None, at_micros=None,
+    ) -> "Tape":  # fmt: skip
+        fields = {"price": Decimal(price), "size": Decimal(size), "aggressor": aggressor, "trade_id": trade_id}
+        return self._tick("trades", ticker, at, received, venue, seq, at_micros, fields)
+
+    def quote(
+        self, ticker, at, received, *, bid="99", ask="101", bid_sz="1", ask_sz="2",
+        venue="hyperliquid", seq=None, at_micros=None,
+    ) -> "Tape":  # fmt: skip
+        fields = {
+            "bid_px": Decimal(bid), "ask_px": Decimal(ask), "bid_sz": Decimal(bid_sz), "ask_sz": Decimal(ask_sz),
+            "bid_spread": None, "ask_spread": None,
+        }  # fmt: skip
+        return self._tick("quotes", ticker, at, received, venue, seq, at_micros, fields)
+
+    def write(self, kind: str | None = None, schema: pa.Schema | None = None) -> "Tape":
+        """One segment per dataset and day for the rows added since the last write.
+
+        `kind` files every pending row under that dataset instead of its own.
+        """
+        grouped = defaultdict(list)
         for row in self.rows:
-            by_day[row.pop("_day")].append(row)
-        for day, rows in by_day.items():
+            own = row.pop("_kind")
+            grouped[(kind or own, own, row.pop("_day"))].append(row)
+        for (target, own, day), rows in grouped.items():
             seqs = [r["stream_seq"] for r in rows]
-            directory = self.root / "tape" / f"kind={kind}" / f"date={day}"
+            directory = self.root / "tape" / f"kind={target}" / f"date={day}"
             directory.mkdir(parents=True, exist_ok=True)
-            table = pa.Table.from_pylist(rows, schema=schema)
+            table = pa.Table.from_pylist(rows, schema=schema or SCHEMAS[own])
             pq.write_table(table, directory / f"s-{min(seqs)}_{max(seqs)}.parquet")
         self.rows = []
         return self

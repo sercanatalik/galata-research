@@ -9,6 +9,7 @@ from pathlib import Path
 
 import duckdb
 import polars as pl
+import pyarrow.parquet as pq
 
 from ._errors import Refused
 
@@ -61,6 +62,27 @@ def segments(dataset: Path) -> list[Path]:
     return sorted(dataset.glob("date=*/*.parquet"))
 
 
+def tickers(files: list[Path]) -> set[str]:
+    """Every ticker the segments hold, from footers where a row group holds one ticker.
+
+    Most row groups hold one ticker, but not all (9 of 78 quote groups mixed
+    them on 2026-09-25), so a mixed group's `ticker` column is read, alone.
+    """
+    held: set[str] = set()
+    for f in files:
+        parquet = pq.ParquetFile(f)
+        meta = parquet.metadata
+        index = meta.schema.to_arrow_schema().get_field_index("ticker")
+        for g in range(meta.num_row_groups):
+            stats = meta.row_group(g).column(index).statistics
+            if stats is not None and stats.has_min_max and stats.min == stats.max:
+                held.add(stats.min)
+            else:
+                column = parquet.read_row_group(g, columns=["ticker"]).column("ticker")
+                held.update(v for v in column.unique().to_pylist() if v is not None)
+    return held
+
+
 def require_columns(file: Path, columns: set[str]) -> None:
     """Refuse, by column name, a segment written with a schema this loader doesn't read."""
     missing = columns - set(pl.read_parquet_schema(file))
@@ -68,9 +90,15 @@ def require_columns(file: Path, columns: set[str]) -> None:
         raise Refused(f"{file} lacks {', '.join(sorted(missing))}: the tape's schema is not the one this loader reads")
 
 
-def scan(files: list[Path], columns: list[str]) -> pl.LazyFrame:
+def scan(files: list[Path], columns: list[str], *, position: bool = False) -> pl.LazyFrame:
+    """The listed segments' columns; `position=True` adds `_row`, each row's place in the scan.
+
+    One message can carry many events under one stream_seq (up to 983 trades),
+    and their order within it is only the order of the rows in the segment.
+    """
     # Paths are listed here, so the partition columns are not read from them.
-    return pl.scan_parquet(files, hive_partitioning=False).select(columns)
+    lf = pl.scan_parquet(files, hive_partitioning=False, row_index_name="_row" if position else None)
+    return lf.select([*(["_row"] if position else []), *columns])
 
 
 def floats(*columns: str) -> list[pl.Expr]:

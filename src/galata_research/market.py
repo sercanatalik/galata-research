@@ -82,17 +82,7 @@ def candles(
         .agg(pl.col("at_micros").max().alias("latest_at"))
         .collect()
     )
-    held = sorted(latest["ticker"].unique())
-    if tickers is None:
-        wanted = held
-    else:
-        wanted = [tickers] if isinstance(tickers, str) else list(tickers)
-        unknown = [t for t in wanted if t not in held]
-        if unknown:
-            raise Refused(
-                f"the record holds no {interval} candles for {', '.join(unknown)}; "
-                f"it holds {', '.join(held) or 'none'}"
-            )
+    wanted = _wanted(tickers, sorted(latest["ticker"].unique()), f"{interval} candles")
 
     columns = dict(CANDLE_SCHEMA)
     if not closed_only:
@@ -141,3 +131,127 @@ def candles(
         .sort(["venue", "ticker", "ts"])
     )
     return _scan.finish(out, engine)
+
+
+_TRADE_FLOATS = ["price", "size"]
+TRADE_SCHEMA = {
+    "venue": pl.String,
+    "ticker": pl.String,
+    "ts": _scan.UTC_US,
+    "price": pl.Float64,
+    "size": pl.Float64,
+    "aggressor": pl.String,
+    "trade_id": pl.String,
+    "recv_ts": _scan.UTC_US,
+}
+
+_QUOTE_FLOATS = ["bid_px", "ask_px", "bid_sz", "ask_sz", "bid_spread", "ask_spread"]
+QUOTE_SCHEMA = {
+    "venue": pl.String,
+    "ticker": pl.String,
+    "ts": _scan.UTC_US,
+    **{c: pl.Float64 for c in _QUOTE_FLOATS},
+    "recv_ts": _scan.UTC_US,
+}
+
+
+def trades(
+    tickers: Sequence[str] | str | None,
+    start: datetime | str,
+    end: datetime | str,
+    *,
+    as_of: datetime | str | None = None,
+    engine: str = "polars",
+):
+    """Executions with `ts` in `[start, end)`, one row per execution.
+
+    - **Counted once**: a venue that replays recent history on reconnect sends
+      an execution again (2.75% of rows, re-sent 17 s to 708 s later,
+      2026-09-25). One row per `(venue, ticker, trade_id)`, the first receipt.
+    - **In a total order**: up to 983 trades share one millisecond and one
+      message (one `stream_seq`), and `trade_id` is not ordered, so ties keep
+      the venue's order: the message's, then the row's within it.
+    - **Exact to the venue**: Hyperliquid stamps trades to the millisecond.
+
+    `engine="duckdb"` materialises the result; narrow the window for months.
+    """
+    lf = _ticks("trades", ["trade_id", "aggressor", *_TRADE_FLOATS], tickers, start, end, as_of, engine)
+    if lf is None:
+        return _scan.finish(pl.LazyFrame(schema=TRADE_SCHEMA), engine)
+    out = (
+        # A replay is the same execution; its first receipt is when it was known.
+        lf.sort(["recv_micros", "stream_seq", "_row"])
+        .group_by(["venue", "ticker", "trade_id"])
+        .agg(pl.all().first())
+        .sort(["venue", "ticker", "at_micros", "stream_seq", "_row"])
+    )
+    return _scan.finish(_ticks_out(out, _TRADE_FLOATS, TRADE_SCHEMA), engine)
+
+
+def quotes(
+    tickers: Sequence[str] | str | None,
+    start: datetime | str,
+    end: datetime | str,
+    *,
+    as_of: datetime | str | None = None,
+    engine: str = "polars",
+):
+    """The book's top with `ts` in `[start, end)`, every row as received.
+
+    No dedupe: none of 1,242,843 quotes repeated a `(ticker, ts)` on
+    2026-09-25, and a record test holds that. `bid_spread` and `ask_spread`
+    are a broker's stated spread, null where the venue states none
+    (Hyperliquid). Exact to the venue's millisecond.
+
+    `engine="duckdb"` materialises the result; a day is ~1.2M rows.
+    """
+    lf = _ticks("quotes", _QUOTE_FLOATS, tickers, start, end, as_of, engine)
+    if lf is None:
+        return _scan.finish(pl.LazyFrame(schema=QUOTE_SCHEMA), engine)
+    out = lf.sort(["venue", "ticker", "at_micros", "stream_seq", "_row"])
+    return _scan.finish(_ticks_out(out, _QUOTE_FLOATS, QUOTE_SCHEMA), engine)
+
+
+def _ticks(kind, fields, tickers, start, end, as_of, engine) -> pl.LazyFrame | None:
+    """The shared half of a tick loader: checks, validation, the window. None when no partition is touched."""
+    lo, hi = _scan.window(start, end)
+    bound = None if as_of is None else _scan.instant("as_of", as_of)
+    if engine not in _scan.ENGINES:
+        raise Refused(f"engine={engine!r} is not one of {', '.join(_scan.ENGINES)}")
+
+    dataset = _root.root() / "tape" / f"kind={kind}"
+    every = _scan.segments(dataset)
+    if not every:
+        raise Refused(f"the record has no {kind} under {dataset}")
+    read = ["venue", "ticker", "at_micros", "recv_micros", "stream_seq", *fields]
+    _scan.require_columns(every[-1], set(read))
+
+    held = sorted(_scan.tickers(every))
+    wanted = _wanted(tickers, held, kind)
+    files = _scan.partitions(dataset, lo, hi)
+    if not files:
+        return None
+    lf = _scan.scan(files, read, position=True).filter(
+        pl.col("ticker").is_in(wanted) & (pl.col("at_micros") >= lo) & (pl.col("at_micros") < hi)
+    )
+    if bound is not None:
+        lf = lf.filter(pl.col("at_micros") <= bound)
+    return lf
+
+
+def _ticks_out(lf: pl.LazyFrame, floats: list[str], schema: dict) -> pl.LazyFrame:
+    return lf.with_columns(
+        _scan.clock("at_micros", "ts"),
+        _scan.clock("recv_micros", "recv_ts"),
+        *_scan.floats(*floats),
+    ).select(list(schema))
+
+
+def _wanted(tickers, held: list[str], what: str) -> list[str]:
+    if tickers is None:
+        return held
+    wanted = [tickers] if isinstance(tickers, str) else list(tickers)
+    unknown = [t for t in wanted if t not in held]
+    if unknown:
+        raise Refused(f"the record holds no {what} for {', '.join(unknown)}; it holds {', '.join(held) or 'none'}")
+    return wanted

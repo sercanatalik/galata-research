@@ -28,6 +28,14 @@ def the_frontier_does_not_scan_older_days(tape):
 
 
 def the_frontier_has_a_row_only_for_loadable_datasets(tape):
+    tape.bar("BTC", "1h", "2026-09-25T08:00", "2026-09-25T09:00", seq=1)
+    tape.quote("BTC", "2026-09-25T08:00", "2026-09-25T08:00:00.3", seq=2)
+    tape.trade("BTC", "2026-09-25T08:00", "2026-09-25T08:00:00.3", "1", seq=3)
+    tape.write()
+    tape.quote("BTC", "2026-09-25T08:00", "2026-09-25T08:00:00.3", seq=4).write(kind="marks")
+    assert gr.frontier()["dataset"].to_list() == ["candles", "quotes", "trades"]
+
+
+def a_dataset_the_record_lacks_has_no_row(tape):
     tape.bar("BTC", "1h", "2026-09-25T08:00", "2026-09-25T09:00").write()
-    tape.bar("BTC", "1h", "2026-09-25T08:00", "2026-09-25T09:00").write(kind="quotes")
     assert gr.frontier()["dataset"].to_list() == ["candles"]
