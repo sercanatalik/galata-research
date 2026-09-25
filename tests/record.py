@@ -80,3 +80,31 @@ def every_tick_is_a_whole_millisecond_on_hyperliquid():
     for loader in (gr.market.trades, gr.market.quotes):
         got = loader(None, *EVER).filter(pl.col("venue") == "hyperliquid").collect()
         assert (got["ts"].dt.microsecond() % 1000 == 0).all(), loader.__name__
+
+
+# Gaps
+
+
+def every_gap_is_on_the_receipt_clock():
+    got = gr.market.gaps(None, *EVER).collect()
+    assert "ts" not in got.columns
+    assert (got["from_recv_ts"] < got["to_recv_ts"]).all()
+
+
+def every_masked_trade_count_matches_a_direct_count():
+    # An independent count, in SQL over the raw tape, of executions whose
+    # venue time falls in [from - 1 s, to) of a trades gap.
+    import duckdb
+
+    tape = gr._root.root() / "tape"
+    direct = duckdb.sql(f"""
+        with t as (select distinct venue, ticker, trade_id, at_micros
+                   from read_parquet('{tape}/kind=trades/**/*.parquet', hive_partitioning=false)),
+             g as (select * from read_parquet('{tape}/kind=gaps/**/*.parquet', hive_partitioning=false)
+                   where series = 'trades')
+        select count(distinct (t.venue, t.ticker, t.trade_id)) from t join g
+          on t.venue = g.venue and (g.ticker is null or g.ticker = t.ticker)
+         and t.at_micros >= g.from_micros - 1000000 and t.at_micros < g.to_micros
+    """).fetchone()[0]
+    masked = gr.mask_gaps(gr.market.trades(None, *EVER), "trades").filter(pl.col("in_gap")).collect()
+    assert masked.height == direct

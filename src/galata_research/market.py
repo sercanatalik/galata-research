@@ -7,6 +7,7 @@ import polars as pl
 
 from . import _root, _scan
 from ._errors import Refused
+from .gaps import gaps
 
 INTERVALS = {
     "1m": 60_000_000,

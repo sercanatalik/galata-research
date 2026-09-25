@@ -54,7 +54,11 @@ TRADES = pa.schema(
 QUOTES = pa.schema(
     [*_TICK, *[(c, DECIMAL) for c in ["bid_px", "ask_px", "bid_sz", "ask_sz", "bid_spread", "ask_spread"]]]
 )
-SCHEMAS = {"candles": CANDLES, "trades": TRADES, "quotes": QUOTES}
+GAPS = pa.schema(
+    [*_TICK, ("series", pa.string()), ("from_micros", pa.int64()), ("to_micros", pa.int64()),
+     ("cause", pa.string()), ("clipped", pa.string())]
+)  # fmt: skip
+SCHEMAS = {"candles": CANDLES, "trades": TRADES, "quotes": QUOTES, "gaps": GAPS}
 
 
 def us(iso: str) -> int:
@@ -146,6 +150,12 @@ class Tape:
             "bid_spread": None, "ask_spread": None,
         }  # fmt: skip
         return self._tick("quotes", ticker, at, received, venue, seq, at_micros, fields)
+
+    def gap(self, ticker, series, since, until, *, cause="downtime", venue="hyperliquid", seq=None) -> "Tape":
+        """A gap as datawatch publishes one: at = from, received at the restart."""
+        fields = {"series": series, "from_micros": us(since), "to_micros": us(until), "cause": cause, "clipped": "continuous"}
+        self._tick("gaps", ticker, since, until, venue, seq, None, fields)
+        return self
 
     def write(self, kind: str | None = None, schema: pa.Schema | None = None) -> "Tape":
         """One segment per dataset and day for the rows added since the last write.

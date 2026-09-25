@@ -3,6 +3,7 @@
     import galata_research as gr
 
     gr.market.candles(["BTC"], "4h", start, end, as_of=t)   # pl.LazyFrame
+    gr.mask_gaps(bars, "candles")                            # in_gap, gap_cause
     gr.frontier()                                           # how far the record goes
 
 The library owns the record's semantics, not its I/O: dedupe, closure, the
@@ -13,5 +14,6 @@ re-fetched bar twice or a bar's open as its close.
 from . import market
 from ._errors import Refused
 from ._frontier import frontier
+from .gaps import mask_gaps
 
-__all__ = ["Refused", "frontier", "market"]
+__all__ = ["Refused", "frontier", "market", "mask_gaps"]
