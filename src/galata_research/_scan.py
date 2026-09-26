@@ -108,7 +108,22 @@ def scan(files: list[Path], columns: list[str], *, position: bool = False) -> pl
     and their order within it is only the order of the rows in the segment.
     """
     # Paths are listed here, so the partition columns are not read from them.
-    lf = pl.scan_parquet(files, hive_partitioning=False, row_index_name="_row" if position else None)
+    #
+    # The tape's schemas are additive-only (datawatch `market-vocabulary`): a
+    # column is appended, and files written before it lack it until a rebuild.
+    # polars refuses a scan whose later file has a column its first file does
+    # not (measured, polars 1.44.2), which breaks every window spanning the
+    # append. So a column beyond the first file's is ignored, and one a later
+    # file lacks reads as null. Selecting a column the FIRST file lacks still
+    # fails: the scan takes its schema from that file, so a loader that reads
+    # a newly appended column passes the schema explicitly.
+    lf = pl.scan_parquet(
+        files,
+        hive_partitioning=False,
+        row_index_name="_row" if position else None,
+        missing_columns="insert",
+        extra_columns="ignore",
+    )
     return lf.select([*(["_row"] if position else []), *columns])
 
 
