@@ -127,7 +127,7 @@ still holds the bytes and a rebuild recovers every captured day:
 
 ## Open
 
-- **Fills.** Wait for datawatch Tier 13 and read `ledger/kind=fills`, or land
+- ~~**Fills.**~~ **Done 2026-09-26** (`read-the-ledger-projection`): `gr.account.fills`, `funding_payments` and `ledger_updates` read datawatch's ledger projection (`var/ledger-tape`), which is already one row per identity. What follows is the original note. Wait for datawatch Tier 13 and read `ledger/kind=fills`, or land
   Tier 13 first with the loader beside it. Research does not fetch from a
   venue. There is no legacy history worth importing: the only fills on disk
   are 3,270 Hyperliquid **testnet** fills, 2026-09-03 → 09-06

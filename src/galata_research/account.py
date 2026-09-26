@@ -1,4 +1,10 @@
-"""My accounts, from the ledger: margin and positions per snapshot.
+"""My accounts, from the ledger: margin and positions per snapshot, and
+fills, funding payments and ledger updates from its projection.
+
+Fills, funding payments and ledger updates are read from datawatch's ledger
+projection (`<var>/ledger-tape`, `project-the-ledger`): typed, already one
+row per identity, counterparties aliased or fingerprinted and never an
+address. They are not decoded here.
 
 The ledger keeps each `clearinghouseState` answer verbatim, as a payload.
 This decodes that one channel, strictly, until datawatch projects the ledger
@@ -101,6 +107,107 @@ def positions(
     """
     _, held = _decoded(accounts, start, end, venue, engine)
     return _scan.finish(held, engine)
+
+
+_EVENT_BASE = {
+    "venue": pl.String,
+    "account": pl.String,
+    "dex": pl.String,
+    "ticker": pl.String,
+    "ts": _scan.UTC_US,
+    "recv_ts": _scan.UTC_US,
+}
+
+FILL_SCHEMA = {
+    **_EVENT_BASE,
+    "side": pl.String,
+    "price": pl.Float64,
+    "size": pl.Float64,
+    "start_position": pl.Float64,
+    "direction": pl.String,
+    "closed_pnl": pl.Float64,
+    "fee": pl.Float64,
+    "fee_token": pl.String,
+    "builder_fee": pl.Float64,
+    "crossed": pl.Boolean,
+    "order_id": pl.UInt64,
+    "trade_id": pl.UInt64,
+    "twap_id": pl.UInt64,
+}
+
+FUNDING_PAYMENT_SCHEMA = {**_EVENT_BASE, "usdc": pl.Float64, "size": pl.Float64, "rate": pl.Float64, "samples": pl.UInt32}
+
+LEDGER_UPDATE_SCHEMA = {
+    **{k: v for k, v in _EVENT_BASE.items() if k != "ticker"},
+    "update_kind": pl.String,
+    "effect_known": pl.Boolean,
+    "effect_usdc": pl.Float64,
+    "counterparty_kind": pl.String,
+    "counterparty": pl.String,
+    "token": pl.String,
+    "amount": pl.Float64,
+    "fee": pl.Float64,
+}
+
+
+def fills(accounts: Sequence[str] | str | None, start: datetime | str, end: datetime | str, *, venue: str | None = None, engine: str = "polars"):
+    """My fills with venue time in `[start, end)`, one row per fill.
+
+    From datawatch's ledger projection, already one row per `(trade_id,
+    order_id)`: a trade id alone is shared by both sides of a trade. `side`
+    is `bid` (bought) or `ask` (sold); `closed_pnl` is the venue's, which
+    excludes the fee.
+    """
+    return _projected("fills", FILL_SCHEMA, accounts, start, end, venue, engine)
+
+
+def funding_payments(accounts: Sequence[str] | str | None, start: datetime | str, end: datetime | str, *, venue: str | None = None, engine: str = "polars"):
+    """Funding my positions paid or received, per position and settlement.
+
+    `usdc` is as the venue signs it: negative when the position paid.
+    """
+    return _projected("funding_payments", FUNDING_PAYMENT_SCHEMA, accounts, start, end, venue, engine)
+
+
+def ledger_updates(accounts: Sequence[str] | str | None, start: datetime | str, end: datetime | str, *, venue: str | None = None, engine: str = "polars"):
+    """Deposits, withdrawals, transfers and liquidations, **long**: one row per (update, dex it moved).
+
+    An update that moved margin on two dexes is two rows sharing `ts` and
+    `update_kind`; one that moved nothing is one row with a null `dex`;
+    `effect_known` is false where datawatch could not read what it did.
+    `counterparty` is one of my aliases (`counterparty_kind = "account"`) or
+    a keyed fingerprint, never an address.
+    """
+    return _projected("ledger_updates", LEDGER_UPDATE_SCHEMA, accounts, start, end, venue, engine)
+
+
+def _projected(kind: str, schema: dict, accounts, start, end, venue, engine):
+    lo, hi = _scan.window(start, end)
+    if engine not in _scan.ENGINES:
+        raise Refused(f"engine={engine!r} is not one of {', '.join(_scan.ENGINES)}")
+    tape = _root.root() / "ledger-tape"
+    if not tape.is_dir():
+        raise Refused(f"there is no ledger projection at {tape}: datawatch's ledger.tape is not declared")
+    files = sorted(tape.glob(f"venue=*/account=*/kind={kind}/rows.parquet"))
+    if venue is not None:
+        files = [f for f in files if f.parent.parent.parent.name == f"venue={venue}"]
+    held = sorted({f.parent.parent.name.removeprefix("account=") for f in files})
+    if accounts is not None:
+        wanted = [accounts] if isinstance(accounts, str) else list(accounts)
+        unknown = [a for a in wanted if a not in held]
+        if unknown:
+            raise Refused(f"the ledger projection holds no account {', '.join(unknown)}; it holds {', '.join(held) or 'none'}")
+        files = [f for f in files if f.parent.parent.name.removeprefix("account=") in wanted]
+    money = [c for c, t in schema.items() if t == pl.Float64]
+    frames = [
+        pl.scan_parquet(f, hive_partitioning=False)
+        .filter(pl.col("at_micros").is_not_null() & (pl.col("at_micros") >= lo) & (pl.col("at_micros") < hi))
+        .with_columns(_scan.clock("at_micros", "ts"), _scan.clock("recv_micros", "recv_ts"), *_scan.floats(*money))
+        .select(list(schema))
+        for f in files
+    ]
+    out = pl.concat(frames).sort("venue", "account", "ts") if frames else pl.LazyFrame(schema=schema)
+    return _scan.finish(out.cast(schema), engine)
 
 
 def _decoded(accounts, start, end, venue, engine) -> tuple[pl.LazyFrame, pl.LazyFrame]:

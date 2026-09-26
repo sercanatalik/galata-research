@@ -209,6 +209,7 @@ gr.frontier()                           # how far each dataset is durable
 | `gr.mask_gaps(frame, dataset, *, margin="1s")` | the frame plus `in_gap`, `gap_cause` | a tick inside `[from − margin, to)`; a bar overlapping and not restated |
 | `gr.join_recv(left, right, *, tolerance="5s")` | `left` plus `<c>_recv`, `matched_recv_ts` | backward only, bounded, named |
 | `gr.account.margin(...)`, `gr.account.positions(...)` | my snapshots per dex | venue time; `equity_held` false on a unified account |
+| `gr.account.fills(...)`, `funding_payments(...)`, `ledger_updates(...)` | my history, from datawatch's ledger projection | one row per identity; ledger updates long, one row per dex moved; never an address |
 | `gr.frontier()` | one row per dataset | from names and footers, no scan |
 
 Every loader returns a `pl.LazyFrame`, or a DuckDB relation with

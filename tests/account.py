@@ -116,3 +116,83 @@ def an_unknown_alias_is_refused_with_the_list(tape):
 def a_ledger_without_snapshots_is_refused(tape):
     with pytest.raises(Refused, match="no margin snapshots"):
         _margin()
+
+
+# The ledger projection: fills, funding payments, ledger updates
+
+from decimal import Decimal  # noqa: E402
+
+import pyarrow as pa  # noqa: E402
+import pyarrow.parquet as pq  # noqa: E402
+from conftest import DECIMAL, us  # noqa: E402
+
+_BASE = [
+    ("venue", pa.string()),
+    ("account", pa.string()),
+    ("dex", pa.string()),
+    ("ticker", pa.string()),
+    ("at_micros", pa.int64()),
+    ("recv_micros", pa.int64()),
+    ("schema_version", pa.uint16()),
+]
+PROJECTED = {
+    # As datawatch's ledger/project.rs writes them.
+    "fills": pa.schema([*_BASE, ("side", pa.string()), ("price", DECIMAL), ("size", DECIMAL), ("start_position", DECIMAL),
+                        ("direction", pa.string()), ("closed_pnl", DECIMAL), ("fee", DECIMAL), ("fee_token", pa.string()),
+                        ("builder_fee", DECIMAL), ("crossed", pa.bool_()), ("order_id", pa.uint64()), ("trade_id", pa.uint64()),
+                        ("twap_id", pa.uint64())]),
+    "funding_payments": pa.schema([*_BASE, ("usdc", DECIMAL), ("size", DECIMAL), ("rate", DECIMAL), ("samples", pa.uint32())]),
+    "ledger_updates": pa.schema([*_BASE, ("update_kind", pa.string()), ("effect_known", pa.bool_()), ("effect_usdc", DECIMAL),
+                                 ("counterparty_kind", pa.string()), ("counterparty", pa.string()), ("token", pa.string()),
+                                 ("amount", DECIMAL), ("fee", DECIMAL)]),
+}
+
+
+def _project(root, kind, rows, account="main"):
+    path = root / "ledger-tape" / "venue=hyperliquid" / f"account={account}" / f"kind={kind}" / "rows.parquet"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    base = {"venue": "hyperliquid", "account": account, "dex": None, "ticker": None, "schema_version": 1}
+    pq.write_table(pa.Table.from_pylist([{**base, **r} for r in rows], schema=PROJECTED[kind]), path)
+
+
+def _fill(at, trade_id, order_id):
+    return {"ticker": "BTC", "at_micros": us(at), "recv_micros": us(at) + 1, "side": "bid", "price": Decimal("81213.5"),
+            "size": Decimal("0.01"), "order_id": order_id, "trade_id": trade_id, "crossed": True}
+
+
+def the_fills_in_a_window_are_read_as_projected(tape):
+    _project(tape.root, "fills", [_fill("2026-09-10T12:00", 7, 100), _fill("2026-10-02T12:00", 8, 101)])
+    got = gr.account.fills("main", *SEPT).collect()
+    assert got.select("trade_id", "order_id", "side").rows() == [(7, 100, "bid")]
+    # Float64 on load, as every money column in research is.
+    assert got.select("price", "size").rows() == [(pytest.approx(81213.5), pytest.approx(0.01))]
+    assert got["ts"].to_list() == [utc("2026-09-10T12:00")]
+
+
+def no_projection_is_refused_by_name(tape):
+    with pytest.raises(Refused, match="ledger.tape"):
+        gr.account.fills("main", *SEPT)
+
+
+def an_empty_kind_is_an_empty_frame(tape):
+    _project(tape.root, "funding_payments", [])
+    got = gr.account.funding_payments("main", *SEPT).collect()
+    assert got.height == 0
+    assert got.columns == list(gr.account.FUNDING_PAYMENT_SCHEMA)
+
+
+def a_ledger_update_moving_two_dexes_is_two_rows(tape):
+    at = us("2026-09-12T09:00")
+    moved = {"at_micros": at, "recv_micros": at, "update_kind": "accountClassTransfer", "effect_known": True,
+             "counterparty_kind": None, "counterparty": None, "amount": Decimal("10")}
+    _project(tape.root, "ledger_updates", [{**moved, "effect_usdc": Decimal("-10")},
+                                           {**moved, "dex": "xyz", "effect_usdc": Decimal("10")}])
+    got = gr.account.ledger_updates(None, *SEPT).collect()
+    assert got.select("dex", "effect_usdc").rows() == [(None, -10.0), ("xyz", 10.0)]
+    assert got["update_kind"].unique().to_list() == ["accountClassTransfer"]
+
+
+def an_account_the_projection_does_not_hold_is_refused_with_the_list(tape):
+    _project(tape.root, "fills", [])
+    with pytest.raises(Refused, match=r"savings.*main"):
+        gr.account.fills("savings", *SEPT)
