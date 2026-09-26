@@ -60,7 +60,9 @@ GAPS = pa.schema(
      ("cause", pa.string()), ("clipped", pa.string())]
 )  # fmt: skip
 MARKS = pa.schema([*_TICK, *[(c, DECIMAL) for c in ["mark", "index", "oracle", "open_interest", "mid", "premium"]]])
-FUNDING = pa.schema([*_TICK, ("rate", DECIMAL), ("next_micros", pa.int64())])
+FUNDING = pa.schema([*_TICK, ("rate", DECIMAL), ("next_micros", pa.int64()), ("premium", DECIMAL)])
+# As datawatch wrote funding before it carried the premium (before 5774529).
+FUNDING_BEFORE_PREMIUM = pa.schema([*_TICK, ("rate", DECIMAL), ("next_micros", pa.int64())])
 SCHEMAS = {"candles": CANDLES, "trades": TRADES, "quotes": QUOTES, "gaps": GAPS, "marks": MARKS, "funding": FUNDING}
 
 
@@ -165,12 +167,13 @@ class Tape:
         return self
 
     def live_rate(self, ticker, received, rate, *, venue="hyperliquid", seq=None) -> "Tape":
-        self._tick("funding", ticker, received, received, venue, seq, None, {"rate": Decimal(rate), "next_micros": None})
+        self._tick("funding", ticker, received, received, venue, seq, None, {"rate": Decimal(rate), "next_micros": None, "premium": None})
         self.rows[-1]["at_micros"] = None
         return self
 
-    def settled_rate(self, ticker, at, received, rate, *, venue="hyperliquid", seq=None) -> "Tape":
-        return self._tick("funding", ticker, at, received, venue, seq, None, {"rate": Decimal(rate), "next_micros": None})
+    def settled_rate(self, ticker, at, received, rate, *, premium=None, venue="hyperliquid", seq=None) -> "Tape":
+        fields = {"rate": Decimal(rate), "next_micros": None, "premium": None if premium is None else Decimal(premium)}
+        return self._tick("funding", ticker, at, received, venue, seq, None, fields)
 
     def gap(self, ticker, series, since, until, *, cause="downtime", venue="hyperliquid", seq=None) -> "Tape":
         """A gap as datawatch publishes one: at = from, received at the restart."""

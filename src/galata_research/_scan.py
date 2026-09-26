@@ -111,14 +111,16 @@ def scan(files: list[Path], columns: list[str], *, position: bool = False) -> pl
     #
     # The tape's schemas are additive-only (datawatch `market-vocabulary`): a
     # column is appended, and files written before it lack it until a rebuild.
-    # polars refuses a scan whose later file has a column its first file does
-    # not (measured, polars 1.44.2), which breaks every window spanning the
-    # append. So a column beyond the first file's is ignored, and one a later
-    # file lacks reads as null. Selecting a column the FIRST file lacks still
-    # fails: the scan takes its schema from that file, so a loader that reads
-    # a newly appended column passes the schema explicitly.
+    # polars takes a scan's schema from its FIRST file, the oldest, and so
+    # refused both a later file's extra column (SchemaError) and a selected
+    # column the oldest file lacks (ColumnNotFoundError; measured, polars
+    # 1.44.2). The schema is taken from the NEWEST file instead, the one
+    # `_dataset` requires to hold what is asked for: an older file's missing
+    # column reads as null, and nothing a loader selects is refused for being
+    # appended after the window began.
     lf = pl.scan_parquet(
         files,
+        schema=pl.read_parquet_schema(files[-1]),
         hive_partitioning=False,
         row_index_name="_row" if position else None,
         missing_columns="insert",

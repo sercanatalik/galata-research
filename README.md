@@ -203,7 +203,7 @@ gr.frontier()                           # how far each dataset is durable
 | `gr.market.candles(tickers, interval, start, end, *, as_of, traded_only, closed_only)` | bars on `ts`, with `close_ts` | latest receipt per bar; closure by the record; `as_of` on `close_ts`; trade-less bars dropped |
 | `gr.market.trades(tickers, start, end, *, as_of)` | executions on `ts` | first receipt per `(venue, ticker, trade_id)`; the venue's order within a message |
 | `gr.market.quotes(tickers, start, end, *, as_of)` | top of book on `ts` | as received |
-| `gr.market.funding(tickers, start, end, *, as_of)` | settled funding on `ts` | only the rows the venue timed |
+| `gr.market.funding(tickers, start, end, *, as_of)` | settled funding on `ts`: the rate and the premium it came from | only the rows the venue timed; premium null where the tape predates it |
 | `gr.market.funding_live(...)`, `gr.market.marks(...)` | the predicted rate; mark, oracle, mid, OI, premium | on `recv_ts` only; `collapse=True` on request |
 | `gr.market.gaps(tickers, start, end, *, series)` | gap events on the receipt clock | `from_recv_ts`, `to_recv_ts`, no `ts` |
 | `gr.mask_gaps(frame, dataset, *, margin="1s")` | the frame plus `in_gap`, `gap_cause` | a tick inside `[from − margin, to)`; a bar overlapping and not restated |

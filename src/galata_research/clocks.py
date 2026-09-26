@@ -19,7 +19,14 @@ MARK_VALUES = ["mark", "oracle", "mid", "index", "open_interest", "premium"]
 _KEYS = ["venue", "ticker"]
 _BASE = ["venue", "ticker", "at_micros", "recv_micros", "stream_seq"]
 
-FUNDING_SCHEMA = {"venue": pl.String, "ticker": pl.String, "ts": _scan.UTC_US, "rate": pl.Float64, "recv_ts": _scan.UTC_US}
+FUNDING_SCHEMA = {
+    "venue": pl.String,
+    "ticker": pl.String,
+    "ts": _scan.UTC_US,
+    "rate": pl.Float64,
+    "premium": pl.Float64,
+    "recv_ts": _scan.UTC_US,
+}
 LIVE_SCHEMA = {"venue": pl.String, "ticker": pl.String, "recv_ts": _scan.UTC_US, "rate": pl.Float64}
 MARK_SCHEMA = {"venue": pl.String, "ticker": pl.String, "recv_ts": _scan.UTC_US, **{c: pl.Float64 for c in MARK_VALUES}}
 
@@ -36,8 +43,11 @@ def funding(
 
     Only rows the venue timed (`fundingHistory`). The live prediction is
     `funding_live`. At a neutral premium Hyperliquid's rate is its interest
-    floor, 0.0000125 an hour (0.01% per 8 h). The record's settled history is
-    only as deep as datawatch's funding walk.
+    floor, 0.0000125 an hour (0.01% per 8 h), whatever the premium was, so the
+    premium the rate was computed from is returned beside it. It is null where
+    the tape predates datawatch carrying it (5774529) until the tape is
+    rebuilt; the rates load either way. The record's settled history is only
+    as deep as datawatch's funding walk (`walk_funding_days`).
     """
     lo, hi = _scan.window(start, end)
     bound = None if as_of is None else _scan.instant("as_of", as_of)
@@ -45,7 +55,10 @@ def funding(
     files = _scan.partitions(dataset, lo, hi)
     if not files:
         return _scan.finish(pl.LazyFrame(schema=FUNDING_SCHEMA), engine)
-    lf = _scan.scan(files, [*_BASE, "rate"], position=True).filter(
+    # Optional: a tape not yet rebuilt holds no premium anywhere, and refusing
+    # would stop its rates loading too.
+    carried = "premium" in pl.read_parquet_schema(files[-1])
+    lf = _scan.scan(files, [*_BASE, "rate", *(["premium"] if carried else [])], position=True).filter(
         pl.col("at_micros").is_not_null()
         & pl.col("ticker").is_in(wanted)
         & (pl.col("at_micros") >= lo)
@@ -53,12 +66,14 @@ def funding(
     )
     if bound is not None:
         lf = lf.filter(pl.col("at_micros") <= bound)
+    if not carried:
+        lf = lf.with_columns(pl.lit(None, pl.Float64).alias("premium"))
     out = (
         lf.sort(["recv_micros", "stream_seq", "_row"])
         .group_by([*_KEYS, "at_micros"])
         .agg(pl.all().first())
         .sort([*_KEYS, "at_micros"])
-        .with_columns(_scan.clock("at_micros", "ts"), _scan.clock("recv_micros", "recv_ts"), *_scan.floats("rate"))
+        .with_columns(_scan.clock("at_micros", "ts"), _scan.clock("recv_micros", "recv_ts"), *_scan.floats("rate", "premium"))
         .select(list(FUNDING_SCHEMA))
     )
     return _scan.finish(out, engine)

@@ -1,6 +1,6 @@
 import polars as pl
 import pytest
-from conftest import MARKS, utc
+from conftest import FUNDING_BEFORE_PREMIUM, MARKS, utc
 
 import galata_research as gr
 from galata_research import Refused, market
@@ -33,6 +33,33 @@ def a_settlement_is_counted_once(tape):
     tape.settled_rate("BTC", "2026-09-25T06:00:00.121", "2026-09-25T08:10:00", "0.0000125")
     tape.write()
     assert market.funding("BTC", *DAY).collect()["recv_ts"].to_list() == [utc("2026-09-25T06:27:34")]
+
+
+def the_premium_is_returned_beside_the_rate(tape):
+    # At the floor the rate says nothing of the premium: it is carried, and read.
+    tape.settled_rate("BTC", "2026-09-25T06:00:00.121", "2026-09-25T06:27:34", "0.0000125", premium="-0.0000586636")
+    tape.write()
+    got = market.funding("BTC", *DAY).collect()
+    assert got.columns == ["venue", "ticker", "ts", "rate", "premium", "recv_ts"]
+    assert got.select("rate", "premium").rows() == [(0.0000125, pytest.approx(-0.0000586636))]
+
+
+def a_window_spanning_the_append_reads_both_days(tape):
+    # The older day was written before datawatch carried premium; the scan's
+    # schema comes from the newest file, so the older day's premium is null.
+    tape.settled_rate("BTC", "2026-09-24T06:00:00.121", "2026-09-24T06:27:34", "0.0000125")
+    tape.write(schema=FUNDING_BEFORE_PREMIUM)
+    tape.settled_rate("BTC", "2026-09-25T06:00:00.121", "2026-09-25T06:27:34", "0.0000125", premium="0.0001")
+    tape.write()
+    got = market.funding("BTC", utc("2026-09-24T00:00"), utc("2026-09-26T00:00")).collect()
+    assert got["premium"].to_list() == [None, pytest.approx(0.0001)]
+
+
+def a_tape_not_yet_rebuilt_still_loads_its_rates(tape):
+    tape.settled_rate("BTC", "2026-09-25T06:00:00.121", "2026-09-25T06:27:34", "0.0000125")
+    tape.write(schema=FUNDING_BEFORE_PREMIUM)
+    got = market.funding("BTC", *DAY).collect()
+    assert got.select("rate", "premium").rows() == [(0.0000125, None)]
 
 
 # Marks
