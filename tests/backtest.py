@@ -62,3 +62,77 @@ def a_short_trial_still_counts():
     assert got.height == 1
     assert got["sharpe"].to_list() == [None]
     assert got["periods"].item() < studies.MIN_RETURNS
+
+
+HOUR = timedelta(hours=1)
+
+
+def _settled(start, hours, rate=0.0000125, *, ticker="BTC", skip=(), stamp=timedelta(milliseconds=121)):
+    """Settled funding as gr.market.funding returns it: a few ms past each hour."""
+    t0 = utc(start)
+    return pl.DataFrame(
+        {
+            "ticker": ticker,
+            "ts": [t0 + h * HOUR + stamp for h in range(hours) if h not in skip],
+            "rate": [rate for h in range(hours) if h not in skip],
+        }
+    )
+
+
+def a_long_pays_a_positive_rate_on_every_hour_held():
+    b = _bars([100, 100, 100])
+    # Hours due for the bar 01-02 → 01-03: 01-02 01:00 .. 01-03 00:00, all 24.
+    got = backtest.returns(b, pl.lit(1.0), fee=0.0, funding=_settled("2026-01-01T00:00", 73))
+    assert got["funding"].to_list()[1:] == [pytest.approx(0.0003), pytest.approx(0.0003)]
+    assert got["net"].to_list()[1:] == [pytest.approx(-0.0003), pytest.approx(-0.0003)]
+    assert got["funding_charged"].to_list() == [False, True, True]
+
+
+def a_short_receives_it():
+    b = _bars([100, 100, 100])
+    got = backtest.returns(b, pl.lit(-1.0), fee=0.0, funding=_settled("2026-01-01T00:00", 73))
+    assert got["net"].to_list()[1:] == [pytest.approx(0.0003), pytest.approx(0.0003)]
+
+
+def a_bar_missing_an_hour_is_not_charged():
+    b = _bars([100, 110, 121])
+    # Hour 30 (01-02 06:00) falls in the second bar's window: that bar is not charged.
+    got = backtest.returns(b, pl.lit(1.0), fee=0.0, funding=_settled("2026-01-01T00:00", 73, skip=(30,)))
+    assert got["funding_charged"].to_list() == [False, False, True]
+    assert got["funding"][1] is None
+    assert got["net"][1] == pytest.approx(0.10), "net excludes an uncharged bar's funding"
+
+
+def a_settlement_on_the_close_is_paid_by_the_bar_closing():
+    t0 = utc("2026-01-01T05:00")
+    b = pl.DataFrame(
+        {
+            "ticker": "BTC",
+            "ts": [t0, t0 + HOUR, t0 + 2 * HOUR],
+            "close_ts": [t0 + HOUR, t0 + 2 * HOUR, t0 + 3 * HOUR],
+            "close": [100.0, 100.0, 100.0],
+        }
+    )
+    # One settlement, stamped 06:00:00.121: the 05:00-06:00 bar's, not the 06:00-07:00 bar's.
+    f = _settled("2026-01-01T06:00", 1, rate=0.001)
+    got = backtest.returns(b, pl.lit(1.0), fee=0.0, funding=f)
+    # The first bar has no return; the 06:00-07:00 bar owes 07:00, which is absent.
+    assert got["funding_charged"].to_list() == [False, False, False]
+    f = _settled("2026-01-01T06:00", 3, rate=0.001)
+    got = backtest.returns(b, pl.lit(1.0), fee=0.0, funding=f)
+    # 06:00-07:00 pays 07:00 only; 07:00-08:00 pays 08:00 only.
+    assert got["funding"].to_list()[1:] == [pytest.approx(0.001), pytest.approx(0.001)]
+
+
+def no_funding_given_changes_nothing():
+    b = _bars([100, 110, 99])
+    got = backtest.returns(b, pl.lit(1.0))
+    assert got["funding_charged"].to_list() == [False, False, False]
+    assert got["funding"].to_list() == [None, None, None]
+    # Net is gross less the entry's taker fee, exactly as before funding existed.
+    assert got["net"].to_list()[1:] == [pytest.approx(0.1 - 0.00045), pytest.approx(-0.1)]
+
+
+def a_funding_frame_without_its_columns_is_refused():
+    with pytest.raises(backtest.Refused, match="gr.market.funding"):
+        backtest.returns(_bars([1, 2]), pl.lit(1.0), funding=pl.DataFrame({"ticker": ["BTC"]}))

@@ -235,7 +235,9 @@ Over the busiest BTC minute, 3,426 trades matched with a median staleness of
 
 `gr.stats` (Sharpe, PSR, the expected maximum Sharpe, DSR, PBO, the permutation percentile, the stationary bootstrap with a Politis–White block, the Reality Check and SPA),
 `gr.backtest.returns` (next-bar, fees on turnover, holes not spanned,
-`modelled` on every row) and `gr.studies` (trial families that return every
+`modelled` on every row; settled funding charged on every hour held when
+`funding=gr.market.funding(...)` is passed, and `funding_charged` says where
+it was) and `gr.studies` (trial families that return every
 trial, so N is the true N) back these notebooks:
 
 | Notebook | Asks |
