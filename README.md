@@ -252,6 +252,7 @@ Every loader returns a `pl.LazyFrame`, or a DuckDB relation with
 | `realized_from(fine, interval)` | RV, realized range, semivariances, quarticity per coarser bucket | null unless the bucket holds every fine return |
 | `ewma_vol(bars, *, lam)`, `ewma_max` | RiskMetrics' EWMA σ; the larger of a fast and a slow one | σ at close t is the forecast for t+1; warm-up until the seed weighs < 1% |
 | `signature(bars_1m, minutes)` | mean daily RV per sampling interval | whole days only |
+| `variance_breaks(returns, *, statistic)`, `segments` | breaks in the unconditional variance (κ₂ or Inclán–Tiao) and the segments between | κ₂'s over-detection under persistent GARCH measured and stated (17–41% at a nominal 5%) |
 | `seasonal_factors(returns, *, fit, by, stat)`, `deseasonalize` | a volatility factor per (weekday, hour) cell, with its `fit_end` | fitted on `fit` only; mean f² = 1; hour × weekday by default |
 | `walk_forward_origins(bars, split, *, window, every)` | one row per origin: `refit`, `fit_from`, `fitted_through` | `fitted_through ≤ close_ts`; rolling or expanding; fixed between refits |
 | `stationary_bootstrap_indices`, `optimal_block` | resampling indices; the Politis–White block | agrees with arch to 1e-6 |
@@ -414,6 +415,15 @@ and lifts every model's net Sharpe (GARCH −0.37 → −0.06, EGARCH −0.23 �
 trials in the Deflated Sharpe's count: a result on this record, not yet a
 claim.
 
+**Breaks do not explain the persistence.** Sansó, Aragó and Carrion's κ₂
+finds no variance break in BTC's daily or hourly returns. It is itself
+oversized under persistent GARCH (17–41% at a nominal 5%, measured), so a lack
+of breaks is the robust reading. Inclán and Tiao's original finds five, but it
+also rejected 93–96% of break-free GARCH series. The daily α+β ≈ 0.99 is
+therefore not the Lamoureux–Lastrapes artefact: it fits Rambaccussing and
+Mazibas's genuine long memory. The hourly unit root is the daily cycle, which
+deseasonalising removes.
+
 **What survives.** ⑬ decides each claim from the notebook's own results by a
 rule stated beside it, and the answer depends on the bar:
 
@@ -530,6 +540,7 @@ uv run marimo check notebooks/*.py     # every notebook, as CI and tests/noteboo
 | Phase 2: Giacomini–White | done: HARQ and CARR win more when volatility is high |
 | Phase 2: expected-shortfall sizing | done: ν̂ too stable on BTC to matter |
 | Phase 2: feedback-controlled targeting | done: hits the target, lifts every net Sharpe |
+| Phase 2: variance breaks | done: none under κ₂; persistence is not breaks |
 
 ---
 

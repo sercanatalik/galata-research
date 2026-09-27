@@ -108,7 +108,7 @@ for 1m history:
   which a σ target cannot show; `walk_forward` carries each refit's ν.
 - [x] 16. **`control-the-volatility`**: feedback-controlled vol targeting (Devanathan, Rueter, Boyd et al.
   2026) against open-loop 1/σ̂.
-- [ ] 17. **`break-the-persistence`**: variance breaks detected (ICSS, Inclán and Tiao 1994) and GARCH
+- [x] 17. **`break-the-persistence`**: variance breaks detected (ICSS, Inclán and Tiao 1994) and GARCH
   refitted with them, testing whether daily persistence is breaks (Lamoureux and Lastrapes 1990).
 - [ ] 18. **`confidence-across-horizons`**: Quaedvlieg's multi-horizon Model Confidence Set (uMCS, aMCS).
 

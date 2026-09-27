@@ -526,3 +526,118 @@ def walk_forward_origins(
         "fitted_through": frame.schema["close_ts"],
     }
     return pl.DataFrame(out, schema=schema, orient="row")
+
+
+# ── Variance breaks ─────────────────────────────────────────────────────────
+#
+# Unmodelled shifts in the unconditional variance push GARCH persistence
+# toward one (Lamoureux and Lastrapes 1990). Breaks are found by cumulative
+# sums of squares: Inclán and Tiao's (1994) statistic assumes independent
+# returns and over-detects under fat tails and clustering; Sansó, Aragó and
+# Carrion's (2004) κ₂ studentises the same sum by a long-run variance of the
+# squares. Neither paper could be read here (the CRAN ICSS manual could, and
+# implements only the original); both statistics are checked by simulation.
+
+BREAK_STATISTICS = ("kappa2", "inclan_tiao")
+_CRITICAL = 1.358  # 5% point of the supremum of a Brownian bridge (Kolmogorov)
+
+
+def _break_statistic(e2: list[float], statistic: str) -> tuple[float, int]:
+    """(statistic, argmax k as a count of observations before the break) on squared demeaned returns."""
+    t = len(e2)
+    total = sum(e2)
+    running, best, where = 0.0, -1.0, 0
+    for k in range(1, t):
+        running += e2[k - 1]
+        gap = abs(running - k / t * total)
+        if gap > best:
+            best, where = gap, k
+    if statistic == "inclan_tiao":
+        return (sqrt(t / 2) * best / total if total > 0 else 0.0), where
+    mean = total / t
+    d = [x - mean for x in e2]
+
+    def acov(j: int) -> float:
+        return sum(d[i] * d[i - j] for i in range(j, t)) / t
+
+    # Newey and West's (1994) data-driven Bartlett bandwidth: the fixed
+    # ⌊4(T/100)^(2/9)⌋ (6 lags at T = 1,000) understates the long-run variance of
+    # squares from a persistent GARCH, and κ₂ then rejected 34% of break-free
+    # GARCH(0.1, 0.85)-t₅ series at a nominal 5%.
+    pre = int(4 * (t / 100) ** (2 / 9))
+    g = [acov(j) for j in range(pre + 1)]
+    s0 = g[0] + 2 * sum(g[1:])
+    s1 = 2 * sum(j * g[j] for j in range(1, pre + 1))
+    band = min(t - 1, int(1.1447 * ((s1 / s0) ** 2) ** (1 / 3) * t ** (1 / 3))) if s0 > 0 else pre
+    lrv = g[0]
+    for j in range(1, band + 1):
+        lrv += 2 * (1 - j / (band + 1)) * (g[j] if j <= pre else acov(j))
+    return (best / sqrt(t) / sqrt(lrv) if lrv > 0 else 0.0), where
+
+
+def _segment(e: list[float], lo: int, hi: int, statistic: str, min_segment: int, found: list):
+    seg = e[lo:hi]
+    if len(seg) < 2 * min_segment:
+        return
+    m = sum(seg) / len(seg)
+    stat, k = _break_statistic([(x - m) ** 2 for x in seg], statistic)
+    if stat > _CRITICAL and min_segment <= k <= len(seg) - min_segment:
+        found.append(lo + k)
+        _segment(e, lo, lo + k, statistic, min_segment, found)
+        _segment(e, lo + k, hi, statistic, min_segment, found)
+
+
+def variance_breaks(returns: pl.LazyFrame | pl.DataFrame, *, statistic: str = "kappa2", min_segment: int = 60) -> pl.DataFrame:
+    """Breaks in one ticker's unconditional variance: `ts, close_ts, statistic`, one row per break.
+
+    Binary segmentation on the cumulative sum of squared demeaned returns
+    (nulls dropped), splitting where the statistic exceeds 1.358, then a
+    pruning pass that re-tests each break between its neighbours until none
+    is dropped. `kappa2` (default) is robust to fat tails and clustering;
+    `inclan_tiao` is the original, for comparison. A break's `ts` is the first
+    bar of the new regime.
+    """
+    if statistic not in BREAK_STATISTICS:
+        raise Refused(f"statistic={statistic!r} is not one of {', '.join(BREAK_STATISTICS)}")
+    utils.require(returns, ("ticker", "ts", "close_ts", "return"), "make returns with gr.timeseries.returns")
+    frame = utils.lazy(returns).drop_nulls("return").sort("ts").collect()
+    if frame["ticker"].n_unique() != 1:
+        raise Refused("find breaks one ticker at a time")
+    e = frame["return"].to_list()
+    found: list[int] = []
+    _segment(e, 0, len(e), statistic, min_segment, found)
+    breaks = sorted(found)
+    changed = True
+    while changed and breaks:
+        changed = False
+        for i, b in enumerate(breaks):
+            lo = breaks[i - 1] if i else 0
+            hi = breaks[i + 1] if i + 1 < len(breaks) else len(e)
+            seg = e[lo:hi]
+            m = sum(seg) / len(seg)
+            stat, k = _break_statistic([(x - m) ** 2 for x in seg], statistic)
+            if stat <= _CRITICAL:
+                breaks.pop(i)
+                changed = True
+                break
+            breaks[i] = lo + k
+    rows = []
+    for i, b in enumerate(breaks):
+        lo = breaks[i - 1] if i else 0
+        hi = breaks[i + 1] if i + 1 < len(breaks) else len(e)
+        seg = e[lo:hi]
+        m = sum(seg) / len(seg)
+        rows.append((frame["ts"][b], frame["close_ts"][b], _break_statistic([(x - m) ** 2 for x in seg], statistic)[0]))
+    return pl.DataFrame(rows, schema={"ts": frame.schema["ts"], "close_ts": frame.schema["close_ts"], "statistic": pl.Float64}, orient="row")
+
+
+def segments(returns: pl.LazyFrame | pl.DataFrame, breaks: pl.DataFrame) -> pl.DataFrame:
+    """`from, to, n, variance` per segment between breaks (`from` a bar's ts, `to` a bar's close_ts)."""
+    frame = utils.lazy(returns).drop_nulls("return").sort("ts").collect()
+    cuts = [frame["ts"][0], *breaks["ts"].to_list()]
+    rows = []
+    for i, start in enumerate(cuts):
+        end = cuts[i + 1] if i + 1 < len(cuts) else None
+        seg = frame.filter((pl.col("ts") >= start) & ((pl.col("ts") < end) if end is not None else pl.lit(True)))
+        rows.append((start, seg["close_ts"][-1], seg.height, float(seg["return"].var())))
+    return pl.DataFrame(rows, schema={"from": frame.schema["ts"], "to": frame.schema["close_ts"], "n": pl.Int64, "variance": pl.Float64}, orient="row")

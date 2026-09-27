@@ -10,9 +10,9 @@
 
 from .._arch import DISTS
 from .carr import carr
-from .garch import MODELS, Fit, arch_lm, diagnose, expectation, fit, kappa, ljung_box, news_impact, table
+from .garch import MODELS, Fit, arch_lm, diagnose, expectation, fit, kappa, ljung_box, news_impact, segmented, table
 from .har import har
 from .target import economics, es_t, estimation_target, target, trials
 from .walk import walk_forward
 
-__all__ = ["DISTS", "MODELS", "Fit", "arch_lm", "carr", "diagnose", "es_t", "estimation_target", "expectation", "fit", "har", "kappa", "ljung_box", "news_impact", "table", "target", "trials", "economics", "walk_forward"]
+__all__ = ["DISTS", "MODELS", "Fit", "arch_lm", "carr", "diagnose", "es_t", "estimation_target", "expectation", "fit", "har", "kappa", "ljung_box", "news_impact", "segmented", "table", "target", "trials", "economics", "walk_forward"]

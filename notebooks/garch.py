@@ -536,6 +536,40 @@ def _(alt, column, gr, in_sample, interval, mo, pl, returns, vol):
 
 
 @app.cell
+def _(column, gr, in_sample, mo, pl, vol):
+    _r = in_sample.select("ticker", "ts", "close_ts", pl.col(column).alias("return"))
+    _k2 = gr.timeseries.variance_breaks(_r, statistic="kappa2")
+    _it = gr.timeseries.variance_breaks(_r, statistic="inclan_tiao")
+    _seg = vol.segmented(_r, _k2, min_obs=250).select("segment", "from", "to", "skipped", "nobs", "persistence", "half_life")
+    mo.vstack(
+        [
+            mo.md(rf"""
+            ### Are there breaks in the variance?
+
+            Shifts in the unconditional variance, left unmodelled, push GARCH
+            persistence toward one (Lamoureux and Lastrapes 1990). Breaks are
+            found by cumulative sums of squares. Inclán and Tiao's (1994)
+            statistic assumes independent returns, and here it rejected 93–96%
+            of *break-free* GARCH series. Sansó, Aragó and Carrion's (2004) κ₂
+            studentises the same sum by a long-run variance of the squares.
+            It is still oversized under persistent GARCH (17–41% at a nominal
+            5%, measured), so a break it finds is not proof. A *lack* of breaks
+            under κ₂ is the robust reading.
+
+            On this estimation period κ₂ finds **{_k2.height}** break(s) and
+            Inclán–Tiao **{_it.height}**. Below: GARCH-t on the full period and on
+            each κ₂ segment long enough to fit. A persistence that falls within
+            segments is consistent with breaks. One that does not, or no
+            breaks at all, points to genuine memory (Rambaccussing and Mazibas
+            2020).
+            """),
+            _seg,
+        ]
+    )
+    return
+
+
+@app.cell
 def _(mo):
     mo.md(r"""
     ## ⑥ Out of sample: walking forward

@@ -229,6 +229,32 @@ def table(fits) -> pl.DataFrame:
     return pl.DataFrame(rows, infer_schema_length=None)
 
 
+def segmented(
+    returns: pl.LazyFrame | pl.DataFrame, breaks: pl.DataFrame, *, model: str = "garch", dist: str = "t", min_obs: int = 250
+) -> pl.DataFrame:
+    """The model on the full sample and on each segment between variance breaks: the Lamoureux-Lastrapes comparison.
+
+    `segment, from, to, skipped` and `table`'s columns; a segment under
+    `min_obs` returns is listed, skipped, with no fit.
+    """
+    from ... import timeseries
+
+    frame = utils.lazy(returns).collect()
+    segs = timeseries.segments(frame, breaks)
+    rows = [table([fit(frame, model=model, dist=dist, min_obs=min_obs)]).with_columns(
+        pl.lit("full").alias("segment"), pl.lit(segs["from"][0]).alias("from"), pl.lit(segs["to"][-1]).alias("to"), pl.lit(False).alias("skipped")
+    )]
+    for i, s in enumerate(segs.iter_rows(named=True)):
+        label = f"segment {i + 1}"
+        if s["n"] < min_obs:
+            rows.append(pl.DataFrame({"segment": [label], "from": [s["from"]], "to": [s["to"]], "skipped": [True], "nobs": [s["n"]]}))
+            continue
+        f = fit(frame, model=model, dist=dist, fit=(s["from"], s["to"]), min_obs=min_obs)
+        rows.append(table([f]).with_columns(pl.lit(label).alias("segment"), pl.lit(s["from"]).alias("from"), pl.lit(s["to"]).alias("to"), pl.lit(False).alias("skipped")))
+    out = pl.concat(rows, how="diagonal_relaxed")
+    return out.select("segment", "from", "to", "skipped", *[c for c in out.columns if c not in ("segment", "from", "to", "skipped")])
+
+
 def news_impact(f: Fit, z) -> pl.DataFrame:
     """`z, sigma2`: next-bar variance (return units²) after a shock ε = z·σ̄, holding σₜ₋₁ at σ̄.
 
