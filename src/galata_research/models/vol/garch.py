@@ -61,7 +61,9 @@ def fit(
     `model`: `ewma` (λ = 0.94, fixed), `rm2006`, `garch`, `gjr`, `egarch`,
     `aparch`, `figarch`, and the hand-written `cgarch` (Engle and Lee 1999) and
     `betat` (Harvey and Chakravarty 2008), for which `dist` must be `t`, and
-    `rgarch`, the log-linear Realized GARCH (Hansen, Huang and Shek 2012), which
+    `msgarch`, a two-regime Markov-switching GARCH (Haas, Mittnik and Paolella
+    2004; `dist="t"`, persistence the volatile regime's, `series` with `p_high`),
+    and `rgarch`, the log-linear Realized GARCH (Hansen, Huang and Shek 2012), which
     takes `dist="normal"` and `measures=` (`gr.timeseries.realized_from`
     output); its `loglik` is the returns part ℓ(r) and persistence β + φγ.
     `dist`: `normal`, `t`, `skewt`, `ged`. `returns` as
@@ -110,6 +112,8 @@ def fit(
         pl.Series("z", s["z"]),
         "after_gap",
     )
+    if "p_high" in s:
+        series = series.with_columns(pl.Series("p_high", s["p_high"]))
     return Fit(
         ticker=tickers[0],
         model=model,
@@ -188,6 +192,8 @@ def _persistence(model: str, dist: str, p: dict) -> float | None:
         return p["phi"]
     if model == "rgarch":
         return p["beta"] + p["phi"] * p["gamma"]
+    if model == "msgarch":
+        return p["alpha2"] + p["beta2"]
     return None
 
 

@@ -14,20 +14,21 @@
 Every series is on the ×100 scale arch uses; callers convert back.
 """
 
-from math import lgamma, log, pi, sqrt
+from math import exp, lgamma, log, pi, sqrt
 
 import numpy as np
 from scipy import optimize
 
 from ..._errors import Refused
 
-MODELS = ("cgarch", "betat", "rgarch")
+MODELS = ("cgarch", "betat", "rgarch", "msgarch")
 NEEDS_MEASURES = ("rgarch",)
 NAMES = {
     "cgarch": ("mu", "omega", "alpha", "beta", "rho", "phi", "nu"),
     "betat": ("mu", "omega", "phi", "kappa", "kappa_star", "nu"),
     "carr": ("omega", "alpha", "beta"),
     "rgarch": ("mu", "omega", "beta", "gamma", "xi", "phi", "tau1", "tau2", "sigma_u"),
+    "msgarch": ("mu", "omega1", "alpha1", "beta1", "omega2", "alpha2", "beta2", "p11", "p22", "nu"),
 }
 RANGE_MEAN = sqrt(8 / pi)  # E[ln(H/L)] / σ for driftless Brownian motion over the bar
 
@@ -139,6 +140,83 @@ def _rgarch_nll(xs: np.ndarray, y: np.ndarray, x: np.ndarray, init: float) -> fl
     return -total if np.isfinite(total) else np.inf
 
 
+# ── Markov-switching GARCH ──────────────────────────────────────────────────
+#
+# Haas, Mittnik and Paolella (2004), the form R's MSGARCH implements: two GARCH
+# variances updated in parallel on the observed shock, so the likelihood is
+# exact with no path dependence; a two-state Markov chain picks the regime.
+
+
+def _std_t_pdf(e: np.ndarray, var: np.ndarray, nu: float) -> np.ndarray:
+    c = np.exp(lgamma((nu + 1) / 2) - lgamma(nu / 2)) / np.sqrt(pi * (nu - 2) * var)
+    return c * (1 + e * e / (var * (nu - 2))) ** (-(nu + 1) / 2)
+
+
+def msgarch_filter(p: dict, y: np.ndarray, init: float):
+    """(σ² per regime, n+1 × 2; ξ_{t|t−1}, n+1 × 2; ξ_{t|t}, n × 2; log-likelihood per step, n).
+
+    Plain floats in the loop: numpy on two-element arrays cost 70 s a fit.
+    """
+    e = (y - p["mu"]).tolist()
+    n = len(e)
+    w1, a1, b1 = p["omega1"], p["alpha1"], p["beta1"]
+    w2, a2, b2 = p["omega2"], p["alpha2"], p["beta2"]
+    p11, p22, nu = p["p11"], p["p22"], p["nu"]
+    c = exp(lgamma((nu + 1) / 2) - lgamma(nu / 2)) / sqrt(pi * (nu - 2))
+    k = -(nu + 1) / 2
+    s2 = np.empty((n + 1, 2))
+    pred = np.empty((n + 1, 2))
+    filt = np.empty((n, 2))
+    ll = np.empty(n)
+    v1 = v2 = init
+    q1 = (1 - p22) / (2 - p11 - p22)
+    s2[0] = (v1, v2)
+    pred[0] = (q1, 1 - q1)
+    for t in range(n):
+        et2 = e[t] * e[t]
+        f1 = c / sqrt(v1) * (1 + et2 / (v1 * (nu - 2))) ** k
+        f2 = c / sqrt(v2) * (1 + et2 / (v2 * (nu - 2))) ** k
+        j1, j2 = q1 * f1, (1 - q1) * f2
+        tot = j1 + j2
+        if tot > 0:
+            ll[t] = log(tot)
+            r1 = j1 / tot
+        else:
+            ll[t] = -np.inf
+            r1 = q1
+        filt[t] = (r1, 1 - r1)
+        q1 = r1 * p11 + (1 - r1) * (1 - p22)
+        pred[t + 1] = (q1, 1 - q1)
+        v1 = w1 + a1 * et2 + b1 * v1
+        v2 = w2 + a2 * et2 + b2 * v2
+        s2[t + 1] = (v1, v2)
+    return s2, pred, filt, ll
+
+
+def _msgarch_nll(xs: np.ndarray, y: np.ndarray, init: float) -> float:
+    p = dict(zip(NAMES["msgarch"], xs))
+    if p["alpha1"] + p["beta1"] >= 1 or p["alpha2"] + p["beta2"] >= 1:
+        return np.inf
+    ll = msgarch_filter(p, y, init)[3]
+    total = float(ll.sum())
+    return -total if np.isfinite(total) else np.inf
+
+
+def _unconditional(p: dict, k: int) -> float:
+    return p[f"omega{k}"] / (1 - p[f"alpha{k}"] - p[f"beta{k}"])
+
+
+def order_regimes(p: dict) -> dict:
+    """Regime 1 is the one with the lower unconditional variance (MSGARCH's identification); the likelihood is unchanged."""
+    if _unconditional(p, 1) <= _unconditional(p, 2):
+        return dict(p)
+    q = dict(p)
+    for name in ("omega", "alpha", "beta"):
+        q[f"{name}1"], q[f"{name}2"] = p[f"{name}2"], p[f"{name}1"]
+    q["p11"], q["p22"] = p["p22"], p["p11"]
+    return q
+
+
 # ── CARR ────────────────────────────────────────────────────────────────────
 
 
@@ -166,6 +244,9 @@ def _carr_nll(x: np.ndarray, r: np.ndarray, init: float) -> float:
 
 
 def _objective(model: str, y: np.ndarray, x: np.ndarray | None = None):
+    if model == "msgarch":
+        init = float(np.var(y))
+        return (lambda v: _msgarch_nll(v, y, init)), init
     if model == "rgarch":
         init = float(np.log(np.var(y)))
         return (lambda v: _rgarch_nll(v, y, x, init)), init
@@ -181,6 +262,10 @@ def _objective(model: str, y: np.ndarray, x: np.ndarray | None = None):
 def _start(model: str, y: np.ndarray, x: np.ndarray | None = None) -> tuple[np.ndarray, list]:
     m, v = float(np.mean(y)), float(np.var(y))
     sd = sqrt(v)
+    if model == "msgarch":
+        return np.array([m, 0.02 * v, 0.05, 0.9, 0.1 * v, 0.1, 0.8, 0.97, 0.97, 6.0]), [
+            (m - 10 * sd, m + 10 * sd), (1e-6 * v, 10 * v), (0.0, 1.0), (0.0, 1.0), (1e-6 * v, 10 * v), (0.0, 1.0), (0.0, 1.0), (0.01, 0.9999), (0.01, 0.9999), (2.1, 100.0)
+        ]
     if model == "rgarch":
         # The paper's SPY estimates, ω set so log h starts at the log sample variance.
         beta, gamma, phi, xi = 0.55, 0.41, 1.04, float(np.mean(np.log(x)) - 1.04 * log(v))
@@ -224,6 +309,10 @@ def estimate(model: str, y: np.ndarray, x: np.ndarray | None = None) -> dict:
     nll, _ = _objective(model, y, x)
     x0, bounds = _start(model, y, x)
     res = optimize.minimize(nll, x0, method="Nelder-Mead", bounds=bounds, options={"maxiter": 6000, "maxfev": 12000, "xatol": 1e-7, "fatol": 1e-7})
+    if model == "msgarch":
+        # Ten parameters: one restart from the first result. On BTC daily the first pass
+        # stopped at its evaluation cap (nll 2875.4); the restart converged at 2874.3.
+        res = optimize.minimize(nll, res.x, method="Nelder-Mead", bounds=bounds, options={"maxiter": 20000, "maxfev": 40000, "xatol": 1e-7, "fatol": 1e-7})
     x = res.x
     names = NAMES[model]
     se = {n: None for n in names}
@@ -234,7 +323,13 @@ def estimate(model: str, y: np.ndarray, x: np.ndarray | None = None) -> dict:
             se = {n: float(sqrt(d)) for n, d in zip(names, diag)}
     except np.linalg.LinAlgError:
         pass
-    return {"params": {n: float(v) for n, v in zip(names, x)}, "std_err": se, "nll": float(res.fun), "converged": bool(res.success)}
+    params = {n: float(v) for n, v in zip(names, x)}
+    if model == "msgarch":
+        swapped = order_regimes(params)
+        if swapped != params:
+            se = order_regimes(se) if all(v is not None for v in se.values()) else {n: None for n in names}
+        params = swapped
+    return {"params": params, "std_err": se, "nll": float(res.fun), "converged": bool(res.success)}
 
 
 def summary(model: str, y: np.ndarray, x: np.ndarray | None = None) -> dict:
@@ -245,7 +340,12 @@ def summary(model: str, y: np.ndarray, x: np.ndarray | None = None) -> dict:
     """
     est = estimate(model, y, x)
     p, n = est["params"], y.size
-    if model == "rgarch":
+    extra = {}
+    if model == "msgarch":
+        s2, pred, filt, _ = msgarch_filter(p, y, float(np.var(y)))
+        var = (pred[:-1] * s2[:-1]).sum(axis=1)
+        extra["p_high"] = filt[:, 1].tolist()
+    elif model == "rgarch":
         init = float(np.log(np.var(y)))
         lr, _ = _rgarch_ll(p, y, x, init)
         est["nll"] = -lr
@@ -266,6 +366,7 @@ def summary(model: str, y: np.ndarray, x: np.ndarray | None = None) -> dict:
         "converged": est["converged"],
         "sigma": sigma.tolist(),
         "z": ((y - p["mu"]) / sigma).tolist(),
+        **extra,
     }
 
 
@@ -276,6 +377,31 @@ def forecast(
     model: str, p: dict, y: np.ndarray, *, start: int, horizon: int, init: float | None, simulations: int, seed: int, x: np.ndarray | None = None
 ) -> np.ndarray:
     """Variance forecasts (×100 scale) from origins start…len(y)−1: row i uses y[:i+1], parameters fixed."""
+    if model == "msgarch":
+        s2, pred, _, _ = msgarch_filter(p, y, init)
+        s2, pred = s2[start + 1 :], pred[start + 1 :]
+        out = np.empty((s2.shape[0], horizon))
+        out[:, 0] = (pred * s2).sum(axis=1)
+        if horizon > 1:
+            rng = np.random.default_rng(seed)
+            nu = p["nu"]
+            w = np.array([p["omega1"], p["omega2"]])
+            a = np.array([p["alpha1"], p["alpha2"]])
+            b = np.array([p["beta1"], p["beta2"]])
+            stay = np.array([p["p11"], p["p22"]])
+            m, sims = s2.shape[0], simulations
+            var = np.repeat(s2[:, None, :], sims, axis=1)  # origins × sims × regimes
+            regime = (rng.random((m, sims)) >= pred[:, 0:1]).astype(int)
+            for h in range(horizon):
+                current = np.take_along_axis(var, regime[..., None], axis=2)[..., 0]
+                if h > 0:
+                    out[:, h] = current.mean(axis=1)
+                z = rng.standard_t(nu, size=(m, sims)) * sqrt((nu - 2) / nu)
+                e2 = current * z * z
+                var = w + a * e2[..., None] + b * var
+                keep = rng.random((m, sims)) < stay[regime]
+                regime = np.where(keep, regime, 1 - regime)
+        return out
     if model == "rgarch":
         lh_all = rgarch_filter(p, y, x, init)
         lh = lh_all[start + 1 :]

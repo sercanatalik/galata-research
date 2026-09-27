@@ -184,6 +184,7 @@ def _(mo):
     | Beta-*t*-EGARCH | $\lambda_{t+1}=\omega+\phi\lambda_t+\kappa u_t+\kappa^*\operatorname{sgn}(-\varepsilon_t)(u_t+1)$, $u_t\in[-1,\nu]$ the *t* score | Harvey and Chakravarty 2008: one outlier moves σ a bounded amount |
     | CARR | $\lambda_t=\omega+\alpha R_{t-1}+\beta\lambda_{t-1}$ on $R=\ln(H/L)$ | Chou 2005: models the range; σ = λ/√(8/π) |
     | Realized GARCH | $\log h_t=\omega+\beta\log h_{t-1}+\gamma\log x_{t-1}$, $\log x_t=\xi+\phi\log h_t+\tau(z_t)+u_t$ | Hansen, Huang and Shek 2012: a realized measure drives the variance; π = β + φγ (1d, RV from 4h) |
+    | MS-GARCH | two GARCH(1,1) variances updated in parallel, $\sigma^2_{k,t}=\omega_k+\alpha_k\varepsilon^2_{t-1}+\beta_k\sigma^2_{k,t-1}$, a Markov chain choosing the regime | Haas, Mittnik and Paolella 2004 (R's MSGARCH): regimes without path dependence (1d) |
 
     Distributions of $z$: normal; Student-*t* with ν degrees of freedom,
     scaled to unit variance (ν ≤ 4 means the fourth moment does not exist);
@@ -231,11 +232,12 @@ def _(mo):
 @app.cell
 def _(EVER, column, estimation, gr, in_sample, interval, ticker, vol):
     # MODELS includes the hand-written cgarch and betat; rgarch needs a daily realized measure, so it is fitted at 1d only.
-    specs = [(m, "t") for m in vol.MODELS if m != "rgarch"] + [("garch", d) for d in ("normal", "skewt", "ged")] + [("gjr", "skewt")]
+    # rgarch needs a daily realized measure and msgarch takes ~40 s a fit, so both are fitted at 1d only.
+    specs = [(m, "t") for m in vol.MODELS if m not in ("rgarch", "msgarch")] + [("garch", d) for d in ("normal", "skewt", "ged")] + [("gjr", "skewt")]
     measures = None
     if interval.value == "1d":
         measures = gr.timeseries.realized_from(gr.market.candles([ticker.value], "4h", *EVER).collect(), "1d")
-        specs.append(("rgarch", "normal"))
+        specs += [("rgarch", "normal"), ("msgarch", "t")]
     fits = {}
     for model, dist in specs:
         try:
@@ -317,7 +319,7 @@ def _(failed, mo, pl, table):
         if gamma is not None
         else "",
     ]
-    cols = ["model", "dist", "nobs", "bic", "persistence", "half_life", "sigma_bar", "converged", "omega", "alpha[1]", "gamma[1]", "beta[1]", "delta", "d", "alpha", "beta", "rho", "phi", "kappa", "kappa_star", "gamma", "xi", "tau1", "tau2", "sigma_u", "nu", "eta", "lambda"]
+    cols = ["model", "dist", "nobs", "bic", "persistence", "half_life", "sigma_bar", "converged", "omega", "alpha[1]", "gamma[1]", "beta[1]", "delta", "d", "alpha", "beta", "rho", "phi", "kappa", "kappa_star", "gamma", "xi", "tau1", "tau2", "sigma_u", "omega1", "alpha1", "beta1", "omega2", "alpha2", "beta2", "p11", "p22", "nu", "eta", "lambda"]
     mo.vstack(
         [
             mo.md("## ⑤ The fit table (estimation period)"),
@@ -327,6 +329,41 @@ def _(failed, mo, pl, table):
             katsiampa_table(table),
         ]
     )
+    return
+
+
+@app.cell
+def _(alt, bars, good, mo, pl):
+    _ms = [f for f in good if f.model == "msgarch"]
+    if not _ms:
+        _out = mo.md("")
+    else:
+        _f = _ms[0]
+        _p = _f.params
+        _u1 = _p["omega1"] / (1 - _p["alpha1"] - _p["beta1"])
+        _u2 = _p["omega2"] / (1 - _p["alpha2"] - _p["beta2"])
+        _d1, _d2 = 1 / (1 - _p["p11"]), 1 / (1 - _p["p22"])
+        _joined = _f.series.select("ts", "p_high").join(bars.select("ts", "close"), on="ts")
+        _prob = alt.Chart(_joined).mark_area(opacity=0.35, color="#d62728").encode(x=alt.X("ts:T", title=None), y=alt.Y("p_high:Q", title="P(volatile regime)", scale=alt.Scale(domain=[0, 1])))
+        _price = alt.Chart(_joined).mark_line(strokeWidth=1, color="black").encode(x="ts:T", y=alt.Y("close:Q", scale=alt.Scale(type="log"), title="close"))
+        _out = mo.vstack(
+            [
+                mo.md(rf"""
+                ### Two regimes (Haas, Mittnik and Paolella 2004)
+
+                Two GARCH variances run side by side on the same shocks, and a
+                Markov chain picks which one the market is in. Regime 1 is the
+                calm one: unconditional σ² {_u1:.2f} against {_u2:.2f} (on
+                returns × 100). Expected stay **{_d1:.1f}** and **{_d2:.1f}**
+                days. Stays of a few days mean the two regimes act as a
+                *mixture*, a second source of fat tails, rather than as calm
+                and turbulent epochs. Ardia, Bluteau and Rüede (2019) found
+                regime changes in Bitcoin's GARCH dynamics.
+                """),
+                alt.layer(_prob, _price).resolve_scale(y="independent").properties(height=220, width="container"),
+            ]
+        )
+    _out
     return
 
 
@@ -540,7 +577,7 @@ def _(interval, mo):
     EVERY = {"1h": 24, "4h": 6, "1d": 5}[interval.value]
     horizon = mo.ui.dropdown(HORIZONS, value=list(HORIZONS)[0], label="horizon")
     walk_models = mo.ui.multiselect(
-        ["ewma", "garch", "gjr", "egarch", "aparch", "figarch", "rm2006", "cgarch", "betat", "carr"] + (["har", "shar", "harq"] if interval.value != "1h" else []) + (["rgarch"] if interval.value == "1d" else []),
+        ["ewma", "garch", "gjr", "egarch", "aparch", "figarch", "rm2006", "cgarch", "betat", "carr"] + (["har", "shar", "harq"] if interval.value != "1h" else []) + (["rgarch", "msgarch"] if interval.value == "1d" else []),
         value=["ewma", "garch", "gjr", "egarch"] + (["har", "harq"] if interval.value != "1h" else []),
         label="models",
     )
@@ -583,7 +620,7 @@ def _(EVERY, HORIZONS, deseason, go, gr, interval, mo, pl, split, ticker, walk, 
     _parts, skipped = [], {}
     for _m in walk_models.value:
         try:
-            _parts.append(walk(ticker.value, interval.value, split.isoformat(), _m, EVERY * (7 if _m == "figarch" else 4 if _m in ("cgarch", "betat") else 1), hs, deseason.value))
+            _parts.append(walk(ticker.value, interval.value, split.isoformat(), _m, EVERY * (18 if _m == "msgarch" else 7 if _m == "figarch" else 4 if _m in ("cgarch", "betat") else 1), hs, deseason.value))
         except gr.Refused as _why:  # a model the record cannot support here is reported, not hidden
             skipped[_m] = str(_why)
     walked = pl.concat(_parts)

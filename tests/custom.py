@@ -214,3 +214,66 @@ def the_realized_garch_walks_forward_without_lookahead():
     a, b = vol.walk_forward(r, **kw), vol.walk_forward(r, **kw)
     assert (a["fitted_through"] <= a["close_ts"]).all()
     assert a.equals(b) and (a["variance"] > 0).all()
+
+
+def _simulate_ms(n=5000, seed=12):
+    rng = np.random.default_rng(seed)
+    pars = [(0.05, 0.05, 0.85), (0.4, 0.1, 0.8)]  # unconditional 0.5 and 4.0
+    stay = (0.98, 0.95)
+    v = [0.5, 4.0]
+    s = 0
+    y, regime = np.empty(n), np.empty(n, dtype=int)
+    for t in range(n):
+        z = rng.standard_t(6) * sqrt(4 / 6)
+        y[t] = sqrt(v[s]) * z
+        regime[t] = s
+        v = [w + a * y[t] ** 2 + b * vk for (w, a, b), vk in zip(pars, v)]
+        s = s if rng.random() < stay[s] else 1 - s
+    return y, regime
+
+
+def the_two_regimes_are_recovered():
+    y, _ = _simulate_ms()
+    p = custom.estimate("msgarch", y)["params"]
+    u1 = p["omega1"] / (1 - p["alpha1"] - p["beta1"])
+    u2 = p["omega2"] / (1 - p["alpha2"] - p["beta2"])
+    assert u1 < u2
+    assert u1 == pytest.approx(0.5, rel=0.4) and u2 == pytest.approx(4.0, rel=0.4)
+    assert p["p11"] == pytest.approx(0.98, abs=0.03) and p["p22"] == pytest.approx(0.95, abs=0.03)
+
+
+def a_regime_swap_leaves_the_likelihood_unchanged():
+    y, _ = _simulate_ms(800)
+    p = {"mu": 0.0, "omega1": 0.4, "alpha1": 0.1, "beta1": 0.8, "omega2": 0.05, "alpha2": 0.05, "beta2": 0.85, "p11": 0.95, "p22": 0.98, "nu": 6.0}
+    q = custom.order_regimes(p)
+    assert q["omega1"] == 0.05 and q["p11"] == 0.98
+    ll = lambda d: custom.msgarch_filter(d, y, 1.0)[3].sum()  # noqa: E731
+    assert ll(q) == pytest.approx(ll(p))
+
+
+def a_pair_of_identical_regimes_is_one_garch():
+    y = np.random.default_rng(13).standard_normal(300)
+    p = {"mu": 0.0, "omega1": 0.1, "alpha1": 0.1, "beta1": 0.8, "omega2": 0.1, "alpha2": 0.1, "beta2": 0.8, "p11": 0.9, "p22": 0.7, "nu": 6.0}
+    s2, pred, _, _ = custom.msgarch_filter(p, y, 1.0)
+    g = [1.0]
+    for t in range(300):
+        g.append(0.1 + 0.1 * y[t] ** 2 + 0.8 * g[-1])
+    assert (pred * s2).sum(axis=1) == pytest.approx(g)
+
+
+def the_volatile_regime_is_recognised():
+    y, regime = _simulate_ms()
+    p = custom.estimate("msgarch", y)["params"]
+    filt = custom.msgarch_filter(p, y, float(np.var(y)))[2]
+    # On average the filter puts each day in its own regime: above ½ in the volatile one, below ½ in the calm.
+    # (A first guess of "a gap above 0.5" had no source; the regimes overlap under t tails and the gap is 0.44.)
+    assert filt[regime == 1, 1].mean() > 0.5 > filt[regime == 0, 1].mean()
+
+
+def the_msgarch_walks_forward_without_lookahead():
+    y, _ = _simulate_ms(900)
+    r = _returns((y / 100).tolist())
+    kw = dict(model="msgarch", split=r["close_ts"][699], every=1000, horizons=[1, 5], simulations=200, seed=1)
+    a, b = vol.walk_forward(r, **kw), vol.walk_forward(r, **kw)
+    assert (a["fitted_through"] <= a["close_ts"]).all()
+    assert a.equals(b) and (a["variance"] > 0).all()

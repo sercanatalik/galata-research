@@ -102,7 +102,7 @@ def walk_forward(
             fitted = y[first_obs : r + 1]
             xf = None if x is None else x[first_obs : r + 1]
             p = custom.estimate(model, fitted, xf)["params"]
-            init = float(np.log(np.var(fitted))) if model == "rgarch" else float(np.var(fitted))
+            init = float(np.log(np.var(fitted))) if model == "rgarch" else float(np.var(fitted))  # msgarch, cgarch: a variance
             blocks.append(
                 custom.forecast(
                     model, p, y[first_obs:stop], start=r - first_obs, horizon=H, init=init, simulations=simulations, seed=seed + r,

@@ -93,7 +93,7 @@ Phase 2, in the follow-up table's order, skipping the two that wait for 1m histo
 
 - [x] 11. **`fit-realized-garch`**: the log-linear Realized GARCH (Hansen, Huang, Shek 2012) on daily
   RV from 4h bars, fitted and walked forward like the other models.
-- [ ] 12. **`switch-regimes`**: a two-regime Markov-switching GARCH (Haas, Mittnik, Paolella 2004 form)
+- [x] 12. **`switch-regimes`**: a two-regime Markov-switching GARCH (Haas, Mittnik, Paolella 2004 form)
   with a Hamilton filter, fitted and walked forward.
 - [ ] 13. **`compare-across-horizons`**: Quaedvlieg's (2021) multi-horizon SPA, uniform and average,
   one verdict across the horizon path.
