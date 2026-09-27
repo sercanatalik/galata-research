@@ -5,7 +5,7 @@ import pytest
 from conftest import utc
 
 from galata_research import studies
-from galata_research.studies import _donchian_signal
+from galata_research.studies import donchian_signal
 
 
 def _bars(closes):
@@ -22,28 +22,28 @@ def _bars(closes):
 
 def a_breakout_opens_and_the_midpoint_trail_holds():
     # L=3: 12 breaks the 10s (stop 10); at 13 the stop ratchets to 11; 11.4 holds above it.
-    assert _donchian_signal([10, 10, 10, 12, 13, 11.4], [3]) == [0, 0, 0, 1, 1, 1]
+    assert donchian_signal([10, 10, 10, 12, 13, 11.4], [3]) == [0, 0, 0, 1, 1, 1]
 
 
 def a_close_below_the_stop_exits():
     # After 11.4 the midpoint of (10, 12, 13) lifts the stop to 11.5; 10.9 is below it.
-    assert _donchian_signal([10, 10, 10, 12, 13, 11.4, 10.9], [3])[-1] == 0
+    assert donchian_signal([10, 10, 10, 12, 13, 11.4, 10.9], [3])[-1] == 0
 
 
 def the_stop_a_close_sets_does_not_exit_that_close():
     # Guard: at 12.5 the stop is still 11 (set earlier), so it holds, and only then ratchets
     # to the midpoint of (12, 13, 20) = 16. The next close, 15, is below 16 and exits.
-    got = _donchian_signal([10, 10, 10, 12, 13, 20, 12.5, 15], [3])
+    got = donchian_signal([10, 10, 10, 12, 13, 20, 12.5, 15], [3])
     assert got[6] == 1 and got[7] == 0
 
 
 def a_lookback_without_enough_history_is_flat():
-    assert _donchian_signal([10, 11, 12], [5]) == [0, 0, 0]
+    assert donchian_signal([10, 11, 12], [5]) == [0, 0, 0]
 
 
 def the_ensemble_is_the_fraction_open():
     closes = [10] * 10 + [11]
-    assert _donchian_signal(closes, [3, 5, 20])[-1] == pytest.approx(2 / 3)
+    assert donchian_signal(closes, [3, 5, 20])[-1] == pytest.approx(2 / 3)
 
 
 def the_leverage_is_capped():

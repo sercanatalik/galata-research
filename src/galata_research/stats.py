@@ -15,6 +15,7 @@ from statistics import NormalDist
 import polars as pl
 
 from ._errors import Refused
+from .timeseries import optimal_block, stationary_bootstrap_indices
 
 EULER_MASCHERONI = 0.5772156649015329
 _N = NormalDist()
@@ -192,21 +193,6 @@ def pbo(matrix: pl.DataFrame, *, blocks: int = 16) -> dict:
     }
 
 
-def stationary_bootstrap_indices(n: int, block: float, rng) -> list[int]:
-    """Politis and Romano's (1994) stationary bootstrap: blocks of geometric length, mean `block`.
-
-    Each index continues the last one (wrapping at `n`) with probability
-    `1 − 1/block`, and otherwise starts a new block at a uniform position.
-    """
-    if n < 1 or block < 1:
-        raise Refused(f"n={n}, block={block}: a stationary bootstrap needs n ≥ 1 and block ≥ 1")
-    p = 1.0 / block
-    out = [rng.randrange(n)]
-    for _ in range(n - 1):
-        out.append(rng.randrange(n) if rng.random() < p else (out[-1] + 1) % n)
-    return out
-
-
 def reality_check(excess: pl.DataFrame, *, reps: int = 1000, block: float | str | None = None, seed: int = 0) -> dict:
     """White's Reality Check (2000) and Hansen's SPA (2005): does any column beat its benchmark?
 
@@ -221,7 +207,7 @@ def reality_check(excess: pl.DataFrame, *, reps: int = 1000, block: float | str 
       p_lower ≤ p_consistent ≤ p_upper.
     ω̂² is the stationary-bootstrap variance of √T d̄ (Politis and Romano),
     as in arch. `block` defaults to √T, as in arch; `"auto"` takes the median
-    of the columns' Politis–White blocks (`optimal_block`). p-values count
+    of the columns' Politis–White blocks (`timeseries.optimal_block`). p-values count
     replicates at or above the statistic.
     """
     import random
@@ -290,52 +276,3 @@ def reality_check(excess: pl.DataFrame, *, reps: int = 1000, block: float | str 
         "seed": seed,
         "rows": t,
     }
-
-
-def optimal_block(series) -> float:
-    """Politis and White's (2004) optimal mean block for the stationary bootstrap, as corrected in 2009.
-
-    Patton, Politis and White (2009) corrected the constants after Nordman
-    (2008). This follows arch 8.0.0's `optimal_block_length` (its
-    `stationary` column) step for step:
-    - find m̂, the first run of `max(5, ⌊log₁₀ n⌋)` autocorrelations under
-      `2√(log₁₀ n / n)`, and set `M = 2m̂`;
-    - with a flat-top lag window, take `Ĝ = Σ 2λ(k/M)·k·γ̂(k)` and the
-      long-run variance `ĝ = γ̂(0) + Σ 2λ(k/M)·γ̂(k)`;
-    - `b = (2Ĝ² / (2ĝ²))^{1/3} n^{1/3}`, capped at `min(3√n, n/3)`.
-    """
-    from math import ceil, log10
-
-    x = _series(series).to_list()
-    n = len(x)
-    if n < 10:
-        raise Refused(f"{n} points are too few to choose a block")
-    mean = sum(x) / n
-    eps = [v - mean for v in x]
-    b_max = ceil(min(3 * sqrt(n), n / 3))
-    kn = max(5, int(log10(n)))
-    m_max = int(ceil(sqrt(n))) + kn
-    cv = 2 * sqrt(log10(n) / n)
-
-    def dot(a, b):
-        return sum(p * q for p, q in zip(a, b))
-
-    acv, acorr, opt_m = [], [], None
-    for i in range(m_max + 1):
-        v1, v2 = dot(eps[i + 1 :], eps[i + 1 :]), dot(eps[: n - (i + 1)], eps[: n - (i + 1)])
-        cross = dot(eps[i:], eps[: n - i])
-        acv.append(cross / n)
-        acorr.append(abs(cross) / sqrt(v1 * v2) if v1 * v2 > 0 else 0.0)
-        if i >= kn and opt_m is None and all(a < cv for a in acorr[i - kn : i]):
-            opt_m = i - kn
-    m = min(2 * max(opt_m, 1) if opt_m is not None else m_max, m_max)
-
-    g, long_run = 0.0, acv[0]
-    for k in range(1, m + 1):
-        lam = 1.0 if k / m <= 0.5 else 2 * (1 - k / m)
-        g += 2 * lam * k * acv[k]
-        long_run += 2 * lam * acv[k]
-    if long_run <= 0:
-        return 1.0
-    b = ((2 * g**2) / (2 * long_run**2)) ** (1 / 3) * n ** (1 / 3)
-    return min(b, b_max)

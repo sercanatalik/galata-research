@@ -5,7 +5,7 @@ from datetime import datetime
 
 import polars as pl
 
-from . import _root, _scan
+from . import _root, _scan, utils
 from ._errors import Refused
 from .clocks import funding, funding_live, marks
 from .gaps import gaps
@@ -63,8 +63,8 @@ def candles(
     if interval not in INTERVALS:
         raise Refused(f"interval={interval!r} is not one of {', '.join(INTERVALS)}")
     width = INTERVALS[interval]
-    lo, hi = _scan.window(start, end)
-    bound = None if as_of is None else _scan.instant("as_of", as_of)
+    lo, hi = utils.window(start, end)
+    bound = None if as_of is None else utils.instant("as_of", as_of)
     if engine not in _scan.ENGINES:
         raise Refused(f"engine={engine!r} is not one of {', '.join(_scan.ENGINES)}")
 
@@ -216,8 +216,8 @@ def quotes(
 
 def _ticks(kind, fields, tickers, start, end, as_of, engine) -> pl.LazyFrame | None:
     """The shared half of a tick loader: checks, validation, the window. None when no partition is touched."""
-    lo, hi = _scan.window(start, end)
-    bound = None if as_of is None else _scan.instant("as_of", as_of)
+    lo, hi = utils.window(start, end)
+    bound = None if as_of is None else utils.instant("as_of", as_of)
     if engine not in _scan.ENGINES:
         raise Refused(f"engine={engine!r} is not one of {', '.join(_scan.ENGINES)}")
 

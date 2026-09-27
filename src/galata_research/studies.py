@@ -42,7 +42,7 @@ def moving_average(
                 position = spread.sign()
                 if side == "long_flat":
                     position = position.clip(lower_bound=0)
-                frames.append(_trial(bars, position, f"ma {fast}/{slow} {side}", fee))
+                frames.append(trial(bars, position, f"ma {fast}/{slow} {side}", fee=fee))
     return pl.concat(frames)
 
 
@@ -56,7 +56,7 @@ def momentum(
     frames = []
     for lookback in lookbacks:
         position = (pl.col("close") / pl.col("close").shift(lookback) - 1).sign()
-        frames.append(_trial(bars, position, f"mom {lookback}", fee))
+        frames.append(trial(bars, position, f"mom {lookback}", fee=fee))
     return pl.concat(frames)
 
 
@@ -92,7 +92,7 @@ def donchian_ensemble(
     positions = []
     for (ticker,), group in frame.group_by("ticker", maintain_order=True):
         closes = group["close"].to_list()
-        signal = _donchian_signal(closes, lookbacks)
+        signal = donchian_signal(closes, lookbacks)
         if sized:
             rets = [None] + [closes[i] / closes[i - 1] - 1 for i in range(1, len(closes))]
             scale = []
@@ -108,10 +108,10 @@ def donchian_ensemble(
         positions.append(group.select("ticker", "ts").with_columns(pl.Series("_position", signal, dtype=pl.Float64)))
     with_positions = frame.join(pl.concat(positions), on=["ticker", "ts"], how="left")
     name = f"donchian {'sized' if sized else 'unsized'}"
-    return _trial(with_positions, pl.col("_position"), name, fee)
+    return trial(with_positions, pl.col("_position"), name, fee=fee)
 
 
-def _donchian_signal(closes: list[float], lookbacks: list[int]) -> list[float]:
+def donchian_signal(closes: list[float], lookbacks: list[int]) -> list[float]:
     """The fraction of lookbacks open after each close, by the three registered steps."""
     open_ = {L: False for L in lookbacks}
     stop = {L: 0.0 for L in lookbacks}
@@ -162,14 +162,14 @@ def random_timing(
     for (trial, ticker), group in trials.sort("ts").group_by("trial", "ticker", maintain_order=True):
         kept = group.drop_nulls(["position", "bar_return"])
         positions, returns = kept["position"].to_list(), kept["bar_return"].to_list()
-        runs = _runs(positions)
-        observed = stats.sharpe(_replay(positions, returns, fee))
+        stretches = runs(positions)
+        observed = stats.sharpe(replay(positions, returns, fee))
         twins = []
         for k in range(samples):
-            order = runs[:]
+            order = stretches[:]
             random.Random(f"{seed}:{trial}:{ticker}:{k}").shuffle(order)
             path = [value for value, length in order for _ in range(length)]
-            twins.append(stats.sharpe(_replay(path, returns, fee)))
+            twins.append(stats.sharpe(replay(path, returns, fee)))
         scored = sorted(t for t in twins if t is not None)
         rows.append(
             {
@@ -180,7 +180,7 @@ def random_timing(
                 "random_median": scored[len(scored) // 2] if scored else None,
                 "random_p95": scored[int(0.95 * (len(scored) - 1))] if scored else None,
                 "samples": samples,
-                "runs": len(runs),
+                "runs": len(stretches),
                 "seed": seed,
                 "null": RANDOM_TIMING_NULL,
             }
@@ -188,18 +188,18 @@ def random_timing(
     return pl.DataFrame(rows)
 
 
-def _runs(positions: list[float]) -> list[tuple[float, int]]:
+def runs(positions: list[float]) -> list[tuple[float, int]]:
     """Maximal stretches of one position, as (position, length)."""
-    runs: list[tuple[float, int]] = []
+    out: list[tuple[float, int]] = []
     for p in positions:
-        if runs and runs[-1][0] == p:
-            runs[-1] = (p, runs[-1][1] + 1)
+        if out and out[-1][0] == p:
+            out[-1] = (p, out[-1][1] + 1)
         else:
-            runs.append((p, 1))
-    return runs
+            out.append((p, 1))
+    return out
 
 
-def _replay(positions: list[float], returns: list[float], fee: float) -> list[float]:
+def replay(positions: list[float], returns: list[float], fee: float) -> list[float]:
     """Net returns of a position path over bar returns: position × return − fee × turnover."""
     out, previous = [], 0.0
     for p, r in zip(positions, returns):
@@ -352,6 +352,7 @@ def excess(frame: pl.DataFrame, benchmark: str) -> pl.DataFrame:
     return grid.select("ts", *[(pl.col(c) - pl.col(f"{benchmark} | {c.rsplit(' | ', 1)[1]}")).alias(c) for c in columns])
 
 
-def _trial(bars, position: pl.Expr, name: str, fee: float) -> pl.DataFrame:
+def trial(bars, position: pl.Expr, name: str, *, fee: float = backtest.TAKER_FEE) -> pl.DataFrame:
+    """One named trial: `backtest.returns` of `position`, as `trial, ticker, ts, position, bar_return, gross, net`."""
     r = backtest.returns(bars, position, fee=fee)
     return r.select(pl.lit(name).alias("trial"), "ticker", "ts", "position", "bar_return", "gross", "net")

@@ -1,4 +1,4 @@
-"""The pipeline every loader shares: times in, partitions listed, decimals cast, clock put on, engine chosen.
+"""The pipeline every loader shares: partitions listed, decimals cast, clock put on, engine chosen.
 
 The rules live here and in each loader once, as polars expressions.
 `engine="duckdb"` runs DuckDB over their output rather than restating them.
@@ -15,29 +15,6 @@ from ._errors import Refused
 
 ENGINES = ("polars", "duckdb")
 UTC_US = pl.Datetime("us", "UTC")
-
-
-def instant(name: str, value: datetime | str) -> int:
-    """A zone-aware time as micros since the epoch. A naive one is refused."""
-    if isinstance(value, str):
-        try:
-            value = datetime.fromisoformat(value)
-        except ValueError:
-            raise Refused(f"{name}={value!r} is not an ISO-8601 time") from None
-    if not isinstance(value, datetime):
-        raise Refused(f"{name} must be a datetime or an ISO-8601 string, not {type(value).__name__}")
-    if value.tzinfo is None or value.utcoffset() is None:
-        raise Refused(f"{name}={value.isoformat()} has no zone; give it one, e.g. tzinfo=UTC or a +00:00 offset")
-    delta = value - datetime(1970, 1, 1, tzinfo=UTC)
-    return (delta.days * 86_400 + delta.seconds) * 1_000_000 + delta.microseconds
-
-
-def window(start: datetime | str, end: datetime | str) -> tuple[int, int]:
-    """`[start, end)` in micros; an empty or reversed window is refused."""
-    lo, hi = instant("start", start), instant("end", end)
-    if lo >= hi:
-        raise Refused(f"start ({start}) must be before end ({end})")
-    return lo, hi
 
 
 def _day(micros: int) -> date:

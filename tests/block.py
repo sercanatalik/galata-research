@@ -3,7 +3,7 @@ import random
 import polars as pl
 import pytest
 
-from galata_research import stats
+from galata_research import stats, timeseries
 
 
 def _ar(phi, n, seed):
@@ -20,15 +20,15 @@ def the_block_agrees_with_arch():
     for phi, seed in [(0.6, 1), (0.2, 2), (0.9, 3)]:
         series = _ar(phi, 2000, seed)
         theirs = float(arch.optimal_block_length(np.asarray(series))["stationary"].iloc[0])
-        assert stats.optimal_block(series) == pytest.approx(theirs, abs=1e-6)
+        assert timeseries.optimal_block(series) == pytest.approx(theirs, abs=1e-6)
 
 
 def the_persistence_lengthens_the_block():
-    assert stats.optimal_block(_ar(0.8, 2000, 4)) > stats.optimal_block(_ar(0.1, 2000, 4))
+    assert timeseries.optimal_block(_ar(0.8, 2000, 4)) > timeseries.optimal_block(_ar(0.1, 2000, 4))
 
 
 def the_auto_block_is_reported():
     frame = pl.DataFrame({f"c{k}": _ar(0.3 + 0.2 * k, 600, k) for k in range(3)})
     got = stats.reality_check(frame, reps=50, block="auto")
-    blocks = sorted(stats.optimal_block(frame[c]) for c in frame.columns)
+    blocks = sorted(timeseries.optimal_block(frame[c]) for c in frame.columns)
     assert got["block"] == pytest.approx(max(1.0, blocks[1]))

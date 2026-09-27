@@ -81,7 +81,7 @@ def _(alt, gr, minute, mo, pl, ticker, timedelta, trades):
 @app.cell
 def _(gr, mo, pl):
     # Replays: raw rows in the tape over executions after the dedupe.
-    raw = pl.scan_parquet(gr._root.root() / "tape" / "kind=trades" / "**" / "*.parquet", hive_partitioning=True)
+    raw = pl.scan_parquet(gr.root() / "tape" / "kind=trades" / "**" / "*.parquet", hive_partitioning=True)
     replay = (
         raw.group_by("date")
         .agg(pl.len().alias("rows"), pl.struct("venue", "ticker", "trade_id").n_unique().alias("executions"))

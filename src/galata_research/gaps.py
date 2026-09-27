@@ -12,7 +12,7 @@ from datetime import datetime, timedelta
 
 import polars as pl
 
-from . import _root, _scan
+from . import _root, _scan, utils
 from ._errors import Refused
 
 MASKABLE = ("candles", "trades", "quotes")
@@ -53,7 +53,7 @@ def gaps(
     `tickers` keeps those tickers' gaps and every venue-wide gap (a null
     ticker). A ticker with no gaps gives no rows, which is a true answer.
     """
-    lo, hi = _scan.window(start, end)
+    lo, hi = utils.window(start, end)
     if engine not in _scan.ENGINES:
         raise Refused(f"engine={engine!r} is not one of {', '.join(_scan.ENGINES)}")
     lf = _raw().filter((pl.col("from_micros") < hi) & (pl.col("to_micros") > lo))

@@ -7,16 +7,33 @@
     gr.account.margin("main", start, end)                   # my margin, per snapshot
     gr.join_recv(trades, gr.market.marks(["BTC"], start, end))  # mark_recv at each trade
     gr.frontier()                                           # how far the record goes
+    gr.root()                                               # where the record is
+    gr.timeseries.returns(bars, kind="log")                 # null across a hole
+    gr.timeseries.periods_per_year("1h")                    # 8760
 
 The library owns the record's semantics, not its I/O: dedupe, closure, the
 clock and the cast are applied once, here, so a notebook never reads a
 re-fetched bar twice or a bar's open as its close.
 """
 
-from . import account, backtest, market, stats, studies
+from . import account, backtest, market, stats, studies, timeseries, utils
 from ._errors import Refused
 from ._frontier import frontier
+from ._root import root
 from .clocks import join_recv
 from .gaps import mask_gaps
 
-__all__ = ["Refused", "account", "backtest", "frontier", "join_recv", "market", "mask_gaps", "stats", "studies"]
+__all__ = [
+    "Refused",
+    "account",
+    "backtest",
+    "frontier",
+    "join_recv",
+    "market",
+    "mask_gaps",
+    "root",
+    "stats",
+    "studies",
+    "timeseries",
+    "utils",
+]

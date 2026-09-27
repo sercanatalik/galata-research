@@ -211,6 +211,11 @@ gr.frontier()                           # how far each dataset is durable
 | `gr.account.margin(...)`, `gr.account.positions(...)` | my snapshots per dex | venue time; `equity_held` false on a unified account |
 | `gr.account.fills(...)`, `funding_payments(...)`, `ledger_updates(...)` | my history, from datawatch's ledger projection | one row per identity; ledger updates long, one row per dex moved; never an address |
 | `gr.frontier()` | one row per dataset | from names and footers, no scan |
+| `gr.root()` | where the record is | `GALATA_VAR`, then `galata-research.toml`, then the sibling checkout |
+| `gr.timeseries.returns(bars, *, kind)` | `ticker, ts, close_ts, return`, simple or log | null on a ticker's first bar and after a hole: the backtest's rule |
+| `gr.timeseries.periods_per_year(interval)` | 525,600 · 8,760 · 2,190 · 365 | calendar time: the venue never closes |
+| `gr.timeseries.stationary_bootstrap_indices`, `optimal_block` | resampling indices; Politis–White block | agrees with arch to 1e-6 |
+| `gr.utils.require`, `window`, `instant` | a refusal naming what is missing; micros | a naive time is refused |
 
 Every loader returns a `pl.LazyFrame`, or a DuckDB relation with
 `engine="duckdb"`. Prices are `Float64` from the tape's `DECIMAL(38,18)`.

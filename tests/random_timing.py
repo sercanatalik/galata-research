@@ -6,7 +6,7 @@ import pytest
 from conftest import utc
 
 from galata_research import backtest, stats, studies
-from galata_research.studies import _replay, _runs
+from galata_research.studies import replay, runs
 
 
 def _frame(positions, returns, trial="t", ticker="BTC"):
@@ -45,10 +45,10 @@ def a_value_above_every_draw_is_one_in_n_plus_one():
 
 def a_shuffle_keeps_the_runs_and_the_exposure():
     positions = [1] * 5 + [0] * 3 + [-1] * 7
-    runs = _runs(positions)
-    assert runs == [(1, 5), (0, 3), (-1, 7)]
+    stretches = runs(positions)
+    assert stretches == [(1, 5), (0, 3), (-1, 7)]
     for k in range(20):
-        order = runs[:]
+        order = stretches[:]
         random.Random(k).shuffle(order)
         path = [v for v, n in order for _ in range(n)]
         assert sorted(path) == sorted(positions)
@@ -94,4 +94,4 @@ def no_null_bar_is_replayed():
 
 
 def the_replay_charges_turnover():
-    assert _replay([1, 1, -1], [0.0, 0.0, 0.0], fee=0.001) == pytest.approx([-0.001, 0.0, -0.002])
+    assert replay([1, 1, -1], [0.0, 0.0, 0.0], fee=0.001) == pytest.approx([-0.001, 0.0, -0.002])

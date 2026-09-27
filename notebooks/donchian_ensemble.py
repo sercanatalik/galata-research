@@ -38,14 +38,14 @@ def _(mo):
 @app.cell
 def _(backtest, gr, pl, studies):
     EVER = ("2020-01-01T00:00Z", "2100-01-01T00:00Z")
-    PER_YEAR = 365
+    PER_YEAR = gr.timeseries.periods_per_year("1d")
     bars = gr.market.candles(["BTC", "ETH"], "1d", *EVER)
     trials = pl.concat(
         [
             studies.donchian_ensemble(bars, sized=True),
             studies.donchian_ensemble(bars, sized=False),
             # Buy-and-hold, the null PBO ranks against. It is not one of the registered N.
-            studies._trial(bars, pl.lit(1.0), "buy and hold", backtest.TAKER_FEE),
+            studies.trial(bars, pl.lit(1.0), "buy and hold", fee=backtest.TAKER_FEE),
         ]
     )
     # Every trial is scored over the same days: from when the sized ensemble first has a position.
@@ -142,7 +142,7 @@ def _(aligned, mo, pl):
 @app.cell
 def _(bars, mo, pl, studies):
     closes = bars.filter(pl.col("ticker") == "BTC").sort("ts").collect()
-    active = closes.select("ts", pl.Series("open lookbacks", [round(x * 9) for x in studies._donchian_signal(closes["close"].to_list(), list(studies.DONCHIAN_LOOKBACKS))]))
+    active = closes.select("ts", pl.Series("open lookbacks", [round(x * 9) for x in studies.donchian_signal(closes["close"].to_list(), list(studies.DONCHIAN_LOOKBACKS))]))
     mo.vstack([mo.md("## BTC: how many of the nine lookbacks are open"), mo.ui.altair_chart(__import__("altair").Chart(active).mark_area(opacity=0.6).encode(x="ts:T", y="open lookbacks:Q").properties(height=160, width="container"))])
     return
 

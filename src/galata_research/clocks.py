@@ -12,7 +12,7 @@ from datetime import datetime, timedelta
 
 import polars as pl
 
-from . import _root, _scan
+from . import _root, _scan, utils
 from ._errors import Refused
 
 MARK_VALUES = ["mark", "oracle", "mid", "index", "open_interest", "premium"]
@@ -49,8 +49,8 @@ def funding(
     rebuilt; the rates load either way. The record's settled history is only
     as deep as datawatch's funding walk (`walk_funding_days`).
     """
-    lo, hi = _scan.window(start, end)
-    bound = None if as_of is None else _scan.instant("as_of", as_of)
+    lo, hi = utils.window(start, end)
+    bound = None if as_of is None else utils.instant("as_of", as_of)
     dataset, wanted = _dataset("funding", ["rate"], tickers, engine)
     files = _scan.partitions(dataset, lo, hi)
     if not files:
@@ -180,7 +180,7 @@ def _require(file, values: list[str], kind: str) -> None:
 
 
 def _received(kind, values, schema, tickers, start, end, collapse, engine):
-    lo, hi = _scan.window(start, end)
+    lo, hi = utils.window(start, end)
     dataset, wanted = _dataset(kind, values, tickers, engine)
     # An untimed row is partitioned by its receipt day, so the window's days are receipt days.
     files = _scan.partitions(dataset, lo, hi)

@@ -40,7 +40,7 @@ def _(mo):
 @app.cell
 def _(gr, pl, studies):
     EVER = ("2020-01-01T00:00Z", "2100-01-01T00:00Z")
-    PER_YEAR = 365
+    PER_YEAR = gr.timeseries.periods_per_year("1d")
     SEED = 0
     bars = gr.market.candles(["BTC", "ETH"], "1d", *EVER)
     trials = pl.concat(
@@ -95,13 +95,13 @@ def _(PER_YEAR, SEED, alt, choice, mo, pl, studies, trials):
     trial, ticker = choice.value
     kept = trials.filter((pl.col("trial") == trial) & (pl.col("ticker") == ticker)).sort("ts").drop_nulls(["position", "bar_return"])
     positions, returns = kept["position"].to_list(), kept["bar_return"].to_list()
-    runs = studies._runs(positions)
+    runs = studies.runs(positions)
     twins = []
     for k in range(1000):
         order = runs[:]
         random.Random(f"{SEED}:{trial}:{ticker}:{k}").shuffle(order)
-        twins.append(stats.sharpe(studies._replay([v for v, n in order for _ in range(n)], returns, 0.00045)))
-    observed = stats.sharpe(studies._replay(positions, returns, 0.00045)) * PER_YEAR**0.5
+        twins.append(stats.sharpe(studies.replay([v for v, n in order for _ in range(n)], returns, 0.00045)))
+    observed = stats.sharpe(studies.replay(positions, returns, 0.00045)) * PER_YEAR**0.5
     cloud = pl.DataFrame({"sharpe": [t * PER_YEAR**0.5 for t in twins if t is not None]})
     hist = alt.Chart(cloud).mark_bar(opacity=0.7).encode(x=alt.X("sharpe:Q", bin=alt.Bin(maxbins=40), title="annualized Sharpe of a random twin"), y="count():Q")
     rule = alt.Chart(pl.DataFrame({"x": [observed]})).mark_rule(color="#d64545", strokeWidth=2).encode(x="x:Q")

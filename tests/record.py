@@ -64,7 +64,7 @@ def no_execution_is_returned_twice():
 def no_trade_id_carries_two_contents():
     # The loader keeps the first receipt without comparing; this holds that
     # every replay is the same execution, so nothing is lost by it.
-    raw = pl.scan_parquet(gr._root.root() / "tape" / "kind=trades" / "**" / "*.parquet", hive_partitioning=False)
+    raw = pl.scan_parquet(gr.root() / "tape" / "kind=trades" / "**" / "*.parquet", hive_partitioning=False)
     contents = raw.group_by("venue", "ticker", "trade_id").agg(
         pl.struct("at_micros", "price", "size", "aggressor").n_unique().alias("contents")
     )
@@ -96,7 +96,7 @@ def every_masked_trade_count_matches_a_direct_count():
     # venue time falls in [from - 1 s, to) of a trades gap.
     import duckdb
 
-    tape = gr._root.root() / "tape"
+    tape = gr.root() / "tape"
     direct = duckdb.sql(f"""
         with t as (select distinct venue, ticker, trade_id, at_micros
                    from read_parquet('{tape}/kind=trades/**/*.parquet', hive_partitioning=false)),

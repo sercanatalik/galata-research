@@ -49,7 +49,7 @@ def _(backtest, gr, pl, studies):
             studies.momentum(bars, [5, 10, 20, 40, 60, 90, 120]),
             studies.donchian_ensemble(bars, sized=True),
             studies.donchian_ensemble(bars, sized=False),
-            studies._trial(bars, pl.lit(1.0), "buy and hold", backtest.TAKER_FEE),
+            studies.trial(bars, pl.lit(1.0), "buy and hold", fee=backtest.TAKER_FEE),
         ]
     )
     return (trials,)

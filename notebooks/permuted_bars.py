@@ -42,7 +42,7 @@ def _(mo):
 @app.cell
 def _(gr, pl, studies, time):
     EVER = ("2020-01-01T00:00Z", "2100-01-01T00:00Z")
-    PER_YEAR = 365
+    PER_YEAR = gr.timeseries.periods_per_year("1d")
     bars = gr.market.candles(["BTC", "ETH"], "1d", *EVER).collect()
     searches = {
         "the 66 example trials": lambda b: pl.concat([studies.moving_average(b, [5, 10, 20, 50], [20, 50, 100, 200]), studies.momentum(b, [5, 10, 20, 40, 60, 90, 120])]),

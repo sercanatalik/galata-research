@@ -5,7 +5,7 @@ import polars as pl
 import pytest
 from conftest import utc
 
-from galata_research import stats, studies
+from galata_research import stats, studies, timeseries
 
 
 def _noise(columns=20, rows=600, seed=1, edge=None):
@@ -17,7 +17,7 @@ def _noise(columns=20, rows=600, seed=1, edge=None):
 
 
 def the_blocks_average_their_declared_length():
-    idx = stats.stationary_bootstrap_indices(200_000, 10, random.Random(0))
+    idx = timeseries.stationary_bootstrap_indices(200_000, 10, random.Random(0))
     breaks = sum(1 for a, b in zip(idx, idx[1:]) if b != (a + 1) % 200_000)
     assert 9 <= len(idx) / (breaks + 1) <= 11
 

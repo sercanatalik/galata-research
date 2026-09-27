@@ -44,7 +44,7 @@ def _(mo):
 @app.cell
 def _(gr, pl, studies):
     EVER = ("2020-01-01T00:00Z", "2100-01-01T00:00Z")
-    PER_YEAR = 365
+    PER_YEAR = gr.timeseries.periods_per_year("1d")
     bars = gr.market.candles(["BTC", "ETH"], "1d", *EVER)
     trials = pl.concat(
         [

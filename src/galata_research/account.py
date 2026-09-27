@@ -23,7 +23,7 @@ from pathlib import Path
 
 import polars as pl
 
-from . import _root, _scan
+from . import _root, _scan, utils
 from ._errors import Refused
 
 DECODED = "clearinghouseState"
@@ -182,7 +182,7 @@ def ledger_updates(accounts: Sequence[str] | str | None, start: datetime | str, 
 
 
 def _projected(kind: str, schema: dict, accounts, start, end, venue, engine):
-    lo, hi = _scan.window(start, end)
+    lo, hi = utils.window(start, end)
     if engine not in _scan.ENGINES:
         raise Refused(f"engine={engine!r} is not one of {', '.join(_scan.ENGINES)}")
     tape = _root.root() / "ledger-tape"
@@ -211,7 +211,7 @@ def _projected(kind: str, schema: dict, accounts, start, end, venue, engine):
 
 
 def _decoded(accounts, start, end, venue, engine) -> tuple[pl.LazyFrame, pl.LazyFrame]:
-    lo, hi = _scan.window(start, end)
+    lo, hi = utils.window(start, end)
     if engine not in _scan.ENGINES:
         raise Refused(f"engine={engine!r} is not one of {', '.join(_scan.ENGINES)}")
     margins, held = [], []

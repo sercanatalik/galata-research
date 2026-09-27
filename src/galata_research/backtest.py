@@ -13,6 +13,7 @@ from datetime import timedelta
 
 import polars as pl
 
+from . import timeseries, utils
 from ._errors import Refused
 
 TAKER_FEE = 0.00045
@@ -47,20 +48,17 @@ def returns(
     """
     if fee < 0:
         raise Refused(f"fee={fee} is negative")
-    lf = bars.lazy()
-    names = lf.collect_schema().names()
-    missing = [c for c in ("ticker", "ts", "close_ts", "close") if c not in names]
-    if missing:
-        raise Refused(f"bars need {', '.join(missing)}; load them with gr.market.candles")
+    utils.require(bars, ("ticker", "ts", "close_ts", "close"), "load bars with gr.market.candles")
+    lf = utils.lazy(bars)
     out = (
         lf.sort("ticker", "ts")
         .with_columns(position.over("ticker").cast(pl.Float64).alias("position"))
         .with_columns(
             # The position decided at the previous close is what this bar is held with.
             pl.col("position").shift(1).over("ticker").alias("_held"),
-            (pl.col("close") / pl.col("close").shift(1).over("ticker") - 1).alias("_ret"),
+            timeseries.simple_return().alias("_ret"),
             # A bar whose previous row is not the bar just before it spans a hole.
-            (pl.col("close_ts").shift(1).over("ticker") == pl.col("ts")).alias("_next"),
+            timeseries.contiguous().alias("_next"),
         )
         .with_columns(
             (pl.col("_held") - pl.col("_held").shift(1).over("ticker").fill_null(0.0)).abs().alias("_turn"),
@@ -104,10 +102,8 @@ def returns(
 
 def _rates_per_bar(bars: pl.LazyFrame, funding: pl.LazyFrame | pl.DataFrame) -> pl.LazyFrame:
     """Per bar: the sum of the settled rates due in `(ts, close_ts]`, and whether every due hour had one."""
-    f = funding.lazy()
-    missing = [c for c in ("ticker", "ts", "rate") if c not in f.collect_schema().names()]
-    if missing:
-        raise Refused(f"funding needs {', '.join(missing)}; load it with gr.market.funding")
+    utils.require(funding, ("ticker", "ts", "rate"), "load funding with gr.market.funding")
+    f = utils.lazy(funding)
     # A settlement is stamped a few ms past its hour (06:00:00.121): it is that hour's.
     settled = (
         f.select("ticker", pl.col("ts").dt.truncate("1h").alias("_hour"), pl.col("rate").cast(pl.Float64))
