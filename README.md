@@ -222,6 +222,7 @@ gr.frontier()                           # how far each dataset is durable
 | `gr.timeseries.walk_forward_origins(bars, split, *, window, every)` | one row per origin: `refit`, `fit_from`, `fitted_through` | `fitted_through ≤ close_ts`; rolling or expanding; fixed between refits |
 | `gr.models.vol.fit(returns, *, model, dist, fit)` | a `Fit`: parameters, persistence, half-life, σ̄, the in-sample σ and z | the `[models]` extra; each model's own persistence (GJR's γ weighted by E[z²·1(z<0)], EGARCH's β); gaps bridged and `after_gap` marked; polars and floats out, never pandas |
 | `gr.models.vol.table`, `news_impact`, `diagnose` | one row per fit; Engle–Ng's curve; Ljung–Box on z and z², ARCH-LM | ARCH-LM agrees with arch's to 1e-6 |
+| `gr.models.vol.walk_forward(returns, *, model, split, window, every, horizons, factors)` | one row per (origin, h): `variance`, `cum_variance`, `target_ts`, `fitted_through` | fitted on each refit's window only, fixed between refits; no return after an origin is used; EGARCH and APARCH simulated, seeded; deseasonalised fits re-seasonalised by the target cell |
 | `gr.timeseries.stationary_bootstrap_indices`, `optimal_block` | resampling indices; Politis–White block | agrees with arch to 1e-6 |
 | `gr.utils.require`, `window`, `instant` | a refusal naming what is missing; micros | a naive time is refused |
 
@@ -264,7 +265,7 @@ trial, so N is the true N) back these notebooks:
 | `random_timing.py` | is it the timing, or just the exposure? Each trial against 1,000 twins with its own runs shuffled: **none beats its twins at 5%** |
 | `whole_set.py` | does *anything* in the set beat its benchmark? White's Reality Check and Hansen's SPA over 70 trials: **no**, against buy-and-hold (p ≈ 0.7) or cash (p ≥ 0.07) |
 | `volatility.py` | what was the volatility? Five window estimators, two EWMA baselines, RV and realized range from finer bars, the signature plot, the calendar in hourly volatility, and the walk-forward schedule. On BTC the range estimators read **above** close-to-close, 7–12% at the median on 1d and 1h, as legacy's testnet week found |
-| `garch.py` | GARCH, GARCH-t and variations, in sample: the fit table, QQ, news impact, residual diagnostics, and whether the persistence is real. On BTC daily the parameter-free RiskMetrics 2006 and EWMA beat every fitted GARCH by BIC; hourly, APARCH-t and EGARCH-t lead while GARCH-t sits at α+β = 1 until deseasonalised |
+| `garch.py` | GARCH, GARCH-t and variations. Out of sample: σ̂ walked forward at a chosen horizon, and the forecast fan from any origin. In sample: the fit table, QQ, news impact, residual diagnostics, and whether the persistence is real. On BTC daily the parameter-free RiskMetrics 2006 and EWMA beat every fitted GARCH by BIC; hourly, APARCH-t and EGARCH-t lead while GARCH-t sits at α+β = 1 until deseasonalised |
 | `permuted_bars.py` | is there structure to find at all? The whole search re-run on 200 markets with the bars permuted: the real best (1.08) is **below** the permuted median (1.13), p = 0.59 |
 
 **A pre-registered test.** `planning/preregistered/donchian-ensemble.md` froze

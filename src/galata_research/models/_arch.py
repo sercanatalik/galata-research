@@ -6,8 +6,7 @@ here, so no caller of `gr.models` ever holds one.
 
 import numpy as np
 import polars as pl
-from arch import arch_model
-from arch.univariate import ConstantMean, EWMAVariance, GeneralizedError, Normal, RiskMetrics2006, SkewStudent, StudentsT
+from arch.univariate import APARCH, EGARCH, FIGARCH, GARCH, ConstantMean, EWMAVariance, GeneralizedError, Normal, RiskMetrics2006, SkewStudent, StudentsT
 
 from .._errors import Refused
 
@@ -16,12 +15,16 @@ MODELS = ("ewma", "rm2006", "garch", "gjr", "egarch", "aparch", "figarch")
 DISTS = ("normal", "t", "skewt", "ged")
 _DIST = {"normal": Normal, "t": StudentsT, "skewt": SkewStudent, "ged": GeneralizedError}
 _VOL = {
-    "garch": dict(vol="GARCH", p=1, o=0, q=1),
-    "gjr": dict(vol="GARCH", p=1, o=1, q=1),
-    "egarch": dict(vol="EGARCH", p=1, o=1, q=1),
-    "aparch": dict(vol="APARCH", p=1, o=1, q=1),
-    "figarch": dict(vol="FIGARCH", p=1, q=1),
+    "ewma": lambda: EWMAVariance(0.94),
+    "rm2006": lambda: RiskMetrics2006(),
+    "garch": lambda: GARCH(p=1, o=0, q=1),
+    "gjr": lambda: GARCH(p=1, o=1, q=1),
+    "egarch": lambda: EGARCH(p=1, o=1, q=1),
+    "aparch": lambda: APARCH(p=1, o=1, q=1),
+    "figarch": lambda: FIGARCH(p=1, q=1),
 }
+# arch refuses an analytic forecast beyond one step for these; they are simulated.
+SIMULATED = ("egarch", "aparch")
 
 
 def values(frame: pl.DataFrame, column: str) -> np.ndarray:
@@ -32,15 +35,25 @@ def values(frame: pl.DataFrame, column: str) -> np.ndarray:
     return s.cast(pl.Float64).to_numpy() * SCALE
 
 
-def fit(y: np.ndarray, model: str, dist: str, *, last_obs: int | None = None):
-    """An arch result for a constant mean and a (1,1) process; `last_obs` ends the estimation sample."""
-    if model == "ewma":
-        m = ConstantMean(y, volatility=EWMAVariance(0.94), distribution=_DIST[dist]())
-    elif model == "rm2006":
-        m = ConstantMean(y, volatility=RiskMetrics2006(), distribution=_DIST[dist]())
-    else:
-        m = arch_model(y, mean="Constant", dist={"normal": "normal", "t": "t", "skewt": "skewt", "ged": "ged"}[dist], **_VOL[model])
-    return m.fit(disp="off", last_obs=last_obs)
+def model(y: np.ndarray, name: str, dist: str, *, seed: int = 0):
+    """A constant-mean arch model; the distribution is seeded, so a simulated forecast reproduces."""
+    return ConstantMean(y, volatility=_VOL[name](), distribution=_DIST[dist](seed=np.random.default_rng(seed)))
+
+
+def fit(y: np.ndarray, name: str, dist: str, *, first_obs: int | None = None, last_obs: int | None = None, seed: int = 0):
+    """An arch result for a constant mean and a (1,1) process on `y[first_obs:last_obs]` (`last_obs` exclusive)."""
+    return model(y, name, dist, seed=seed).fit(disp="off", first_obs=first_obs, last_obs=last_obs)
+
+
+def forecast(res, *, start: int, horizon: int, simulate: bool, simulations: int) -> np.ndarray:
+    """Variance forecasts from origins `start`… to the end of the model's data: an (origins × horizon) array.
+
+    Row i uses the data through origin i (align="origin"), with the fitted
+    parameters fixed and the filter run over the observed returns.
+    """
+    method = "simulation" if simulate and horizon > 1 else "analytic"
+    f = res.forecast(horizon=horizon, start=start, method=method, simulations=simulations, reindex=False)
+    return np.asarray(f.variance, dtype=float)
 
 
 def summary(res) -> dict:

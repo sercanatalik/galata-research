@@ -409,5 +409,138 @@ def _(alt, column, gr, in_sample, interval, mo, pl, returns, vol):
     return
 
 
+@app.cell
+def _(mo):
+    mo.md(r"""
+    ## ⑥ Out of sample: walking forward
+
+    From the split onward, every bar's close is an **origin**. Each model
+    forecasts the next bars from there using only returns through the origin.
+    Its parameters are re-estimated every *k* origins on the data so far and
+    held fixed in between (arch's fixed-parameter filtered forecasts). Every
+    row carries `fitted_through`, the close of the fit it used, which is never
+    past its own origin.
+
+    The forecast for horizon *h* is $E_t[\sigma^2_{t+h}]$. For GARCH it decays
+    to the long-run level geometrically,
+    $\sigma^2_{t+h|t}=\bar\sigma^2+(\alpha+\beta)^{h-1}(\sigma^2_{t+1|t}-\bar\sigma^2)$
+    (Andersen, Bollerslev, Christoffersen and Diebold 2006). EGARCH and APARCH
+    have no such formula beyond one step, so they are simulated: 500 seeded
+    paths. The grey points are each target bar's Parkinson range, a noisy
+    proxy, which is why they are dots and not a line.
+    """)
+    return
+
+
+@app.cell
+def _(interval, mo):
+    HORIZONS = {"1h": {"1 bar": 1, "1 day": 24, "1 week": 168}, "4h": {"1 bar": 1, "1 day": 6, "1 week": 42}, "1d": {"1 day": 1, "1 week": 7, "1 month": 30}}[interval.value]
+    EVERY = {"1h": 24, "4h": 6, "1d": 5}[interval.value]
+    horizon = mo.ui.dropdown(HORIZONS, value=list(HORIZONS)[0], label="horizon")
+    walk_models = mo.ui.multiselect(["ewma", "garch", "gjr", "egarch", "aparch", "figarch", "rm2006"], value=["ewma", "garch", "gjr", "egarch"], label="models")
+    go = mo.ui.run_button(label="walk forward")
+    mo.hstack([horizon, walk_models, go, mo.md(f"refit every **{EVERY}** bars (FIGARCH every {EVERY * 7})")])
+    return EVERY, HORIZONS, go, horizon, walk_models
+
+
+@app.cell
+def _(EVER, gr, mo, pl, vol):
+    @mo.cache
+    def walk(ticker_, interval_, split_iso, model_, every_, horizons_, deseason_):
+        _bars = gr.market.candles([ticker_], interval_, *EVER).collect()
+        _r = gr.timeseries.returns(_bars, kind="log")
+        _factors = None
+        if deseason_ and interval_ != "1d":
+            _factors = gr.timeseries.seasonal_factors(_r, fit=(_bars["ts"].min(), split_iso))
+        return vol.walk_forward(
+            _r, model=model_, dist="t", split=split_iso, every=every_, horizons=horizons_, factors=_factors, simulations=500, min_obs=250
+        ).with_columns(pl.lit(model_).alias("model"))
+
+    return (walk,)
+
+
+@app.cell
+def _(EVERY, HORIZONS, deseason, go, interval, mo, pl, split, ticker, walk, walk_models):
+    mo.stop(not go.value, mo.md("Press **walk forward** to fit and forecast out of sample (cached once run)."))
+    hs = tuple(sorted(set(HORIZONS.values())))
+    walked = pl.concat(
+        [
+            walk(ticker.value, interval.value, split.isoformat(), _m, EVERY * (7 if _m == "figarch" else 1), hs, deseason.value)
+            for _m in walk_models.value
+        ]
+    )
+    return (walked,)
+
+
+@app.cell
+def _(alt, bars, horizon, mo, per_year, pl, walked):
+    _proxy = bars.select(
+        pl.col("ts").alias("target_ts"), ((pl.col("high") / pl.col("low")).log().pow(2) / (4 * 0.6931471805599453)).sqrt().alias("range")
+    )
+    _at = walked.filter(pl.col("h") == horizon.value).with_columns((pl.col("variance").sqrt() * per_year**0.5).alias("σ̂"))
+    _lines = alt.Chart(_at).mark_line(strokeWidth=1).encode(
+        x=alt.X("target_ts:T", title="target bar"), y=alt.Y("σ̂:Q", scale=alt.Scale(type="log"), title="σ, annualised"), color="model:N"
+    )
+    _dots = (
+        alt.Chart(_proxy.join(_at.select("target_ts").unique(), on="target_ts").filter(pl.col("range") > 0).with_columns((pl.col("range") * per_year**0.5).alias("range")))
+        .mark_point(size=5, opacity=0.3, color="gray")
+        .encode(x="target_ts:T", y="range:Q")
+    )
+    _refits = alt.Chart(_at.filter(pl.col("refit") & (pl.col("model") == _at["model"][0]))).mark_tick(color="black", opacity=0.4, thickness=1).encode(x="close_ts:T")
+    mo.vstack(
+        [
+            mo.md(f"### σ̂ at horizon {horizon.value} bar(s), plotted at the bar it forecasts"),
+            (_dots + _lines).properties(height=260, width="container"),
+            _refits.properties(height=20, width="container"),
+            mo.md(f"{walked.filter(pl.col('h') == horizon.value).height} forecasts; `fitted_through ≤ close_ts` on every row: **{bool((walked['fitted_through'] <= walked['close_ts']).all())}**."),
+        ]
+    )
+    return
+
+
+@app.cell
+def _(mo, walked):
+    _origins = walked["close_ts"].unique().sort()
+    origin = mo.ui.slider(0, _origins.len() - 1, value=_origins.len() // 2, label="origin (out-of-sample bar)")
+    fan_length = mo.ui.slider(5, 60, value=30, label="fan length (bars)")
+    mo.vstack([mo.md(r"""
+    ## ⑦ The forecast fan from one origin
+
+    Every model's $\sigma_{t+h|t}$ for *h* = 1…H from the chosen origin. A
+    mean-reverting model bends toward its long-run level (dashed where it
+    exists), and EWMA stays flat, since it has no level to revert to. The dots
+    are what happened. One-step forecasts hide exactly this difference: the
+    models disagree most at long horizons.
+    """), mo.hstack([origin, fan_length])])
+    return fan_length, origin
+
+
+@app.cell
+def _(alt, bars, column, deseason, estimation, fan_length, gr, in_sample, interval, mo, origin, per_year, pl, returns, ticker, vol, walk_models, walked):
+    _origins = walked["close_ts"].unique().sort()
+    _o = _origins[origin.value]
+    _fans, _levels = [], []
+    for _m in walk_models.value:
+        _w = vol.walk_forward(returns.select("ticker", "ts", "close_ts", "return"), model=_m, split=_o, every=10**9, horizons=range(1, fan_length.value + 1), simulations=500, min_obs=250)
+        _fans.append(_w.filter(pl.col("close_ts") == _o).with_columns(pl.lit(_m).alias("model")))
+        if _m in ("garch", "gjr", "aparch"):
+            _fit = vol.fit(returns.filter(pl.col("close_ts") <= _o), model=_m, dist="t", min_obs=250)
+            if _fit.sigma_bar is not None:
+                _levels.append({"model": _m, "level": _fit.sigma_bar * per_year**0.5})
+    _fan = pl.concat(_fans).with_columns((pl.col("variance").sqrt() * per_year**0.5).alias("σ̂"))
+    _real = (
+        bars.select(pl.col("ts").alias("target_ts"), ((pl.col("high") / pl.col("low")).log().pow(2) / (4 * 0.6931471805599453)).sqrt().alias("range"))
+        .join(_fan.select("target_ts", "h").unique(), on="target_ts")
+        .with_columns((pl.col("range") * per_year**0.5).alias("range"))
+    )
+    _chart = alt.Chart(_fan).mark_line(point=True).encode(x=alt.X("h:Q", title="bars ahead"), y=alt.Y("σ̂:Q", title="σ, annualised"), color="model:N")
+    _dots = alt.Chart(_real).mark_point(color="gray", filled=True, size=20).encode(x="h:Q", y="range:Q")
+    _layers = _chart + _dots
+    if _levels:
+        _layers = _layers + alt.Chart(pl.DataFrame(_levels)).mark_rule(strokeDash=[4, 4]).encode(y="level:Q", color="model:N")
+    mo.vstack([mo.md(f"### From the close of {_o:%Y-%m-%d %H:%M}"), _layers.properties(height=260, width="container")])
+    return
+
+
 if __name__ == "__main__":
     app.run()

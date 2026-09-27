@@ -388,7 +388,7 @@ def seasonal_factors(
     by: str = "hour_x_weekday",
     stat: str = "mean_abs",
 ) -> pl.DataFrame:
-    """`ticker, weekday, hour, n, factor`: a periodic volatility factor per calendar cell, fitted on `fit` only.
+    """`ticker, weekday, hour, n, factor, fit_end`: a periodic volatility factor per calendar cell, fitted on `fit` only.
 
     A return belongs to the weekday (Monday = 1) and hour of its bar's `ts`, in
     UTC. Only returns with `ts ≥ start` and `close_ts ≤ end` are read. The
@@ -441,7 +441,8 @@ def seasonal_factors(
         raise Refused(f"no return in the fit window to estimate {empty.height} cell(s) from: {named}")
     return (
         table.with_columns((pl.col("_s") / (pl.col("_s").pow(2).mean().over("ticker")).sqrt()).alias("factor"))
-        .select("ticker", "weekday", "hour", "n", "factor")
+        .with_columns(pl.from_epoch(pl.lit(hi), time_unit="us").dt.replace_time_zone("UTC").alias("fit_end"))
+        .select("ticker", "weekday", "hour", "n", "factor", "fit_end")
         .sort("ticker", "weekday", "hour")
     )
 
