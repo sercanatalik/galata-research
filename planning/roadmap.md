@@ -74,7 +74,7 @@ that uses it. The GARCH study grows in `notebooks/garch.py` from item 4 onward.
   `notebooks/volatility.py`.
 - [x] 3. **`walk-forward-origins-and-seasonality`**: `timeseries.walk_forward_origins`
   (rolling/expanding, refit every k) and `deseasonalize` (hour-of-week, fitted on a window).
-- [ ] 4. **`fit-the-garch-family`**: the `[models]` extra, lazy `gr.models`, the `_arch` polars
+- [x] 4. **`fit-the-garch-family`**: the `[models]` extra, lazy `gr.models`, the `_arch` polars
   boundary, `gr.models.vol.garch` in-sample fits and summaries. `notebooks/garch.py` ①–⑤b.
 - [ ] 5. **`forecast-walking-forward`**: `gr.models.vol.walk_forward`, horizons,
   `fitted_through`, `after_gap`, simulation for EGARCH/APARCH, caching. Notebook ⑥–⑦.

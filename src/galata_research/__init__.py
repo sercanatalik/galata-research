@@ -10,6 +10,7 @@
     gr.root()                                               # where the record is
     gr.timeseries.returns(bars, kind="log")                 # null across a hole
     gr.timeseries.periods_per_year("1h")                    # 8760
+    gr.models.vol.fit(returns, model="gjr", dist="t")       # the [models] extra, loaded on use
 
 The library owns the record's semantics, not its I/O: dedupe, closure, the
 clock and the cast are applied once, here, so a notebook never reads a
@@ -36,4 +37,21 @@ __all__ = [
     "studies",
     "timeseries",
     "utils",
+    "models",
 ]
+
+
+def __getattr__(name: str):
+    # gr.models needs numpy, scipy and arch, so it is imported on first use
+    # (PEP 562), and `import galata_research` never needs them.
+    if name == "models":
+        import importlib
+
+        module = importlib.import_module(".models", __name__)
+        globals()[name] = module
+        return module
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
+def __dir__():
+    return sorted(set(globals()) | set(__all__))

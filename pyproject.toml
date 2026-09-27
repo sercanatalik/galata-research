@@ -16,6 +16,10 @@ dependencies = [
     "altair>=5",
 ]
 
+[project.optional-dependencies]
+# Fitted models (gr.models): arch and scipy bring numpy; the core never imports them.
+models = ["arch>=8", "scipy>=1.8"]
+
 [dependency-groups]
 dev = [
     "pytest>=8",

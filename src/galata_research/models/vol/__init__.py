@@ -1,0 +1,12 @@
+"""Volatility models: the GARCH family in-sample, with each model's own persistence.
+
+    f = gr.models.vol.fit(returns, model="gjr", dist="t")
+    gr.models.vol.table([f, ...])      # one row per fit
+    gr.models.vol.news_impact(f, z)    # Engle and Ng's curve
+    gr.models.vol.diagnose(f)          # Ljung-Box on z and z², ARCH-LM
+"""
+
+from .._arch import DISTS, MODELS
+from .garch import Fit, arch_lm, diagnose, expectation, fit, kappa, ljung_box, news_impact, table
+
+__all__ = ["DISTS", "MODELS", "Fit", "arch_lm", "diagnose", "expectation", "fit", "kappa", "ljung_box", "news_impact", "table"]
