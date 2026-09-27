@@ -1188,7 +1188,7 @@ def _(mo):
 
             ⑩ found feedback targeting lifting every net Sharpe in the year
             after the 70% split. That was read off one year, so it was not a
-            claim. `planning/registered/feedback-sharpe.md` (commit `cdda013`)
+            claim. `planning/preregistered/feedback-sharpe.md` (commit `cdda013`)
             fixed how it becomes one **before this section was run**. It
             fixes:
             - **the hypothesis:** feedback's net Sharpe beats open-loop inverse

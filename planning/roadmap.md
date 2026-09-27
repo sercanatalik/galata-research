@@ -120,7 +120,7 @@ Chosen by the operator on 2026-09-27, in this order (the suite first, so the oth
   test (4%) four robust standard errors; 1% and 0.5% of 200 draws still fail, and the fixtures are seeded.
 - [x] 20. **`stress-the-feedback`**: does feedback targeting's gain survive other split points, a block
   bootstrap of the Sharpe difference, and a claim registered before the run? Done: registered in
-  `planning/registered/feedback-sharpe.md` (`cdda013`) before the run; the verdict is **refuted**. On the unseen
+  `planning/preregistered/feedback-sharpe.md` (`cdda013`) before the run; the verdict is **refuted**. On the unseen
   span (40% split to the old 70% split), feedback's net Sharpe is below open loop's for all four models walked
   (Ledoit–Wolf p 0.82–0.95). It still hits the target in every span.
 - [x] 21. **`replicate-on-other-tickers`**: the scorecard, confidence sets and targeting on ETH and HYPE. Done,

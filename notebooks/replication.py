@@ -25,7 +25,7 @@ def _(mo):
     is embedded with the ticker and interval set and every model walked. The
     ticker only changes the data, never a rule.
 
-    Before ETH or HYPE was run, `planning/registered/replication.md` fixed
+    Before ETH or HYPE was run, `planning/preregistered/replication.md` fixed
     three things: the claims, BTC's verdict on each (the prediction), and what
     counts as a replication. Replication is a harder test than it sounds. Hou,
     Xue and Zhang (2020) re-ran 452 published anomalies, and 65% failed a
