@@ -24,9 +24,12 @@ writes a configuration. A research result reaches a live system only through
 a person.
 
 > **Status: 0.x.** The market data loads on both clocks, gaps mark it, my
-> margin snapshots decode, and the statistics that judge a backtest (the
-> Deflated Sharpe Ratio and the Probability of Backtest Overfitting) are
-> pinned to their papers' own examples. Fills follow once the account trades.
+> margin snapshots and ledger history decode, and the statistics that judge a
+> backtest (the Deflated Sharpe Ratio and the Probability of Backtest
+> Overfitting) are pinned to their papers' own examples. Since 2026-09-27 it
+> is also the common research library for the volatility study: realized
+> measures, the GARCH family and HAR walked forward, scored, and traded
+> (`gr.timeseries`, `gr.models`; see [The volatility study](#the-volatility-study)).
 
 ---
 
@@ -39,6 +42,7 @@ a person.
 - [The library](#the-library)
 - [Two clocks](#two-clocks)
 - [Studies](#studies)
+- [The volatility study](#the-volatility-study)
 - [Architecture](#architecture)
 - [Development](#development)
 - [Roadmap](#roadmap)
@@ -65,7 +69,7 @@ flowchart LR
 
     subgraph RES["galata-research (Python)"]
         LIB["galata_research<br/>load · clean · clock"]
-        STAT["stats · backtest · studies<br/>DSR · PBO"]
+        STAT["timeseries · models<br/>stats · backtest · studies<br/>DSR · PBO · MCS"]
         NB["marimo notebooks"]
     end
 
@@ -114,6 +118,18 @@ The full framework architecture and roadmap are in the
   frame.
 - **polars by default, DuckDB on request.** The rules exist once, in polars
   expressions. `engine="duckdb"` runs DuckDB over their output.
+- **A common library, not notebook code.** Returns, annualisation, realized
+  volatility, seasonality and the walk-forward schedule live in
+  `gr.timeseries`; no notebook calls a private name, and a test walks every
+  notebook's syntax tree to keep it so.
+- **Models behind an extra, polars at the edge.** `gr.models` (arch, scipy)
+  loads on first use, so the core stays numpy-free; nothing returns pandas.
+- **Every forecast states its fit.** Each out-of-sample row carries
+  `fitted_through`, never past its origin; a planted shock and a double shift
+  each fail a test.
+- **Hand-written models are checked, not trusted.** Component GARCH reduces to
+  GARCH's recursion, Beta-t-EGARCH's response to an outlier is bounded, CARR's
+  range constant is measured, and each recovers a simulation.
 
 ---
 
@@ -198,6 +214,8 @@ gr.frontier()                           # how far each dataset is durable
 
 ## The library
 
+### The record
+
 | Call | Returns | The rule it owns |
 |---|---|---|
 | `gr.market.candles(tickers, interval, start, end, *, as_of, traded_only, closed_only)` | bars on `ts`, with `close_ts` | latest receipt per bar; closure by the record; `as_of` on `close_ts`; trade-less bars dropped |
@@ -210,32 +228,41 @@ gr.frontier()                           # how far each dataset is durable
 | `gr.join_recv(left, right, *, tolerance="5s")` | `left` plus `<c>_recv`, `matched_recv_ts` | backward only, bounded, named |
 | `gr.account.margin(...)`, `gr.account.positions(...)` | my snapshots per dex | venue time; `equity_held` false on a unified account |
 | `gr.account.fills(...)`, `funding_payments(...)`, `ledger_updates(...)` | my history, from datawatch's ledger projection | one row per identity; ledger updates long, one row per dex moved; never an address |
-| `gr.frontier()` | one row per dataset | from names and footers, no scan |
-| `gr.root()` | where the record is | `GALATA_VAR`, then `galata-research.toml`, then the sibling checkout |
-| `gr.timeseries.returns(bars, *, kind)` | `ticker, ts, close_ts, return`, simple or log | null on a ticker's first bar and after a hole: the backtest's rule |
-| `gr.timeseries.periods_per_year(interval)` | 525,600 · 8,760 · 2,190 · 365 | calendar time: the venue never closes |
-| `gr.timeseries.realized(bars, estimator, window)` | `n, sigma` per bar: close-to-close, Parkinson, Garman–Klass, Rogers–Satchell, Yang–Zhang | one count for all five: a contiguous return, not in a gap; a figure only for a full window; no clamp |
-| `gr.timeseries.realized_from(fine, interval)` | RV, realized range, semivariances and quarticity per coarser bucket | null unless the bucket holds every fine return |
-| `gr.timeseries.ewma_vol(bars, *, lam)`, `ewma_max` | RiskMetrics' EWMA σ; the larger of a fast and a slow one | σ at close t is the forecast for t+1; warm-up until the seed weighs < 1%; a hole bridged |
-| `gr.timeseries.signature(bars_1m, minutes)` | mean daily RV per sampling interval | whole days only |
-| `gr.timeseries.seasonal_factors(returns, *, fit, by, stat)`, `deseasonalize` | a volatility factor per (weekday, hour) cell; returns divided by it | fitted on `fit` only; mean f² = 1; hour × weekday by default |
-| `gr.timeseries.walk_forward_origins(bars, split, *, window, every)` | one row per origin: `refit`, `fit_from`, `fitted_through` | `fitted_through ≤ close_ts`; rolling or expanding; fixed between refits |
-| `gr.models.vol.fit(returns, *, model, dist, fit)` | a `Fit`: parameters, persistence, half-life, σ̄, the in-sample σ and z | the `[models]` extra; each model's own persistence (GJR's γ weighted by E[z²·1(z<0)], EGARCH's β); gaps bridged and `after_gap` marked; polars and floats out, never pandas |
-| `gr.models.vol.table`, `news_impact`, `diagnose` | one row per fit; Engle–Ng's curve; Ljung–Box on z and z², ARCH-LM | ARCH-LM agrees with arch's to 1e-6 |
-| `gr.models.vol.walk_forward(returns, *, model, split, window, every, horizons, factors)` | one row per (origin, h): `variance`, `cum_variance`, `target_ts`, `fitted_through` | fitted on each refit's window only, fixed between refits; no return after an origin is used; EGARCH and APARCH simulated, seeded; deseasonalised fits re-seasonalised by the target cell |
-| `gr.models.vol.har(measures, *, model, split, window, every, horizons)` | HAR, SHAR, HARQ forecasts of realized variance, in `walk_forward`'s columns plus `filtered` | direct regressions per horizon; a training row only if its target is known at the refit; the insanity filter, stated |
-| `gr.models.vol.fit` / `walk_forward` with `model="cgarch"` or `"betat"` | component GARCH (Engle and Lee 1999) and Beta-t-EGARCH (Harvey and Chakravarty 2008), hand-written | Student-t; CGARCH with φ = 0 equals GARCH's recursion; Beta-t's score bounded in [−1, ν]; each recovers a simulation |
-| `gr.models.vol.carr(bars, *, split, ...)` | CARR (Chou 2005) on ln(H/L), walked forward | exponential QMLE; σ = λ/√(8/π), the constant measured on Brownian bars |
-| `gr.models.evaluate.proxies`, `align` | a realized proxy per bar; forecasts joined to it, point or cumulative over exactly h bars | a hole leaves a cumulative target blank; rows after a gap dropped |
-| `gr.models.evaluate.scorecard`, `mcs`, `spa`, `dm`, `mz_gls`, `fluctuation` | QLIKE (proxy/f + ln f) and MSE per model × h; DM with HLN; the Model Confidence Set and SPA (seeded); MZ-GLS; Giacomini–Rossi | critical values from Rossi's own code; every score on the same aligned rows |
-| `gr.models.evaluate.value_at_risk`, `var_backtest` | VaR/ES by filtered historical simulation; Kupiec, Christoffersen, DQ, FZ0 | each statistic checked by hand in the tests |
-| `gr.models.vol.target`, `trials`, `economics` | a position at each close from the one-step σ̂ (inverse vol, inverse variance, conditional; cap, band); every trial; Sharpe, drawdown per unit vol, turnover, fees, FKO fee, DSR | the target is known at the split; no second shift; every trial counted |
-| `gr.stats.performance_fee`, `max_drawdown` | Fleming–Kirby–Ostdiek's fee in bp a year; the largest fall from a peak | the fee equates quadratic utility to 1e-10 |
-| `gr.timeseries.stationary_bootstrap_indices`, `optimal_block` | resampling indices; Politis–White block | agrees with arch to 1e-6 |
-| `gr.utils.require`, `window`, `instant` | a refusal naming what is missing; micros | a naive time is refused |
+| `gr.frontier()`, `gr.root()` | one row per dataset; where the record is | from names and footers, no scan; `GALATA_VAR`, then `galata-research.toml`, then the sibling checkout |
 
 Every loader returns a `pl.LazyFrame`, or a DuckDB relation with
 `engine="duckdb"`. Prices are `Float64` from the tape's `DECIMAL(38,18)`.
+
+### Series: `gr.timeseries`, `gr.utils`
+
+| Call | Returns | The rule it owns |
+|---|---|---|
+| `returns(bars, *, kind)` | `ticker, ts, close_ts, return`, simple or log | null on a ticker's first bar and after a hole: the backtest's rule, once |
+| `periods_per_year(interval)` | 525,600 · 8,760 · 2,190 · 365 | calendar time: the venue never closes |
+| `realized(bars, estimator, window)` | `n, sigma`: close-to-close, Parkinson, Garman–Klass, Rogers–Satchell, Yang–Zhang | one count for all five (a contiguous return, not in a gap); a figure only for a full window; no clamp |
+| `realized_from(fine, interval)` | RV, realized range, semivariances, quarticity per coarser bucket | null unless the bucket holds every fine return |
+| `ewma_vol(bars, *, lam)`, `ewma_max` | RiskMetrics' EWMA σ; the larger of a fast and a slow one | σ at close t is the forecast for t+1; warm-up until the seed weighs < 1% |
+| `signature(bars_1m, minutes)` | mean daily RV per sampling interval | whole days only |
+| `seasonal_factors(returns, *, fit, by, stat)`, `deseasonalize` | a volatility factor per (weekday, hour) cell, with its `fit_end` | fitted on `fit` only; mean f² = 1; hour × weekday by default |
+| `walk_forward_origins(bars, split, *, window, every)` | one row per origin: `refit`, `fit_from`, `fitted_through` | `fitted_through ≤ close_ts`; rolling or expanding; fixed between refits |
+| `stationary_bootstrap_indices`, `optimal_block` | resampling indices; the Politis–White block | agrees with arch to 1e-6 |
+| `gr.utils.require`, `window`, `instant`, `lazy` | a refusal naming what is missing; micros | a naive time is refused |
+
+### Models: `gr.models` (the `[models]` extra)
+
+| Call | Returns | The rule it owns |
+|---|---|---|
+| `vol.fit(returns, *, model, dist, fit)` | a `Fit`: parameters, persistence, half-life, σ̄, the in-sample σ and z | ewma, rm2006, garch, gjr, egarch, aparch, figarch, cgarch, betat; each model's own persistence (GJR's γ weighted by E[z²·1(z<0)], EGARCH's β); gaps bridged, `after_gap` marked |
+| `vol.table`, `vol.news_impact`, `vol.diagnose` | one row per fit; Engle–Ng's curve; Ljung–Box and ARCH-LM | ARCH-LM agrees with arch's to 1e-6 |
+| `vol.walk_forward(returns, *, model, split, window, every, horizons, factors)` | one row per (origin, h): `variance`, `cum_variance`, `target_ts`, `fitted_through` | fitted on each refit's window only, fixed between refits; EGARCH and APARCH simulated, seeded; deseasonalised fits re-seasonalised |
+| `vol.har(measures, *, model, ...)`, `vol.carr(bars, ...)` | HAR, SHAR, HARQ on realized variance; CARR on the range | a training row only if its target is known at the refit; the insanity filter, marked `filtered` |
+| `evaluate.proxies`, `evaluate.align` | a proxy per bar; forecasts joined to it, point or over exactly h bars | a hole leaves a cumulative target blank; rows after a gap dropped |
+| `evaluate.scorecard`, `mcs`, `spa`, `dm`, `mz_gls`, `fluctuation` | QLIKE and MSE per model × h; DM (HLN); the Model Confidence Set and SPA; MZ-GLS; Giacomini–Rossi | every score on the same aligned rows; seeded bootstraps |
+| `evaluate.value_at_risk`, `var_backtest` | VaR/ES by filtered historical simulation; Kupiec, Christoffersen, DQ, FZ0 | each statistic checked by hand in the tests |
+| `vol.target`, `vol.trials`, `vol.economics` | a position at each close from σ̂; every trial; Sharpe, drawdown per unit vol, turnover, fees, FKO fee, DSR | the target known at the split; no second shift; every trial counted |
+
+Install with `uv sync --extra models`. Without it `import galata_research`
+still works and `gr.models` is refused by name.
 
 ---
 
@@ -256,7 +283,7 @@ Over the busiest BTC minute, 3,426 trades matched with a median staleness of
 
 ## Studies
 
-`gr.stats` (Sharpe, PSR, the expected maximum Sharpe, DSR, PBO, the permutation percentile, the Reality Check and SPA), `gr.timeseries` (returns, annualisation, realized and EWMA volatility, the stationary bootstrap with a Politis–White block),
+`gr.stats` (Sharpe, PSR, the expected maximum Sharpe, DSR, PBO, the permutation percentile, the Reality Check and SPA, the performance fee, maximum drawdown),
 `gr.backtest.returns` (next-bar, fees on turnover, holes not spanned,
 `modelled` on every row; settled funding charged on every hour held when
 `funding=gr.market.funding(...)` is passed, and `funding_charged` says where
@@ -273,7 +300,7 @@ trial, so N is the true N) back these notebooks:
 | `random_timing.py` | is it the timing, or just the exposure? Each trial against 1,000 twins with its own runs shuffled: **none beats its twins at 5%** |
 | `whole_set.py` | does *anything* in the set beat its benchmark? White's Reality Check and Hansen's SPA over 70 trials: **no**, against buy-and-hold (p ≈ 0.7) or cash (p ≥ 0.07) |
 | `volatility.py` | what was the volatility? Five window estimators, two EWMA baselines, RV and realized range from finer bars, the signature plot, the calendar in hourly volatility, and the walk-forward schedule. On BTC the range estimators read **above** close-to-close, 7–12% at the median on 1d and 1h, as legacy's testnet week found |
-| `garch.py` | GARCH, GARCH-t and variations. Scored out of sample on BTC daily (r², vs EWMA): HARQ, HAR and CARR lead at 1, 7 and 30 days (QLIKE 0.95 → 0.42 of EWMA's); the confidence set holds all nine models at one day and CARR alone at 30. Traded (σ̂-targeted, net of fees) the order does not carry over: ρ(QLIKE rank, Sharpe rank) = 0.21, the best trial (EGARCH) still loses (Sharpe −0.23 vs hold −0.31) and its DSR over 29 trials is 0.33. Out of sample: σ̂ walked forward at a chosen horizon, and the forecast fan from any origin. In sample: the fit table, QQ, news impact, residual diagnostics, and whether the persistence is real. On BTC daily the parameter-free RiskMetrics 2006 and EWMA beat every fitted GARCH by BIC; hourly, APARCH-t and EGARCH-t lead while GARCH-t sits at α+β = 1 until deseasonalised |
+| `garch.py` | GARCH, GARCH-t and variations, in sample and walked forward, scored and traded: see [The volatility study](#the-volatility-study) |
 | `permuted_bars.py` | is there structure to find at all? The whole search re-run on 200 markets with the bars permuted: the real best (1.08) is **below** the permuted median (1.13), p = 0.59 |
 
 **A pre-registered test.** `planning/preregistered/donchian-ensemble.md` froze
@@ -283,9 +310,58 @@ code ran it. Run once, the sized ensemble on BTC had a DSR of 0.921 at N = 4,
 a Sharpe of 0.97 against buy-and-hold's 0.97, and a PBO of 0.63: **not
 supported on this record.**
 
-Every figure is modelled at Hyperliquid's 0.045% taker fee. **Funding is not
-charged**, because the record holds only days of settled funding, and every
-row says so.
+Every figure is modelled at Hyperliquid's 0.045% taker fee. Settled funding
+is charged on every hour a position is held when it is passed
+(`funding=gr.market.funding(...)`), and `funding_charged` says on which bars;
+the studies above predate it and were run without it.
+
+---
+
+## The volatility study
+
+`notebooks/garch.py` and `notebooks/volatility.py`, built in ten changes
+(`planning/roadmap.md`). The question: which of the GARCH family, GARCH-t and
+their variations forecasts crypto volatility best out of sample, and does a
+better forecast earn anything once it sizes a position? Each section carries
+its theory and the literature, and every claim the literature makes is
+checked on this record. Figures are BTC, daily unless stated, the first 70%
+of the history as the estimation period and the rest walked forward.
+
+**In sample.**
+
+| | finding |
+|---|---|
+| Tails | Student-t beats normal by 97 BIC points; ν ≈ 3.2 |
+| Asymmetry | GJR's γ is small (≈ 0.06), not the equity leverage effect |
+| Persistence at 1h | GARCH-t's α+β is 1.0000 raw and 0.9948 once divided by an hour × weekday factor: the daily cycle, not long memory (Andersen and Bollerslev 1997) |
+| Range estimators | read 7–12% **above** close-to-close at the median, as legacy found on testnet |
+| Component GARCH | ρ 0.9947, φ 0.047, near Katsiampa's (2017) 0.9999 and 0.055, but it does not beat GARCH-t by BIC |
+
+**Forecasting** (QLIKE relative to EWMA, r² proxy, lower is better):
+
+| model | 1 day | 7 days | 30 days |
+|---|---|---|---|
+| HARQ | 0.950 | 0.753 | 0.470 |
+| CARR | 0.951 | 0.727 | 0.420 |
+| HAR | 0.952 | 0.757 | 0.470 |
+| component GARCH | 0.974 | 0.824 | 0.579 |
+| GJR | 0.976 | 0.794 | 0.606 |
+| GARCH | 0.982 | 0.817 | 0.578 |
+| EGARCH | 0.990 | 0.910 | 0.667 |
+| Beta-t-EGARCH | 0.995 | 0.837 | 0.550 |
+
+The models built on intraday or range information lead at every horizon, as
+the literature on Bitcoin reports (Bergsli et al. 2022). The Model Confidence
+Set at one day holds all nine models: the data cannot separate them. At 30
+days it holds CARR alone.
+
+**Trading** (σ̂-targeted long position, 0.045% per change, 29 trials):
+no trial makes money over the out-of-sample year, a falling market. Hold's
+Sharpe is −0.31 and the best trial's (EGARCH, inverse vol) −0.23, with a
+Deflated Sharpe Ratio of 0.33. Drawdown per unit of volatility does not
+improve (1.21–1.37 against hold's 1.21). And the forecasts' order does not
+carry over: ρ(QLIKE rank, Sharpe rank) is 0.21, so HARQ, first by QLIKE, is
+fourth by Sharpe, as Becker, Clements, Doolan and Hurn (2015) warn.
 
 ---
 
@@ -298,14 +374,21 @@ row says so.
     market.py      candles, trades, quotes; re-exports gaps and the two-clock loaders
     clocks.py      settled and live funding, marks, join_recv
     gaps.py        gaps on the receipt clock, and mask_gaps
-    account.py     margin and positions, decoded from the ledger (interim, one channel)
+    account.py     margin, positions, and my history from the ledger projection
     _frontier.py   how far the record goes
-    stats.py       Sharpe, moments, PSR, expected maximum, DSR, PBO by CSCV
-    backtest.py    positions to modelled returns
+    utils.py       domain-free helpers: require, lazy, instant, window
+    timeseries.py  returns, annualisation, realized and EWMA volatility, seasonality,
+                   walk-forward origins, the stationary bootstrap
+    stats.py       Sharpe, moments, PSR, DSR, PBO, Reality Check, performance fee, drawdown
+    backtest.py    positions to modelled returns, fees and funding
     studies.py     trial families, summaries, the shared-calendar matrix
+    models/        the [models] extra, loaded on first use
+      _arch.py     the only place arch's pandas output is taken apart
+      vol/         garch (fits), walk (forecasts), har, custom (cgarch, betat, carr), target
+      evaluate.py  proxies, losses, DM, MZ-GLS, MCS, SPA, fluctuation, VaR/ES backtests
   notebooks/       marimo, one per question
   tests/           fixture tapes written per test, plus claims about the real record
-  planning/        features before they are changes; preregistered/ for studies
+  planning/        features before they are changes; preregistered/ for studies; roadmap.md
   design/          the mechanism
 ```
 
@@ -327,6 +410,7 @@ Four rules shape it:
 ## Development
 
 ```bash
+uv sync --extra models                 # gr.models: arch and scipy
 uv run pytest -q -rs                   # every test; record tests skip without a record
 uv run pytest -m record                # only the claims about the real record
 uv run marimo check notebooks/*.py     # every notebook, as CI runs it
@@ -364,9 +448,14 @@ uv run marimo check notebooks/*.py     # every notebook, as CI runs it
 | White's Reality Check and Hansen's SPA over the whole set | done: nothing beats buy-and-hold or cash at 5% |
 | The bootstrap block chosen from the data (Politis–White, corrected 2009) | done: 1.5–2.6 days; the verdict does not move |
 | The bar-permutation null (Masters, mcpt), whole search re-run | done: the real best is below the permuted median |
-| My fills, funding payments and transfers | waiting for the account to trade; the ledger records them since 2026-09-25 |
-| Charging funding in backtests | blocked on a deeper settled-funding walk in galata-datawatch |
-| A typed projection of the ledger, so fills need no second decoder | proposed for galata-datawatch |
+| My fills, funding payments and transfers | done: read from datawatch's ledger projection; empty until the account trades |
+| Charging settled funding in backtests | done: on every hour held, when passed |
+| A common research library: `gr.utils`, `gr.timeseries`, `gr.models` | done (`planning/roadmap.md`, items 1–9) |
+| Realized volatility, seasonality, walk-forward origins | done |
+| The GARCH family, HAR, component GARCH, Beta-t-EGARCH and CARR, walked forward | done |
+| Scoring: QLIKE, DM, the Model Confidence Set, SPA, fluctuation, VaR/ES backtests | done: HAR, HARQ and CARR lead |
+| Volatility targeting from the forecasts, with the economics beside Sharpe | done: nothing pays out of sample |
+| The volatility study's verdicts, references verified, the notebook's screenshot | in progress (roadmap item 10) |
 
 ---
 
