@@ -276,3 +276,43 @@ def reality_check(excess: pl.DataFrame, *, reps: int = 1000, block: float | str 
         "seed": seed,
         "rows": t,
     }
+
+
+def performance_fee(returns, benchmark, gamma: float, periods_per_year: float) -> float:
+    """Fleming, Kirby and Ostdiek's (2001, eq. 8) fee, in basis points a year, to switch from `benchmark` to `returns`.
+
+    Δ solves Σ[(Rₜ − Δ) − c(Rₜ − Δ)²] = Σ[Bₜ − cBₜ²], c = γ/(2(1+γ)): the
+    per-period fee that leaves a quadratic-utility investor indifferent. It is
+    quadratic in Δ and solved in closed form, taking the root nearest zero. A
+    perp's return is already in excess of cash here, so no risk-free rate is
+    added. FKO report γ = 1 and 10.
+    """
+    r, b = _series(returns).to_list(), _series(benchmark).to_list()
+    if len(r) != len(b) or not r:
+        raise Refused(f"returns ({len(r)}) and benchmark ({len(b)}) must be the same non-empty length")
+    if gamma <= 0:
+        raise Refused(f"gamma={gamma} must be positive")
+    c = gamma / (2 * (1 + gamma))
+    t = len(r)
+    sr, sr2 = sum(r), sum(x * x for x in r)
+    sb, sb2 = sum(b), sum(x * x for x in b)
+    qa, qb, qc = -c * t, 2 * c * sr - t, sr - c * sr2 - sb + c * sb2
+    disc = qb * qb - 4 * qa * qc
+    if disc < 0:
+        raise Refused("no fee equates the two utilities: the quadratic has no real root")
+    # The stable form: the textbook (−b ± √disc)/2a loses the small root to
+    # cancellation when a = −cT is tiny (γ near 0).
+    q = -0.5 * (qb + (sqrt(disc) if qb >= 0 else -sqrt(disc)))
+    roots = [x for x in ((q / qa) if qa else None, (qc / q) if q else None) if x is not None]
+    fee = min(roots, key=abs)
+    return fee * periods_per_year * 1e4
+
+
+def max_drawdown(returns) -> float:
+    """The largest fall of ∏(1 + r) from a previous peak, as a positive fraction; 0 if it never falls."""
+    value, peak, worst = 1.0, 1.0, 0.0
+    for x in _series(returns).to_list():
+        value *= 1 + x
+        peak = max(peak, value)
+        worst = max(worst, 1 - value / peak)
+    return worst

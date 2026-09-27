@@ -753,5 +753,89 @@ def _(aligned, alt, bars, ev, good, mo, pl, returns, walked):
     return
 
 
+@app.cell
+def _(bars, mo, per_year, pl, split, vol, walked):
+    mo.md(r"""
+    ## ⑩ Does a better σ earn anything?
+
+    Each model's one-step σ̂ sizes a long position,
+    $w_t=\min(\tau/\hat\sigma_{t+1\mid t},\,2)$. It is decided at the close and
+    held through the next bar, and pays 0.045% on every change. τ is the
+    realized volatility of the estimation period, known at the split. A
+    full-sample scale is the lookahead Liu, Tang and Zhou (2019) found in
+    Moreira and Muir (2017). *Conditional* targeting scales only when σ̂ is
+    in the top or bottom quintile of its own history, and holds 1× otherwise
+    (Bongaerts, Kang and van Dijk 2020). The band is a no-trade region.
+    Beside Sharpe:
+    - drawdown per unit of volatility: a smaller drawdown from a smaller
+      position is not protection (Harvey et al. 2018; Bloomberg 2021 on BTC);
+    - Fleming, Kirby and Ostdiek's fee, the basis points a year a
+      quadratic-utility investor would pay to switch from holding.
+
+    Every trial counts toward the Deflated Sharpe Ratio.
+    """)
+    targeted = vol.trials(bars, walked, split=split, rules=("inverse_vol", "conditional"), bands=(0.0, 0.25))
+    econ, deflated = vol.economics(targeted, periods_per_year=per_year)
+    econ = econ.sort("sharpe_annual", descending=True, nulls_last=True)
+    return deflated, econ, targeted
+
+
+@app.cell
+def _(alt, deflated, econ, mo, pl, targeted):
+    _show = ["hold"] + [t for t in econ["trial"].to_list() if t != "hold"][:3]
+    _eq = (
+        targeted.filter(pl.col("trial").is_in(_show))
+        .drop_nulls("net")
+        .with_columns(((pl.col("net") + 1).cum_prod().over("trial")).alias("value"), (pl.col("position")).alias("position"))
+        .with_columns((pl.col("value") / pl.col("value").cum_max().over("trial") - 1).alias("drawdown"))
+    )
+    _value = alt.Chart(_eq).mark_line(strokeWidth=1).encode(x=alt.X("ts:T", title=None), y=alt.Y("value:Q", scale=alt.Scale(type="log"), title="growth of 1, net"), color="trial:N").properties(height=220, width="container")
+    _pos = alt.Chart(_eq).mark_line(strokeWidth=0.8).encode(x=alt.X("ts:T", title=None), y=alt.Y("position:Q"), color="trial:N").properties(height=90, width="container")
+    _dd = alt.Chart(_eq).mark_area(opacity=0.3).encode(x=alt.X("ts:T", title=None), y=alt.Y("drawdown:Q"), color="trial:N").properties(height=90, width="container")
+    mo.vstack(
+        [
+            mo.md(f"Hold and the three best trials by net Sharpe, of **{deflated['trials']}** run. Deflated Sharpe Ratio of the best ({deflated['trial']}): **{deflated['dsr']:.3f}**."),
+            _value,
+            _pos,
+            _dd,
+            econ,
+        ]
+    )
+    return
+
+
+@app.cell
+def _(card, econ, mo, pl):
+    _one = card.filter(pl.col("h") == pl.col("h").min()).select("model", "qlike")
+    _money = econ.filter(pl.col("trial").str.ends_with("inverse_vol band 0")).with_columns(pl.col("trial").str.split(" ").list.first().alias("model")).select("model", "sharpe_annual", "fee_bp_g10")
+    _both = _one.join(_money, on="model").with_columns(
+        pl.col("qlike").rank().alias("rank_qlike"),
+        pl.col("sharpe_annual").rank(descending=True).alias("rank_sharpe"),
+        pl.col("fee_bp_g10").rank(descending=True).alias("rank_fee"),
+    )
+    _rho_s = _both.select(pl.corr("rank_qlike", "rank_sharpe")).item() if _both.height > 2 else None
+    _rho_f = _both.select(pl.corr("rank_qlike", "rank_fee")).item() if _both.height > 2 else None
+    _verdict = (
+        "The statistical and the economic rankings **agree**."
+        if _rho_s is not None and _rho_s > 0.5
+        else "The statistical and the economic rankings **do not agree**: a better σ forecast did not reliably earn more, as Becker, Clements, Doolan and Hurn (2015) warn."
+    )
+    mo.vstack(
+        [
+            mo.md(r"""
+            ## ⑫ Do the two rankings agree?
+
+            Each model's one-step QLIKE rank (1 = best forecast) against the
+            rank of its inverse-vol trial's net Sharpe and FKO fee (γ = 10).
+            Spearman's ρ near 1 means better forecasts earned more. Near 0 or
+            negative means they did not.
+            """),
+            _both.sort("rank_qlike"),
+            mo.md(f"ρ(QLIKE, Sharpe) = **{_rho_s if _rho_s is None else round(_rho_s, 2)}**, ρ(QLIKE, fee) = **{_rho_f if _rho_f is None else round(_rho_f, 2)}**, over {_both.height} models. {_verdict}"),
+        ]
+    )
+    return
+
+
 if __name__ == "__main__":
     app.run()

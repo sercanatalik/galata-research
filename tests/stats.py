@@ -64,3 +64,31 @@ def the_summary_and_the_statistics_agree():
     row = studies.summary(frame).row(0, named=True)
     assert row["sharpe"] == pytest.approx(stats.sharpe(net))
     assert (row["skew"], row["kurt"]) == pytest.approx(stats.moments(net))
+
+
+def an_identical_return_costs_nothing():
+    r = [0.01, -0.02, 0.005, 0.0]
+    assert stats.performance_fee(r, r, 1.0, 365) == pytest.approx(0.0, abs=1e-9)
+
+
+def the_fee_equates_utility():
+    import random
+
+    rng = random.Random(1)
+    b = [rng.gauss(0.0005, 0.02) for _ in range(500)]
+    r = [x * 0.8 + rng.gauss(0.0002, 0.005) for x in b]
+    for gamma in (1.0, 10.0):
+        fee = stats.performance_fee(r, b, gamma, 365) / (365 * 1e4)
+        c = gamma / (2 * (1 + gamma))
+        assert sum((x - fee) - c * (x - fee) ** 2 for x in r) == pytest.approx(sum(x - c * x * x for x in b), abs=1e-10)
+
+
+def a_constant_uplift_is_its_fee_at_low_risk_aversion():
+    b = [0.001, -0.002, 0.003] * 100
+    r = [x + 0.0001 for x in b]
+    assert stats.performance_fee(r, b, 1e-9, 365) == pytest.approx(0.0001 * 365 * 1e4, rel=1e-6)
+
+
+def a_fall_and_a_partial_recovery():
+    assert stats.max_drawdown([0.10, -0.20, 0.05]) == pytest.approx(0.2)
+    assert stats.max_drawdown([0.01, 0.02]) == 0.0

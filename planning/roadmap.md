@@ -84,7 +84,7 @@ that uses it. The GARCH study grows in `notebooks/garch.py` from item 4 onward.
   CARR), each tested against a nested case or a reference.
 - [x] 8. **`score-the-forecasts`**: `gr.models.evaluate` (QLIKE, MSE, FZ0, DM+HLN, MZ-GLS, MCS,
   SPA, Kupiec, Christoffersen, DQ, fluctuation test). Notebook ⑧, ⑨, ⑪.
-- [ ] 9. **`target-the-volatility`**: `gr.models.vol.target` (band, cap, conditional), the trials,
+- [x] 9. **`target-the-volatility`**: `gr.models.vol.target` (band, cap, conditional), the trials,
   the performance fee. Notebook ⑩, ⑫.
 - [ ] 10. **`say-what-survives`**: theory and literature blocks, the claims table filled, references
   verified, ⑬, the README study entry and screenshot.
