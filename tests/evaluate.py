@@ -183,3 +183,52 @@ def the_fz0_loss_by_hand():
 def an_es_above_its_var_is_refused():
     with pytest.raises(Refused, match="ES ≤ VaR"):
         ev.var_backtest(np.zeros(10), np.full(10, -2.0), np.full(10, -1.0), 0.05)
+
+
+def _multi(edges, n=400, seed=10, noise=0.5):
+    rng = np.random.default_rng(seed)
+    rows = []
+    for i in range(n):
+        for k, edge in enumerate(edges):
+            base = float(rng.normal(3.0, noise))
+            rows.append({"model": "b", "close_ts": T0 + i * DAY, "h": k + 1, "forecast": 1.0, "proxy": base})
+            rows.append({"model": "m", "close_ts": T0 + i * DAY, "h": k + 1, "forecast": 1.0, "proxy": base - edge + float(rng.normal(0, noise))})
+    return pl.DataFrame(rows)
+
+
+def a_model_better_at_every_horizon_passes_both():
+    a = _multi([0.3, 0.3, 0.3])
+    assert ev.uspa(a, model="m", benchmark="b", reps=299)["p_value"] < 0.05
+    assert ev.aspa(a, model="m", benchmark="b", reps=299)["p_value"] < 0.05
+
+
+def a_model_better_on_average_passes_only_aspa():
+    a = _multi([0.4, 0.4, -0.1])
+    assert ev.aspa(a, model="m", benchmark="b", reps=299)["p_value"] < 0.05
+    assert ev.uspa(a, model="m", benchmark="b", reps=299)["p_value"] > 0.1
+
+
+def a_noise_difference_passes_neither():
+    a = _multi([0.0, 0.0, 0.0], seed=11)
+    assert ev.uspa(a, model="m", benchmark="b", reps=299)["p_value"] > 0.05
+    assert ev.aspa(a, model="m", benchmark="b", reps=299)["p_value"] > 0.05
+
+
+def the_horizon_tests_reproduce():
+    a = _multi([0.1, 0.0, 0.05])
+    assert ev.uspa(a, model="m", benchmark="b", reps=199, seed=4) == ev.uspa(a, model="m", benchmark="b", reps=199, seed=4)
+
+
+def a_weight_vector_not_summing_to_one_is_refused():
+    with pytest.raises(Refused, match="summing to 1"):
+        ev.aspa(_multi([0.1, 0.1, 0.1], n=50), model="m", benchmark="b", weights=[0.5, 0.5, 0.5])
+
+
+def the_block_variance_matches_the_hac_on_white_noise():
+    from galata_research.models.evaluate import _block_variance, _qs_variance
+
+    # One draw's QS estimate scatters ±5% (it sums ~55 noisy autocovariances), so both
+    # estimators are checked on the average of eight independent series.
+    draws = [np.random.default_rng(s).normal(0, 2.0, 30_000) for s in range(20, 28)]
+    assert np.mean([_block_variance(x[:, None], 3)[0] for x in draws]) == pytest.approx(4.0, rel=0.03)
+    assert np.mean([_qs_variance(x) for x in draws]) == pytest.approx(4.0, rel=0.03)

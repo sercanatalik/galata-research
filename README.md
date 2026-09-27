@@ -266,7 +266,7 @@ Every loader returns a `pl.LazyFrame`, or a DuckDB relation with
 | `vol.walk_forward(returns, *, model, split, window, every, horizons, factors)` | one row per (origin, h): `variance`, `cum_variance`, `target_ts`, `fitted_through` | fitted on each refit's window only, fixed between refits; EGARCH and APARCH simulated, seeded; deseasonalised fits re-seasonalised |
 | `vol.har(measures, *, model, ...)`, `vol.carr(bars, ...)` | HAR, SHAR, HARQ on realized variance; CARR on the range | a training row only if its target is known at the refit; the insanity filter, marked `filtered` |
 | `evaluate.proxies`, `evaluate.align` | a proxy per bar; forecasts joined to it, point or over exactly h bars | a hole leaves a cumulative target blank; rows after a gap dropped |
-| `evaluate.scorecard`, `mcs`, `spa`, `dm`, `mz_gls`, `fluctuation` | QLIKE and MSE per model × h; DM (HLN); the Model Confidence Set and SPA; MZ-GLS; Giacomini–Rossi | every score on the same aligned rows; seeded bootstraps |
+| `evaluate.scorecard`, `mcs`, `spa`, `dm`, `mz_gls`, `fluctuation`, `uspa`, `aspa` | QLIKE and MSE per model × h; DM (HLN); the Model Confidence Set and SPA; MZ-GLS; Giacomini–Rossi; Quaedvlieg's uniform and average multi-horizon SPA | every score on the same aligned rows; seeded bootstraps |
 | `evaluate.value_at_risk`, `var_backtest` | VaR/ES by filtered historical simulation; Kupiec, Christoffersen, DQ, FZ0 | each statistic checked by hand in the tests |
 | `vol.target`, `vol.trials`, `vol.economics` | a position at each close from σ̂; every trial; Sharpe, drawdown per unit vol, turnover, fees, FKO fee, DSR | the target known at the split; no second shift; every trial counted |
 
@@ -364,6 +364,12 @@ returns, ties GARCH at one day (0.982), and is the best of EWMA, GARCH, HARQ
 and itself at 30 days (0.447 against HARQ's 0.470), where the confidence set
 is the two of them. In sample its persistence is 0.68 against SPY's 0.975,
 and σᵤ 1.02 against 0.38: a six-return RV is a noisy measure.
+
+Across the whole horizon path at once (Quaedvlieg 2021, 1/7/30 days, block
+bootstrap), CARR, HARQ and HAR beat GARCH **at every horizon** (uniform SPA p
+0.001, 0.002, 0.012), which the per-horizon confidence sets could not show;
+GARCH beats EWMA on average (p 0.019) but not uniformly (0.076); GJR adds
+nothing over GARCH (0.63).
 
 A two-regime Markov-switching GARCH (Haas, Mittnik and Paolella 2004) fits
 BTC daily as a fast-switching mixture, expected stays of about two days,
@@ -496,7 +502,8 @@ uv run marimo check notebooks/*.py     # every notebook, as CI and tests/noteboo
 | The volatility study's verdicts, references verified, the notebook's screenshot | done: see What survives |
 | Phase 2: Realized GARCH | done: best at 30 days with HARQ |
 | Phase 2: MS-GARCH | done: a fast-switching mixture, no forecast gain |
-| Phase 2: multi-horizon SPA, Giacomini–White | next (roadmap items 13–14) |
+| Phase 2: multi-horizon SPA | done: HAR, HARQ, CARR beat GARCH uniformly |
+| Phase 2: Giacomini–White | next (roadmap item 14) |
 
 ---
 

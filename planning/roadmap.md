@@ -95,7 +95,7 @@ Phase 2, in the follow-up table's order, skipping the two that wait for 1m histo
   RV from 4h bars, fitted and walked forward like the other models.
 - [x] 12. **`switch-regimes`**: a two-regime Markov-switching GARCH (Haas, Mittnik, Paolella 2004 form)
   with a Hamilton filter, fitted and walked forward.
-- [ ] 13. **`compare-across-horizons`**: Quaedvlieg's (2021) multi-horizon SPA, uniform and average,
+- [x] 13. **`compare-across-horizons`**: Quaedvlieg's (2021) multi-horizon SPA, uniform and average,
   one verdict across the horizon path.
 - [ ] 14. **`ask-when-models-win`**: the Giacomini–White (2006) conditional predictive ability test,
   "does GARCH win specifically in high vol?".

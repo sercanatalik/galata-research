@@ -775,6 +775,39 @@ def _(aligned, alt, benchmark, ev, mo, pl, walked):
 
 
 @app.cell
+def _(aligned, benchmark, ev, mo, pl, walked):
+    _bench = benchmark.value if benchmark.value in walked["model"].unique().to_list() else walked["model"][0]
+    _rows = []
+    for _m in walked["model"].unique().sort().to_list():
+        if _m == _bench:
+            continue
+        try:
+            _u = ev.uspa(aligned, model=_m, benchmark=_bench, reps=499)
+            _a = ev.aspa(aligned, model=_m, benchmark=_bench, reps=499)
+            _rows.append({"model": _m, "rows": _u["rows"], "uSPA t": _u["statistic"], "uSPA p": _u["p_value"], "aSPA t": _a["statistic"], "aSPA p": _a["p_value"]})
+        except Exception as _why:
+            _rows.append({"model": _m, "rows": 0, "uSPA t": None, "uSPA p": None, "aSPA t": None, "aSPA p": None})
+    mo.vstack(
+        [
+            mo.md(rf"""
+            ### One verdict across the horizon path
+
+            The heatmap tests each horizon on its own. Quaedvlieg (2021) asks
+            once, across all of them. The **uniform** test (uSPA) asks
+            whether the model is better than {_bench} at *every* horizon:
+            $t=\min_h \sqrt T\,\bar d_h/\hat\omega_h$. The **average** test
+            (aSPA) asks whether it is better on the equal-weighted average.
+            Both use a moving-block bootstrap (block 3), with QLIKE losses on
+            the origins where every horizon is scored. A small p-value is
+            evidence *for* the model.
+            """),
+            pl.DataFrame(_rows),
+        ]
+    )
+    return
+
+
+@app.cell
 def _(aligned, alt, benchmark, ev, mo, pl, walked):
     _models = walked["model"].unique().sort().to_list()
     _bench = benchmark.value if benchmark.value in _models else _models[0]

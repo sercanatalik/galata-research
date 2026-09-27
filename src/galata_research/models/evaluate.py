@@ -341,3 +341,99 @@ def var_backtest(returns, var, es, alpha: float) -> dict:
         "dq_p": None if dq is None else float(stats.chi2.sf(dq, lags + 2)),
         "fz0": fz0,
     }
+
+
+# ── Across horizons ─────────────────────────────────────────────────────────
+#
+# Quaedvlieg (2021), JBES 39(1):40-53: one verdict across the horizon path.
+# Read in the accepted manuscript (EUR repository) and the authors' R package
+# MultiHorizonSPA: the uniform test (better at every horizon) and the average
+# test (better on average), QS HAC with bandwidth 1.3·T^(1/5), a moving-block
+# bootstrap with block 3 and 999 reps, equal weights.
+
+
+def horizon_losses(aligned: pl.DataFrame, *, model: str, benchmark: str) -> pl.DataFrame:
+    """`close_ts` and one column per horizon of QLIKE(benchmark) − QLIKE(model): positive favours the model.
+
+    Only origins where both models have every horizon scored are kept.
+    """
+    hs = sorted(aligned["h"].unique().to_list())
+    frames = []
+    for h in hs:
+        wide = losses(aligned, h)
+        for name in (model, benchmark):
+            if name not in wide.columns:
+                raise Refused(f"no {name!r} losses at h={h}")
+        frames.append(wide.select("close_ts", (pl.col(benchmark) - pl.col(model)).alias(f"h{h}")))
+    out = frames[0]
+    for f in frames[1:]:
+        out = out.join(f, on="close_ts", how="inner")
+    return out.sort("close_ts")
+
+
+def _qs_variance(d: np.ndarray) -> float:
+    """The Quadratic Spectral HAC long-run variance, bandwidth 1.3·T^(1/5) (Andrews 1991; the paper's choice)."""
+    t = d.size
+    e = d - d.mean()
+    band = 1.3 * t ** 0.2
+    v = float(e @ e) / t
+    for j in range(1, t):
+        x = j / band
+        a = 6 * np.pi * x / 5
+        k = 25 / (12 * np.pi**2 * x**2) * (np.sin(a) / a - np.cos(a))
+        if abs(k) < 1e-10 and j > 5 * band:
+            break
+        v += 2 * k * float(e[j:] @ e[:-j]) / t
+    return max(v, 1e-300)
+
+
+def _mbb_index(t: int, block: int, rng) -> np.ndarray:
+    starts = rng.integers(0, t - block + 1, size=-(-t // block))
+    return (starts[:, None] + np.arange(block)[None, :]).ravel()[:t]
+
+
+def _block_variance(x: np.ndarray, block: int) -> np.ndarray:
+    """The natural moving-block variance of each column: mean over blocks of (block sum)² / block."""
+    t = x.shape[0] - x.shape[0] % block
+    sums = x[:t].reshape(-1, block, x.shape[1]).sum(axis=1)
+    return (sums**2).mean(axis=0) / block
+
+
+def _horizon_test(d: np.ndarray, weights, block: int, reps: int, seed: int, uniform: bool) -> tuple[float, float]:
+    t = d.shape[0]
+    if t < 2 * block:
+        raise Refused(f"{t} origins are too few for a block bootstrap with block {block}")
+    if not uniform:
+        d = (d @ weights)[:, None]
+    mean = d.mean(axis=0)
+    omega = np.array([_qs_variance(d[:, j]) for j in range(d.shape[1])])
+    stat = float(np.min(np.sqrt(t) * mean / np.sqrt(omega)))
+    rng = np.random.default_rng(seed)
+    centred = d - mean
+    exceed = 0
+    for _ in range(reps):
+        sample = centred[_mbb_index(t, block, rng)]
+        var = _block_variance(sample - sample.mean(axis=0), block)
+        boot = float(np.min(np.sqrt(t) * sample.mean(axis=0) / np.sqrt(np.maximum(var, 1e-300))))
+        exceed += boot > stat
+    return stat, exceed / reps
+
+
+def uspa(aligned: pl.DataFrame, *, model: str, benchmark: str, block: int = 3, reps: int = 999, seed: int = 0) -> dict:
+    """Quaedvlieg's uniform SPA: is `model` better than `benchmark` at every horizon? t = minₕ √T d̄ₕ/ω̂ₕ."""
+    d = horizon_losses(aligned, model=model, benchmark=benchmark)
+    x = d.drop("close_ts").to_numpy()
+    stat, p = _horizon_test(x, None, block, reps, seed, uniform=True)
+    return {"statistic": stat, "p_value": p, "rows": d.height, "horizons": [c for c in d.columns if c != "close_ts"]}
+
+
+def aspa(aligned: pl.DataFrame, *, model: str, benchmark: str, weights=None, block: int = 3, reps: int = 999, seed: int = 0) -> dict:
+    """Quaedvlieg's average SPA: is `model` better on the weighted average across horizons? t = √T w′d̄/ζ̂; w = 1/H by default."""
+    d = horizon_losses(aligned, model=model, benchmark=benchmark)
+    x = d.drop("close_ts").to_numpy()
+    hcount = x.shape[1]
+    w = np.full(hcount, 1 / hcount) if weights is None else np.asarray(weights, dtype=float)
+    if w.size != hcount or np.any(w < 0) or abs(w.sum() - 1) > 1e-9:
+        raise Refused(f"weights {list(np.round(w, 4))} must be {hcount} non-negative numbers summing to 1")
+    stat, p = _horizon_test(x, w, block, reps, seed, uniform=False)
+    return {"statistic": stat, "p_value": p, "rows": d.height, "weights": w.tolist()}
