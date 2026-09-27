@@ -17,3 +17,4 @@ proposed.
 | feature | named | from |
 |---|---|---|
 | [`galata-research`](./galata-research.md) | 2026-09-25 | redesigned: a Python research environment over the datawatch record |
+| [`roadmap`](./roadmap.md) | 2026-09-27 | the common library (`gr.utils`, `gr.timeseries`, `gr.models`) and the GARCH study that is its first user |
