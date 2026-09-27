@@ -28,12 +28,38 @@ def _(mo):
 
     $$r_t=\mu+\varepsilon_t,\qquad \varepsilon_t=\sigma_t z_t,\qquad z_t\sim D(0,1)$$
 
-    This notebook is the **in-sample** half of the study. The models are fitted
-    on an estimation period and read: their parameters, persistence, tails,
-    asymmetry and residuals. Forecasting out of sample comes next
-    (`planning/roadmap.md`, items 5–10). Parameters are shown on returns × 100,
-    the scale `arch` fits them on. Every σ is in return units, annualised in
-    calendar time.
+    The study in four parts. **In sample** (①–⑤b), the models are fitted on
+    an estimation period and read: parameters, persistence, tails, asymmetry,
+    residuals. **Out of sample** (⑥–⑦), they are walked forward from the
+    split, every forecast stating the fit it came from. **Scored** (⑧, ⑨, ⑪),
+    against a realized proxy, as a set and over time. **Traded** (⑩, ⑫),
+    sizing a position net of fees. ⑬ says what survives. Built in ten changes
+    (`planning/roadmap.md`). Parameters are shown on returns × 100, the scale
+    `arch` fits them on. Every σ is in return units, annualised in calendar
+    time.
+    """)
+    return
+
+
+@app.cell
+def _(mo):
+    mo.md(r"""
+    ## The claims under test
+
+    What the literature says, and where the record answers it. ⑬ at the end
+    computes each verdict from this notebook's results by the rule beside it.
+    These are the literature's claims checked after the fact, not
+    pre-registered ones.
+
+    | claim | source | section |
+    |---|---|---|
+    | Fat tails: Student-*t* beats normal | Troster, Tiwari, Shahbaz, Macedo 2019 (heavy tails for 1% VaR on BTC). **Against:** Chu, Chan, Nadarajah, Osterrieder 2017 found IGARCH with *normal* innovations best for Bitcoin | ⑤ |
+    | No leverage effect in crypto, or a reversed one | Cheikh, Ben Zaied, Chevallier 2020 | ⑤, ⑤b |
+    | α+β ≈ 1 at 1h is the daily cycle, not memory | Andersen and Bollerslev 1997. **In tension:** Rambaccussing and Mazibas 2020 find long memory in crypto *volatility* genuine | ⑤b |
+    | HAR beats GARCH when intraday data exist | Bergsli, Lind, Molnár, Polasik 2022 | ⑪ |
+    | Does anything beat GARCH(1,1)? | Hansen and Lunde 2005 | ⑪ (MCS) |
+    | A better σ forecast is not a better P&L | Becker, Clements, Doolan, Hurn 2015 | ⑫ |
+    | Vol targeting cuts drawdown, but not drawdown per unit of vol | Harvey et al. 2018; Bloomberg (Ghia and Hou) 2021: BTC 0.90 → 1.28 | ⑩ |
     """)
     return
 
@@ -259,7 +285,7 @@ def _(failed, mo, pl, table):
         if d_bic is not None
         else "",
         f"GJR's γ is **{gamma:+.3f}**: "
-        + ("the leverage effect, falls raising σ more." if gamma > 0.02 else "no leverage effect to speak of, consistent with crypto's absent or reversed asymmetry (Cheikh, Ben Zaied, Chevallier 2020).")
+        + ("a leverage effect, falls raising σ more (γ ≥ 0.1, the rule ⑬ uses)." if gamma >= 0.1 else "below 0.1, no leverage effect to speak of, consistent with crypto's absent or reversed asymmetry (Cheikh, Ben Zaied, Chevallier 2020).")
         if gamma is not None
         else "",
     ]
@@ -441,7 +467,7 @@ def _(alt, column, gr, in_sample, interval, mo, pl, returns, vol):
             compare if compare is not None else mo.md(""),
         ]
     )
-    return
+    return (compare,)
 
 
 @app.cell
@@ -518,20 +544,21 @@ def _(EVER, gr, mo, pl, vol):
 
 
 @app.cell
-def _(EVERY, HORIZONS, deseason, go, interval, mo, pl, split, ticker, walk, walk_models):
+def _(EVERY, HORIZONS, deseason, go, gr, interval, mo, pl, split, ticker, walk, walk_models):
     mo.stop(not go.value, mo.md("Press **walk forward** to fit and forecast out of sample (cached once run)."))
     hs = tuple(sorted(set(HORIZONS.values())))
-    walked = pl.concat(
-        [
-            walk(ticker.value, interval.value, split.isoformat(), _m, EVERY * (7 if _m == "figarch" else 4 if _m in ("cgarch", "betat") else 1), hs, deseason.value)
-            for _m in walk_models.value
-        ]
-    )
-    return (walked,)
+    _parts, skipped = [], {}
+    for _m in walk_models.value:
+        try:
+            _parts.append(walk(ticker.value, interval.value, split.isoformat(), _m, EVERY * (7 if _m == "figarch" else 4 if _m in ("cgarch", "betat") else 1), hs, deseason.value))
+        except gr.Refused as _why:  # a model the record cannot support here is reported, not hidden
+            skipped[_m] = str(_why)
+    walked = pl.concat(_parts)
+    return skipped, walked
 
 
 @app.cell
-def _(alt, bars, horizon, mo, per_year, pl, walked):
+def _(alt, bars, horizon, mo, per_year, pl, skipped, walked):
     _proxy = bars.select(
         pl.col("ts").alias("target_ts"), ((pl.col("high") / pl.col("low")).log().pow(2) / (4 * 0.6931471805599453)).sqrt().alias("range")
     )
@@ -551,6 +578,7 @@ def _(alt, bars, horizon, mo, per_year, pl, walked):
             (_dots + _lines).properties(height=260, width="container"),
             _refits.properties(height=20, width="container"),
             mo.md(f"{walked.filter(pl.col('h') == horizon.value).height} forecasts; `fitted_through ≤ close_ts` on every row: **{bool((walked['fitted_through'] <= walked['close_ts']).all())}**."),
+            mo.md("Not walked: " + "; ".join(f"**{k}**: {v}" for k, v in skipped.items())) if skipped else mo.md(""),
         ]
     )
     return
@@ -574,11 +602,11 @@ def _(mo, walked):
 
 
 @app.cell
-def _(EVER, alt, bars, column, deseason, estimation, fan_length, gr, in_sample, interval, mo, origin, per_year, pl, returns, ticker, vol, walk_models, walked):
+def _(EVER, alt, bars, column, deseason, estimation, fan_length, gr, in_sample, interval, mo, origin, per_year, pl, returns, skipped, ticker, vol, walk_models, walked):
     _origins = walked["close_ts"].unique().sort()
     _o = _origins[origin.value]
     _fans, _levels = [], []
-    for _m in walk_models.value:
+    for _m in [m for m in walk_models.value if m not in skipped]:
         if _m == "carr":
             _w = vol.carr(bars, split=_o, every=10**9, horizons=range(1, fan_length.value + 1), min_obs=250)
         elif _m in ("har", "shar", "harq"):
@@ -670,7 +698,7 @@ def _(aligned, alt, benchmark, ev, mo, pl, walked):
             card,
         ]
     )
-    return (card,)
+    return card, mcs_table
 
 
 @app.cell
@@ -754,7 +782,7 @@ def _(aligned, alt, bars, ev, good, mo, pl, returns, walked):
 
 
 @app.cell
-def _(bars, mo, per_year, pl, split, vol, walked):
+def _(mo):
     mo.md(r"""
     ## ⑩ Does a better σ earn anything?
 
@@ -774,6 +802,11 @@ def _(bars, mo, per_year, pl, split, vol, walked):
 
     Every trial counts toward the Deflated Sharpe Ratio.
     """)
+    return
+
+
+@app.cell
+def _(bars, per_year, split, vol, walked):
     targeted = vol.trials(bars, walked, split=split, rules=("inverse_vol", "conditional"), bands=(0.0, 0.25))
     econ, deflated = vol.economics(targeted, periods_per_year=per_year)
     econ = econ.sort("sharpe_annual", descending=True, nulls_last=True)
@@ -834,6 +867,148 @@ def _(card, econ, mo, pl):
             mo.md(f"ρ(QLIKE, Sharpe) = **{_rho_s if _rho_s is None else round(_rho_s, 2)}**, ρ(QLIKE, fee) = **{_rho_f if _rho_f is None else round(_rho_f, 2)}**, over {_both.height} models. {_verdict}"),
         ]
     )
+    return
+
+
+@app.cell
+def _(card, compare, econ, good, interval, mcs_table, mo, pl, table):
+    def _row(claim, verdict, number, rule):
+        return {"claim": claim, "verdict": verdict, "on this record": number, "rule": rule}
+
+    _rows = []
+    # Fat tails
+    _g = {r["dist"]: r["bic"] for r in table.filter(pl.col("model") == "garch").iter_rows(named=True)}
+    if {"t", "normal"} <= set(_g):
+        _d = _g["t"] - _g["normal"]
+        _rows.append(_row("t beats normal", "consistent" if _d < -10 else "contradicts" if _d > 0 else "can't tell", f"ΔBIC {_d:+.0f}", "consistent if t's BIC is lower by > 10"))
+    else:
+        _rows.append(_row("t beats normal", "can't tell", "—", "needs GARCH-t and GARCH-normal fits"))
+    # Leverage
+    _gjr = [f for f in good if f.model == "gjr" and f.dist == "t"]
+    if _gjr:
+        _gm, _se = _gjr[0].params["gamma[1]"], _gjr[0].std_err.get("gamma[1]")
+        _sig = _se is not None and abs(_gm) > 2 * _se
+        _rows.append(_row("no leverage effect", "contradicts" if _gm >= 0.1 and _sig else "consistent", f"γ {_gm:+.3f} (se {_se:.3f})" if _se else f"γ {_gm:+.3f}", "contradicts if γ ≥ 0.1 and 2 se from 0"))
+    # Persistence at 1h
+    if compare is not None:
+        _raw, _des = compare["α+β"][0], compare["α+β"][1]
+        _rows.append(_row(f"α+β≈1 at {interval.value} is the daily cycle", "consistent" if _raw - _des > 0.002 else "contradicts", f"{_raw:.4f} → {_des:.4f}", "consistent if deseasonalising lowers α+β by > 0.002"))
+    else:
+        _rows.append(_row("α+β≈1 intraday is the daily cycle", "can't tell", "—", f"run at 1h or 4h with the checkbox off (now {interval.value})"))
+    # HAR vs GARCH
+    _q = card.select("model", "h", "qlike")
+    _har = _q.filter(pl.col("model").is_in(["har", "harq"])).group_by("h").agg(pl.col("qlike").min().alias("har"))
+    _gar = _q.filter(pl.col("model") == "garch").select("h", pl.col("qlike").alias("garch"))
+    _hg = _har.join(_gar, on="h")
+    if _hg.height:
+        _wins = int((_hg["har"] < _hg["garch"]).sum())
+        _rows.append(_row("HAR beats GARCH", "consistent" if _wins == _hg.height else "contradicts" if _wins == 0 else "mixed", f"{_wins} of {_hg.height} horizons", "consistent if HAR or HARQ has lower QLIKE at every horizon"))
+    else:
+        _rows.append(_row("HAR beats GARCH", "can't tell", "—", "walk garch and har/harq forward (1d or 4h)"))
+    # Anything beats GARCH(1,1)
+    if mcs_table is not None and "garch" in mcs_table["model"].to_list():
+        _out = mcs_table.filter((pl.col("model") == "garch") & ~pl.col("included"))["h"].to_list()
+        _rows.append(_row("something beats GARCH(1,1)", "yes" if _out else "no", f"GARCH outside the MCS at h = {_out}" if _out else "GARCH in every MCS", "yes if GARCH is excluded from the 90% MCS at some horizon"))
+    else:
+        _rows.append(_row("something beats GARCH(1,1)", "can't tell", "—", "walk garch forward with other models"))
+    # Better σ ≠ better P&L
+    _one = card.filter(pl.col("h") == pl.col("h").min()).select("model", "qlike")
+    _money = econ.filter(pl.col("trial").str.ends_with("inverse_vol band 0")).with_columns(pl.col("trial").str.split(" ").list.first().alias("model")).select("model", "sharpe_annual")
+    _both = _one.join(_money, on="model").with_columns(pl.col("qlike").rank().alias("a"), pl.col("sharpe_annual").rank(descending=True).alias("b"))
+    if _both.height > 2:
+        _rho = _both.select(pl.corr("a", "b")).item()
+        _rows.append(_row("better σ ≠ better P&L", "consistent" if _rho < 0.5 else "contradicts", f"ρ = {_rho:.2f} over {_both.height}", "consistent if ρ(QLIKE rank, Sharpe rank) < 0.5"))
+    else:
+        _rows.append(_row("better σ ≠ better P&L", "can't tell", "—", "needs three or more walked models"))
+    # Drawdown per vol
+    _hold = econ.filter(pl.col("trial") == "hold")["drawdown_per_vol"]
+    _best = econ.filter(pl.col("trial") != "hold").sort("sharpe_annual", descending=True, nulls_last=True)["drawdown_per_vol"]
+    if _hold.len() and _best.len():
+        _rows.append(_row("targeting does not cut drawdown per vol", "consistent" if _best[0] >= _hold[0] else "contradicts", f"{_best[0]:.2f} vs hold {_hold[0]:.2f}", "consistent if the best trial's drawdown per vol ≥ hold's"))
+    verdicts = pl.DataFrame(_rows)
+    mo.vstack(
+        [
+            mo.md(r"""
+            ## ⑬ What survives
+
+            Each claim from the top, decided by the rule in its row from the
+            results above. The rules were written down before the notebook
+            computed them. A borderline number can flip a verdict, so the
+            number is shown beside it. "Can't tell" means a section was not
+            run, or had too little to decide.
+            """),
+            verdicts,
+        ]
+    )
+    return
+
+
+@app.cell
+def _(mo):
+    mo.md(r"""
+    ## References
+
+    Verified 2026-09-27 against publisher or repository pages. Where a paper
+    was out of reach, the source used is named.
+
+    **Models.** Engle 1982, *Econometrica* 50(4):987–1007 · Bollerslev 1986,
+    *J. Econometrics* 31:307–327 · Bollerslev 1987, *REStat* 69(3):542–547 ·
+    Nelson 1991, *Econometrica* 59(2):347–370 · Glosten, Jagannathan, Runkle
+    1993, *J. Finance* 48(5):1779–1801 · Ding, Granger, Engle 1993, *J.
+    Empirical Finance* 1:83–106 · Hansen 1994, *Int. Economic Review*
+    35(3):705–730 · Baillie, Bollerslev, Mikkelsen 1996, *J. Econometrics*
+    74:3–30 · Engle and Lee 1999, in *Cointegration, Causality and
+    Forecasting* · Harvey and Chakravarty 2008, Cambridge WP 0840 · Chou 2005,
+    *J. Money, Credit and Banking* 37(3):561–582 · Corsi 2009, *J. Financial
+    Econometrics* 7(2):174–196 · Patton and Sheppard 2015, *REStat*
+    97(3):683–697 · Bollerslev, Patton, Quaedvlieg 2016, *J. Econometrics*
+    192(1):1–18 · Andersen, Bollerslev, Diebold 2007, *REStat* 89(4):701–720.
+
+    **Crypto evidence.** Katsiampa 2017, *Economics Letters* 158:3–6 · Chu,
+    Chan, Nadarajah, Osterrieder 2017, *JRFM* 10(4):17 (IGARCH-normal best for
+    BTC) · Troster, Tiwari, Shahbaz, Macedo 2019, *FRL* 30:187–193 · Cheikh,
+    Ben Zaied, Chevallier 2020, *FRL* 35:101293 · Rambaccussing and Mazibas
+    2020, *JRFM* 13(9):186 · Bergsli, Lind, Molnár, Polasik 2022, *RIBAF*
+    59:101540 · Hansen, Kim, Kimbrough 2021, "Periodicity in Cryptocurrency
+    Volatility and Liquidity", arXiv 2109.12142.
+
+    **Seasonality and persistence.** Andersen and Bollerslev 1997, *J.
+    Empirical Finance* 4:115–158 · Lamoureux and Lastrapes 1990, *JBES*
+    8(2):225–234 · Mikosch and Stărică 2004, *REStat* 86(1):378–390.
+
+    **Realized measures.** Parkinson 1980, *J. Business* 53(1):61–65 ·
+    Garman and Klass 1980, *J. Business* 53(1):67–78 · Rogers and Satchell
+    1991, *Ann. Applied Probability* 1(4):504–512 · Yang and Zhang 2000, *J.
+    Business* 73(3):477–491 · Christensen and Podolskij 2007, *J.
+    Econometrics* 141(2):323–349 · Martens and van Dijk 2007, *J.
+    Econometrics* 138(1):181–207 · Liu, Patton, Sheppard 2015, *J.
+    Econometrics* 187(1):293–311.
+
+    **Evaluation.** Diebold and Mariano 1995, *JBES* 13(3):253–263 · Harvey,
+    Leybourne, Newbold 1997, *IJF* 13(2):281–291 · Hansen 2005, *JBES*
+    23(4):365–380 · Hansen and Lunde 2005, *JAE* 20(7):873–889 · Hansen and
+    Lunde 2006, *J. Econometrics* 131:97–121 · Patton and Sheppard 2009, in
+    *Handbook of Financial Time Series* · Patton 2011, *J. Econometrics*
+    160(1):246–256 · Hansen, Lunde, Nason 2011, *Econometrica* 79(2):453–497
+    · Giacomini and Rossi 2010, *JAE* 25(4):595–620 (critical values from
+    Rossi's `giacross.ado`) · Goyal and Welch 2008, *RFS* 21(4):1455–1508 ·
+    Kupiec 1995, *J. Derivatives* 3(2):73–84 · Christoffersen 1998, *Int.
+    Economic Review* 39(4):841–862 · Engle and Manganelli 2004, *JBES*
+    22(4):367–381 · Patton, Ziegel, Chen 2019, *J. Econometrics*
+    211(2):388–413.
+
+    **Targeting and economic value.** Fleming, Kirby, Ostdiek 2001, *J.
+    Finance* 56(1):329–352 · Moreira and Muir 2017, *J. Finance*
+    72(4):1611–1644 · Liu, Tang, Zhou 2019, *JPM* 46(1):38–51 · Harvey,
+    Hoyle, Korgaonkar, Rattray, Sargaison, Van Hemert 2018, *JPM*
+    45(1):14–33 · Bongaerts, Kang, van Dijk 2020, *FAJ* 76(4):54–71 ·
+    Becker, Clements, Doolan, Hurn 2015, *IJF* 31(3):849–861 · Ghia and Hou
+    2021, "Crypto Insights: The Impact of Volatility Targeting", Bloomberg ·
+    Grobys, Kolari, Sandretto, Shahzad, Äijö 2025, "Cryptocurrency momentum
+    has (not) its moments", *FMPM* 39(4) · Devanathan, Rueter, Boyd, Candès,
+    Hastie, Kochenderfer et al. 2026, "Single-Asset Adaptive Leveraged
+    Volatility Control", arXiv 2603.01298.
+    """)
     return
 
 

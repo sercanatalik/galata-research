@@ -186,6 +186,15 @@ on each: the real best against the permuted bests.
 
 ![Against markets with no structure](assets/screenshots/permuted_bars.png)
 
+**GARCH, GARCH-t and variations.** The claims under test with their
+sources, BTC's history split at the estimation period, fat tails and
+clustering, the model families (hand-written ones included), and the
+in-sample fit table. The walked-forward, scored and traded sections run
+behind a button, so the export shows the in-sample half; their numbers are
+in [The volatility study](#the-volatility-study).
+
+![GARCH, GARCH-t and variations](assets/screenshots/garch.png)
+
 ---
 
 ## Quick start
@@ -363,6 +372,23 @@ improve (1.21–1.37 against hold's 1.21). And the forecasts' order does not
 carry over: ρ(QLIKE rank, Sharpe rank) is 0.21, so HARQ, first by QLIKE, is
 fourth by Sharpe, as Becker, Clements, Doolan and Hurn (2015) warn.
 
+**What survives.** ⑬ decides each claim from the notebook's own results by a
+rule stated beside it, and the answer depends on the bar:
+
+| claim (source) | 1d | 4h | 1h |
+|---|---|---|---|
+| t beats normal (Troster et al. 2019; *against*: Chu et al. 2017, IGARCH-normal best) | yes, ΔBIC −97 | yes, −710 | yes, −699 |
+| no leverage effect (Cheikh et al. 2020) | yes, γ 0.057 | **no**, γ 0.106 (> 2 se) | yes, γ 0.053 |
+| α+β ≈ 1 intraday is the daily cycle (Andersen and Bollerslev 1997; *in tension*: Rambaccussing and Mazibas 2020) | — | **no**, 0.961 → 0.982 | yes, 1.0000 → 0.9891 |
+| HAR beats GARCH (Bergsli et al. 2022) | yes, 3 of 3 horizons | — (too little 1h RV) | — |
+| something beats GARCH(1,1) (Hansen and Lunde 2005) | no, in every MCS* | yes, at every horizon* | no* |
+| a better σ is not a better P&L (Becker et al. 2015) | yes, ρ 0.26 | yes, ρ −0.40 | yes, ρ 0.20 |
+| targeting does not cut drawdown per vol (Harvey et al. 2018; Ghia and Hou 2021) | yes, 1.27 vs 1.21 | **no**, 0.84 vs 0.87 | yes, 0.21 vs 0.21 |
+
+\*With the notebook's default models (EWMA, GARCH, GJR, EGARCH, HAR, HARQ).
+Adding CARR and the hand-written models changes the set: at 1d and 30 days
+it holds CARR alone.
+
 ---
 
 ## Architecture
@@ -413,7 +439,7 @@ Four rules shape it:
 uv sync --extra models                 # gr.models: arch and scipy
 uv run pytest -q -rs                   # every test; record tests skip without a record
 uv run pytest -m record                # only the claims about the real record
-uv run marimo check notebooks/*.py     # every notebook, as CI runs it
+uv run marimo check notebooks/*.py     # every notebook, as CI and tests/notebooks.py run it
 ```
 
 - **Tests are named after the claim they defend**, such as
@@ -455,7 +481,7 @@ uv run marimo check notebooks/*.py     # every notebook, as CI runs it
 | The GARCH family, HAR, component GARCH, Beta-t-EGARCH and CARR, walked forward | done |
 | Scoring: QLIKE, DM, the Model Confidence Set, SPA, fluctuation, VaR/ES backtests | done: HAR, HARQ and CARR lead |
 | Volatility targeting from the forecasts, with the economics beside Sharpe | done: nothing pays out of sample |
-| The volatility study's verdicts, references verified, the notebook's screenshot | in progress (roadmap item 10) |
+| The volatility study's verdicts, references verified, the notebook's screenshot | done: see What survives |
 
 ---
 

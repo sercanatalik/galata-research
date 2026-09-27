@@ -86,7 +86,7 @@ that uses it. The GARCH study grows in `notebooks/garch.py` from item 4 onward.
   SPA, Kupiec, Christoffersen, DQ, fluctuation test). Notebook ⑧, ⑨, ⑪.
 - [x] 9. **`target-the-volatility`**: `gr.models.vol.target` (band, cap, conditional), the trials,
   the performance fee. Notebook ⑩, ⑫.
-- [ ] 10. **`say-what-survives`**: theory and literature blocks, the claims table filled, references
+- [x] 10. **`say-what-survives`**: theory and literature blocks, the claims table filled, references
   verified, ⑬, the README study entry and screenshot.
 
 ---
@@ -554,21 +554,36 @@ Each is its own change, once Phase 1 has said something.
 - **Hand-written likelihoods** are where silent errors hide. Each has a nested-case or reference test,
   or it does not ship.
 - **Short samples:** CL and GOLD daily; 1h only from 2026-03. The refusals name the minimum.
-- **Unverified in the research:** the exact winners in Chu et al. 2017; the conclusion of "True versus
-  spurious long memory in cryptocurrencies" (JRFM 2020); whether arXiv 2404.04962 reports ν = 3–4; the
-  FKO utility form and γ values; the realized-range efficiency citations; the Goyal and Welch
-  attribution for cumulative-loss plots; funding-hour spillover. Each is checked before the notebook
-  cites it.
+- **Unverified in the research:** resolved 2026-09-27. Every † citation was checked against publisher or
+  repository pages. Chu et al. (2017) found IGARCH-normal best for Bitcoin (stated against the fat-tails claim),
+  Rambaccussing and Mazibas (2020) find crypto volatility long memory genuine (stated in tension with the 1h
+  result), and arXiv 2404.04962 was dropped.
 - **Legacy context:** `legacy/galata-legacy/design/tower/econometrics.md` (estimator choice, the
   close-to-close default, range estimators mostly *over*-reading σ on testnet: BTC 0.40 CC against
   0.43 Parkinson and 0.44 GK); `design/gaps-vs-literature.md` §2.8 (vol targeting: Moreira and Muir
   against Cederburg et al.).
 
+
+### Outcomes (2026-09-27)
+
+What each risk turned into, on BTC (`notebooks/garch.py`, ⑬, which computes these):
+
+- **HAR did win the short horizons**, and the longer ones: HARQ, HAR and CARR lead QLIKE at 1, 7 and 30 days
+  at 1d (0.95, ~0.75, ~0.45 of EWMA's). The Model Confidence Set cannot separate the nine models at one day.
+- **Fees and the market decided the backtest**: no targeting trial made money out of sample (hold −0.31, best
+  −0.23, DSR 0.33 over 29 trials), and the forecast ranking did not carry over (ρ 0.20–0.26 at 1h and 1d).
+- **The hand-written likelihoods passed their checks**, and L-BFGS-B was replaced by Nelder–Mead after it
+  stalled at the start values.
+- **The persistence finding depends on the bar**: deseasonalising lowers α+β at 1h (1.0000 → 0.9891) but not
+  at 4h (0.961 → 0.982), and GJR's γ crosses the leverage rule at 4h only (0.106, just over 2 se).
+- **Short samples bit where expected**: HAR cannot be walked at 4h because 1h realized variance starts in
+  2026-03; the notebook reports it as skipped rather than failing.
+
 ---
 
 ## References
 
-Grouped by where they are used. † = not verified this session.
+Grouped by where they are used. Every † item was verified on 2026-09-27 (`say-what-survives`), and three changed: Chu et al.'s finding is stated, Rambaccussing and Mazibas is added, and arXiv 2404.04962 is dropped (it does not report ν ≈ 3–4).
 
 **Models**
 - Engle, R. (1982). Autoregressive conditional heteroscedasticity. *Econometrica* 50(4), 987–1007.
@@ -585,7 +600,7 @@ Grouped by where they are used. † = not verified this session.
 - Creal, D., Koopman, S. J., Lucas, A. (2013). Generalized autoregressive score models. *J. Applied Econometrics* 28(5), 777–795.
 - Chou, R. (2005). Forecasting financial volatilities with extreme values: the CARR model. *J. Money, Credit and Banking* 37(3), 561–582.
 - Corsi, F. (2009). A simple approximate long-memory model of realized volatility. *J. Financial Econometrics* 7(2), 174–196.
-- Andersen, T., Bollerslev, T., Diebold, F. (2007). Roughing it up: including jump components. *REStat* 89(4), 701–720.†
+- Andersen, T., Bollerslev, T., Diebold, F. (2007). Roughing it up: including jump components in the measurement, modeling and forecasting of return volatility. *REStat* 89(4), 701–720.
 - Patton, A., Sheppard, K. (2015). Good volatility, bad volatility. *REStat* 97(3), 683–697.
 - Bollerslev, T., Patton, A., Quaedvlieg, R. (2016). Exploiting the errors: a simple approach for improved volatility forecasting. *J. Econometrics* 192(1), 1–18.
 - Hansen, P., Huang, Z., Shek, H. (2012). Realized GARCH. *J. Applied Econometrics* 27(6), 877–906.
@@ -593,7 +608,8 @@ Grouped by where they are used. † = not verified this session.
 
 **Crypto evidence**
 - Katsiampa, P. (2017). Volatility estimation for Bitcoin. *Economics Letters* 158, 3–6.
-- Chu, J., Chan, S., Nadarajah, S., Osterrieder, J. (2017). GARCH modelling of cryptocurrencies. *JRFM* 10(4), 17.†
+- Chu, J., Chan, S., Nadarajah, S., Osterrieder, J. (2017). GARCH modelling of cryptocurrencies. *JRFM* 10(4), 17. **IGARCH(1,1) with normal innovations fits Bitcoin best**, against the fat-tails claim.
+- Rambaccussing, D., Mazibas, M. (2020). True versus spurious long memory in cryptocurrencies. *JRFM* 13(9), 186. Long memory in volatility mostly genuine.
 - Ardia, D., Bluteau, K., Rüede, M. (2019). Regime changes in Bitcoin GARCH volatility dynamics. *Finance Research Letters* 29, 266–271.
 - Caporale, G. M., Zekokh, T. (2019). Modelling volatility of cryptocurrencies using Markov-switching GARCH models. *RIBAF* 48, 143–155.
 - Troster, V., Tiwari, A., Shahbaz, M., Macedo, D. (2019). Bitcoin returns and risk: a general GARCH and GAS analysis. *Finance Research Letters* 30, 187–193.
@@ -603,7 +619,7 @@ Grouped by where they are used. † = not verified this session.
 - Scaillet, O., Treccani, A., Trevisan, C. (2020). High-frequency jump analysis of the Bitcoin market. *J. Financial Econometrics* 18(2), 209–232.
 - Hung, J.-C., Liu, H.-C., Yang, J. J. (2020). Improving the realized GARCH's volatility forecast for Bitcoin with jump-robust estimators. *North American J. Economics and Finance* 52.
 - Chkili, W. (2021). Modeling Bitcoin price volatility: long memory vs Markov switching. *Eurasian Economic Review* 11, 433–448.
-- Hansen, P., Kim, C., Kimbrough, W. (2021). Periodicity in cryptocurrency volatility and liquidity. arXiv 2109.12142.
+- Hansen, P. R., Kim, C., Kimbrough, W. (2021). Periodicity in Cryptocurrency Volatility and Liquidity. arXiv 2109.12142.
 - Bergsli, L., Lind, A., Molnár, P., Polasik, M. (2022). Forecasting volatility of Bitcoin. *RIBAF* 59.
 
 **Persistence, seasonality, breaks**
@@ -616,8 +632,8 @@ Grouped by where they are used. † = not verified this session.
 - Garman, M., Klass, M. (1980). On the estimation of security price volatilities from historical data. *J. Business* 53(1), 67–78.
 - Rogers, L. C. G., Satchell, S. (1991). Estimating variance from high, low and closing prices. *Annals of Applied Probability* 1(4), 504–512.
 - Yang, D., Zhang, Q. (2000). Drift-independent volatility estimation based on high, low, open and close prices. *J. Business* 73(3), 477–491.
-- Christensen, K., Podolskij, M. (2007). Realized range-based estimation of integrated variance. *J. Econometrics* 141(2), 323–349.†
-- Martens, M., van Dijk, D. (2007). Measuring volatility with the realized range. *J. Econometrics* 138(1), 181–207.†
+- Christensen, K., Podolskij, M. (2007). Realized range-based estimation of integrated variance. *J. Econometrics* 141(2), 323–349.
+- Martens, M., van Dijk, D. (2007). Measuring volatility with the realized range. *J. Econometrics* 138(1), 181–207.
 - Barndorff-Nielsen, O., Hansen, P., Lunde, A., Shephard, N. (2008). Designing realized kernels. *Econometrica* 76(6), 1481–1536.
 - Molnár, P. (2012). Properties of range-based volatility estimators. *Int. Review of Financial Analysis* 23, 20–29.
 - Liu, L., Patton, A., Sheppard, K. (2015). Does anything beat 5-minute RV? *J. Econometrics* 187(1), 293–311.
@@ -656,10 +672,10 @@ Grouped by where they are used. † = not verified this session.
 - Cederburg, S., O'Doherty, M., Wang, F., Yan, X. (2020). On the performance of volatility-managed portfolios. *JFE* 138(1), 95–117.
 - Bongaerts, D., Kang, X., van Dijk, M. (2020). Conditional volatility targeting. *Financial Analysts Journal* 76(4), 54–71.
 - Barroso, P., Detzel, A. (2021). Do limits to arbitrage explain the benefits of volatility-managed portfolios? *JFE* 140(3), 744–767.
-- Bloomberg Professional (2021). Crypto insights: the impact of volatility targeting.
+- Ghia, K., Hou, S. (2021). Crypto Insights: The Impact of Volatility Targeting. Bloomberg. BTC at a 10% target: return/vol 1.47 → 1.57, max drawdown/vol 0.90 → 1.28.
 - Bianco, N., Bernardi, M. (2022). Smoothing volatility targeting. arXiv 2212.07288.
-- Grobys, K. et al. (2025). *Financial Markets and Portfolio Management* 39(4).†
-- Devanathan, Boyd et al. (2026). Volatility control. Stanford/BlackRock working paper.†
+- Grobys, K., Kolari, J., Sandretto, D., Shahzad, S. J. H., Äijö, J. (2025). Cryptocurrency momentum has (not) its moments. *Financial Markets and Portfolio Management* 39(4).
+- Devanathan, N., Rueter, D., Boyd, S., Candès, E., Hastie, T., Kochenderfer, M. et al. (2026). Single-Asset Adaptive Leveraged Volatility Control. arXiv 2603.01298.
 
 **Resampling**
 - Politis, D., Romano, J. (1994). The stationary bootstrap. *JASA* 89(428), 1303–1313.
