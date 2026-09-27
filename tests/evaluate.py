@@ -284,3 +284,37 @@ def every_gw_result_carries_the_theory_note():
     rng = np.random.default_rng(23)
     got = ev.gw(_gw_aligned(rng.normal(0, 1, 100), rng.normal(0, 1, 100)), 1, model="m", benchmark="b")
     assert "rolling" in got["theory"]
+
+
+def _three(edges, n=240, seed=40):
+    # Loss per (model, horizon): base + edge + noise; QLIKE = proxy with forecast 1.
+    rng = np.random.default_rng(seed)
+    rows = []
+    for i in range(n):
+        for h in (1, 2, 3):
+            base = float(rng.normal(3.0, 0.4))
+            for name, edge in edges.items():
+                rows.append({"model": name, "close_ts": T0 + i * DAY, "h": h, "forecast": 1.0, "proxy": base + edge + float(rng.normal(0, 0.4))})
+    return pl.DataFrame(rows)
+
+
+def a_model_best_at_every_horizon_is_the_set():
+    got = ev.mcs_horizons(_three({"best": -0.5, "b": 0.0, "c": 0.1}), outer=59, inner=29)
+    assert got.filter(pl.col("included"))["model"].to_list() == ["best"]
+    assert got.filter(pl.col("model") == "best")["pvalue"].item() == 1.0
+
+
+def a_pair_of_equal_models_survives_together():
+    got = ev.mcs_horizons(_three({"a": 0.0, "b": 0.0, "worse": 0.6}), outer=59, inner=29)
+    kept = set(got.filter(pl.col("included"))["model"].to_list())
+    assert {"a", "b"} <= kept and "worse" not in kept
+
+
+def the_horizon_confidence_set_reproduces():
+    a = _three({"a": 0.0, "b": 0.05, "c": 0.2})
+    assert ev.mcs_horizons(a, outer=39, inner=19, seed=5).equals(ev.mcs_horizons(a, outer=39, inner=19, seed=5))
+
+
+def the_p_values_never_fall():
+    got = ev.mcs_horizons(_three({"a": 0.0, "b": 0.1, "c": 0.3, "d": 0.5}), outer=39, inner=19).drop_nulls("eliminated").sort("eliminated")
+    assert got["pvalue"].to_list() == sorted(got["pvalue"].to_list())

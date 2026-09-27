@@ -809,6 +809,32 @@ def _(aligned, alt, benchmark, ev, mo, pl, walked):
 
 
 @app.cell
+def _(aligned, ev, mo, pl):
+    try:
+        _u = ev.mcs_horizons(aligned, uniform=True).rename({"pvalue": "uMCS p", "included": "in uMCS"}).drop("eliminated")
+        _a = ev.mcs_horizons(aligned, uniform=False).rename({"pvalue": "aMCS p", "included": "in aMCS"}).drop("eliminated")
+        _both = _u.join(_a, on="model").sort("uMCS p", descending=True)
+    except Exception as _why:
+        _both = mo.md(f"Not computed: {_why}")
+    mo.vstack(
+        [
+            mo.md(r"""
+            ### The confidence set across all horizons
+
+            Quaedvlieg's (2021) multi-horizon Model Confidence Set, at 90%. The
+            **uniform** set holds the models not beaten at *every* horizon by
+            another; the **average** set holds those not beaten on the average
+            across horizons. It uses a double moving-block bootstrap (199 × 99
+            here; the paper uses 999), and QLIKE on the origins where every
+            model has every horizon.
+            """),
+            _both,
+        ]
+    )
+    return
+
+
+@app.cell
 def _(aligned, benchmark, ev, mo, pl, walked):
     _bench = benchmark.value if benchmark.value in walked["model"].unique().to_list() else walked["model"][0]
     _rows = []

@@ -496,3 +496,108 @@ def gw(aligned: pl.DataFrame, h: int, *, model: str, benchmark: str) -> dict:
         "n": n,
         "theory": GW_THEORY,
     }
+
+
+def _loss_tensor(aligned: pl.DataFrame) -> tuple[np.ndarray, list[str]]:
+    """QLIKE losses, T × H × M, on the origins where every model has every horizon; and the model names."""
+    hs = sorted(aligned["h"].unique().to_list())
+    wides = [losses(aligned, h) for h in hs]
+    names = sorted(set.intersection(*[set(w.columns) - {"close_ts"} for w in wides]))
+    joined = wides[0].select("close_ts", *[pl.col(n).alias(f"{n}@0") for n in names])
+    for k, w in enumerate(wides[1:], start=1):
+        joined = joined.join(w.select("close_ts", *[pl.col(n).alias(f"{n}@{k}") for n in names]), on="close_ts", how="inner")
+    cube = np.stack([np.column_stack([joined[f"{n}@{k}"].to_numpy() for k in range(len(hs))]) for n in names], axis=2)
+    return cube, names
+
+
+def _pair_stats(d: np.ndarray, w, mean_ref: np.ndarray | None, block: int) -> np.ndarray:
+    """Bootstrap-style pair statistics for a stack of differentials d (P × T × H): centred on `mean_ref`, block-variance studentised."""
+    p, t, _ = d.shape
+    x = d if w is None else (d @ w)[..., None]
+    centre = x.mean(axis=1) - (0 if mean_ref is None else (mean_ref if w is None else (mean_ref @ w)[..., None]))
+    dem = x - x.mean(axis=1, keepdims=True)
+    tt = t - t % block
+    sums = dem[:, :tt].reshape(p, -1, block, x.shape[2]).sum(axis=2)
+    var = (sums**2).mean(axis=1) / block
+    return np.min(np.sqrt(t) * centre / np.sqrt(np.maximum(var, 1e-300)), axis=1)
+
+
+def mcs_horizons(
+    aligned: pl.DataFrame,
+    *,
+    uniform: bool = True,
+    weights=None,
+    alpha_t: float = 0.05,
+    alpha_mcs: float = 0.1,
+    block: int = 3,
+    outer: int = 199,
+    inner: int = 99,
+    seed: int = 0,
+) -> pl.DataFrame:
+    """Quaedvlieg's (2021, §2.2) multi-horizon Model Confidence Set: `model, pvalue, included, eliminated`.
+
+    Uniform (uMCS, `uniform=True`): models best at every horizon; average
+    (aMCS): best on the weighted average. The equivalence statistic is
+    max over pairs of tᵢⱼ − cᵢⱼ (dᵢⱼ = Lᵢ − Lⱼ; cᵢⱼ the pair's (1 − α_t)
+    bootstrap critical value), its distribution a double moving-block
+    bootstrap; the model with the largest row-maximum is eliminated (the
+    authors' R code); p-values never fall and the last model's is 1.
+    `included` is p ≥ α_mcs, Hansen, Lunde and Nason's convention (the R code's
+    last line keeps p ≥ 1 − α, which fits only a reversed p). `outer` and
+    `inner` default to 199 and 99; the paper uses 999.
+    """
+    cube, names = _loss_tensor(aligned)
+    t, hcount, m = cube.shape
+    if m < 2:
+        raise Refused(f"a confidence set needs two models or more with every horizon scored; found {names}")
+    w = None if uniform else (np.full(hcount, 1 / hcount) if weights is None else np.asarray(weights, dtype=float))
+    rng = np.random.default_rng(seed)
+    alive = list(range(m))
+    pvalues = {n: None for n in names}
+    eliminated = {n: None for n in names}
+    running = 0.0
+    step = 0
+    while len(alive) > 1:
+        pairs = [(i, j) for i in alive for j in alive if i != j]
+        d = np.stack([cube[:, :, i] - cube[:, :, j] for i, j in pairs])  # P × T × H
+        dbar = d.mean(axis=1)
+        x = d if w is None else (d @ w)[..., None]
+        omega = np.array([[_qs_variance(x[p_, :, k]) for k in range(x.shape[2])] for p_ in range(len(pairs))])
+        t_obs = np.min(np.sqrt(t) * x.mean(axis=1) / np.sqrt(omega), axis=1)
+
+        def crit(sample: np.ndarray) -> np.ndarray:
+            dem = sample - sample.mean(axis=1, keepdims=True)
+            boots = np.empty((inner, len(pairs)))
+            for r in range(inner):
+                idx = _mbb_index(t, block, rng)
+                boots[r] = _pair_stats(dem[:, idx], w, None, block)
+            return np.quantile(boots, 1 - alpha_t, axis=0)
+
+        c_obs = crit(d)
+        t_max = np.max(t_obs - c_obs)
+        exceed = 0
+        for _ in range(outer):
+            idx = _mbb_index(t, block, rng)
+            sample = d[:, idx] - dbar[:, None, :]
+            tb = _pair_stats(sample, w, None, block)
+            exceed += np.max(tb - crit(sample)) > t_max
+        p = exceed / outer
+        running = max(running, p)
+        rows = {}
+        for (i, j), v in zip(pairs, t_obs - c_obs):
+            rows[i] = max(rows.get(i, -np.inf), v)
+        out = max(rows, key=rows.get)
+        step += 1
+        pvalues[names[out]] = running
+        eliminated[names[out]] = step
+        alive.remove(out)
+    pvalues[names[alive[0]]] = 1.0
+    return pl.DataFrame(
+        {
+            "model": names,
+            "pvalue": [pvalues[n] for n in names],
+            "included": [pvalues[n] >= alpha_mcs for n in names],
+            "eliminated": [eliminated[n] for n in names],
+        },
+        schema_overrides={"eliminated": pl.Int64},
+    ).sort("pvalue", descending=True)

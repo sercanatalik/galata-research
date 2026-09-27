@@ -267,7 +267,7 @@ Every loader returns a `pl.LazyFrame`, or a DuckDB relation with
 | `vol.walk_forward(returns, *, model, split, window, every, horizons, factors)` | one row per (origin, h): `variance`, `cum_variance`, `target_ts`, `fitted_through` | fitted on each refit's window only, fixed between refits; EGARCH and APARCH simulated, seeded; deseasonalised fits re-seasonalised |
 | `vol.har(measures, *, model, ...)`, `vol.carr(bars, ...)` | HAR, SHAR, HARQ on realized variance; CARR on the range | a training row only if its target is known at the refit; the insanity filter, marked `filtered` |
 | `evaluate.proxies`, `evaluate.align` | a proxy per bar; forecasts joined to it, point or over exactly h bars | a hole leaves a cumulative target blank; rows after a gap dropped |
-| `evaluate.scorecard`, `mcs`, `spa`, `dm`, `mz_gls`, `fluctuation`, `uspa`, `aspa`, `gw` | QLIKE and MSE per model × h; DM (HLN); the Model Confidence Set and SPA; MZ-GLS; Giacomini–Rossi; Quaedvlieg's uniform and average multi-horizon SPA; Giacomini–White conditional test | every score on the same aligned rows; seeded bootstraps |
+| `evaluate.scorecard`, `mcs`, `spa`, `dm`, `mz_gls`, `fluctuation`, `uspa`, `aspa`, `gw`, `mcs_horizons` | QLIKE and MSE per model × h; DM (HLN); the Model Confidence Set and SPA; MZ-GLS; Giacomini–Rossi; Quaedvlieg's uniform and average multi-horizon SPA and confidence set; Giacomini–White conditional test | every score on the same aligned rows; seeded bootstraps |
 | `evaluate.value_at_risk`, `var_backtest` | VaR/ES by filtered historical simulation; Kupiec, Christoffersen, DQ, FZ0 | each statistic checked by hand in the tests |
 | `vol.target`, `vol.trials`, `vol.economics`, `vol.es_t` | a position at each close from σ̂ (or from the refitted t's 1% expected shortfall); every trial; Sharpe, drawdown per unit vol, turnover, fees, FKO fee, DSR | the target known at the split; no second shift; every trial counted |
 
@@ -372,6 +372,10 @@ bootstrap), CARR, HARQ and HAR beat GARCH **at every horizon** (uniform SPA p
 0.001, 0.002, 0.012), which the per-horizon confidence sets could not show;
 GARCH beats EWMA on average (p 0.019) but not uniformly (0.076); GJR adds
 nothing over GARCH (0.63).
+
+As a set across all three horizons (Quaedvlieg's multi-horizon MCS, 90%,
+uniform and average alike): CARR, HARQ, HAR and GJR; GARCH and EWMA are out
+(p 0.060).
 
 *When* they win is predictable too (Giacomini and White 2006, instruments
 known at the origin): HARQ's and CARR's edge over GARCH grows with the
@@ -541,6 +545,7 @@ uv run marimo check notebooks/*.py     # every notebook, as CI and tests/noteboo
 | Phase 2: expected-shortfall sizing | done: ν̂ too stable on BTC to matter |
 | Phase 2: feedback-controlled targeting | done: hits the target, lifts every net Sharpe |
 | Phase 2: variance breaks | done: none under κ₂; persistence is not breaks |
+| Phase 2: multi-horizon confidence set | done: CARR, HARQ, HAR, GJR; GARCH and EWMA out |
 
 ---
 

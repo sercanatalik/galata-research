@@ -110,7 +110,7 @@ for 1m history:
   2026) against open-loop 1/σ̂.
 - [x] 17. **`break-the-persistence`**: variance breaks detected (ICSS, Inclán and Tiao 1994) and GARCH
   refitted with them, testing whether daily persistence is breaks (Lamoureux and Lastrapes 1990).
-- [ ] 18. **`confidence-across-horizons`**: Quaedvlieg's multi-horizon Model Confidence Set (uMCS, aMCS).
+- [x] 18. **`confidence-across-horizons`**: Quaedvlieg's multi-horizon Model Confidence Set (uMCS, aMCS).
 
 ---
 
