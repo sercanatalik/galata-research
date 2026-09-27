@@ -222,3 +222,26 @@ def the_signature_of_a_constant_drift():
 def the_signature_refuses_hourly_bars():
     with pytest.raises(Refused, match="1m"):
         timeseries.signature(_closes([1, 2, 3], width=timedelta(hours=1)), [5])
+
+
+def the_semivariances_add_up_and_the_quarticity_is_the_fourth_moment():
+    t0 = utc("2026-01-01T00:59")
+    steps = [0.0, 0.01, -0.02, 0.03, -0.01] + [0.0] * 57
+    logp = [sum(steps[: i + 1]) for i in range(62)]
+    closes = [math.exp(x) for x in logp]
+    fine = pl.DataFrame(
+        {
+            "ticker": "BTC",
+            "ts": [t0 + i * MINUTE for i in range(62)],
+            "close_ts": [t0 + (i + 1) * MINUTE for i in range(62)],
+            "open": closes,
+            "high": closes,
+            "low": closes,
+            "close": closes,
+        }
+    )
+    got = timeseries.realized_from(fine, "1h").filter(pl.col("ts") == utc("2026-01-01T01:00")).row(0, named=True)
+    assert got["rs_plus"] == pytest.approx(1e-4 + 9e-4)
+    assert got["rs_minus"] == pytest.approx(4e-4 + 1e-4)
+    assert got["rs_plus"] + got["rs_minus"] == pytest.approx(got["rv"])
+    assert got["rq"] == pytest.approx(60 / 3 * (1e-8 + 16e-8 + 81e-8 + 1e-8))

@@ -215,7 +215,7 @@ gr.frontier()                           # how far each dataset is durable
 | `gr.timeseries.returns(bars, *, kind)` | `ticker, ts, close_ts, return`, simple or log | null on a ticker's first bar and after a hole: the backtest's rule |
 | `gr.timeseries.periods_per_year(interval)` | 525,600 · 8,760 · 2,190 · 365 | calendar time: the venue never closes |
 | `gr.timeseries.realized(bars, estimator, window)` | `n, sigma` per bar: close-to-close, Parkinson, Garman–Klass, Rogers–Satchell, Yang–Zhang | one count for all five: a contiguous return, not in a gap; a figure only for a full window; no clamp |
-| `gr.timeseries.realized_from(fine, interval)` | RV and realized range per coarser bucket | null unless the bucket holds every fine return |
+| `gr.timeseries.realized_from(fine, interval)` | RV, realized range, semivariances and quarticity per coarser bucket | null unless the bucket holds every fine return |
 | `gr.timeseries.ewma_vol(bars, *, lam)`, `ewma_max` | RiskMetrics' EWMA σ; the larger of a fast and a slow one | σ at close t is the forecast for t+1; warm-up until the seed weighs < 1%; a hole bridged |
 | `gr.timeseries.signature(bars_1m, minutes)` | mean daily RV per sampling interval | whole days only |
 | `gr.timeseries.seasonal_factors(returns, *, fit, by, stat)`, `deseasonalize` | a volatility factor per (weekday, hour) cell; returns divided by it | fitted on `fit` only; mean f² = 1; hour × weekday by default |
@@ -223,6 +223,7 @@ gr.frontier()                           # how far each dataset is durable
 | `gr.models.vol.fit(returns, *, model, dist, fit)` | a `Fit`: parameters, persistence, half-life, σ̄, the in-sample σ and z | the `[models]` extra; each model's own persistence (GJR's γ weighted by E[z²·1(z<0)], EGARCH's β); gaps bridged and `after_gap` marked; polars and floats out, never pandas |
 | `gr.models.vol.table`, `news_impact`, `diagnose` | one row per fit; Engle–Ng's curve; Ljung–Box on z and z², ARCH-LM | ARCH-LM agrees with arch's to 1e-6 |
 | `gr.models.vol.walk_forward(returns, *, model, split, window, every, horizons, factors)` | one row per (origin, h): `variance`, `cum_variance`, `target_ts`, `fitted_through` | fitted on each refit's window only, fixed between refits; no return after an origin is used; EGARCH and APARCH simulated, seeded; deseasonalised fits re-seasonalised by the target cell |
+| `gr.models.vol.har(measures, *, model, split, window, every, horizons)` | HAR, SHAR, HARQ forecasts of realized variance, in `walk_forward`'s columns plus `filtered` | direct regressions per horizon; a training row only if its target is known at the refit; the insanity filter, stated |
 | `gr.timeseries.stationary_bootstrap_indices`, `optimal_block` | resampling indices; Politis–White block | agrees with arch to 1e-6 |
 | `gr.utils.require`, `window`, `instant` | a refusal naming what is missing; micros | a naive time is refused |
 

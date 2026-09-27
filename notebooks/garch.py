@@ -428,6 +428,19 @@ def _(mo):
     have no such formula beyond one step, so they are simulated: 500 seeded
     paths. The grey points are each target bar's Parkinson range, a noisy
     proxy, which is why they are dots and not a line.
+
+    **HAR, SHAR, HARQ** forecast the *realized* variance built from finer
+    bars (daily RV from six 4h returns at 1d, 4h RV from four 1h returns at
+    4h), by regressing it on its own last value and its weekly and monthly
+    means (Corsi 2009):
+    $RV_{t+h}=\beta_0+\beta_d RV_t+\beta_w RV^{(w)}_t+\beta_m RV^{(m)}_t$,
+    one direct regression per horizon. SHAR splits $RV_t$ by the sign of the
+    returns (Patton and Sheppard 2015). HARQ shrinks $\beta_d$ when the
+    realized quarticity says $RV_t$ was measured noisily (Bollerslev, Patton
+    and Quaedvlieg 2016). The literature expects these to beat GARCH at short
+    horizons on Bitcoin (Bergsli et al. 2022). Item 8 scores whether they do
+    here. A forecast outside its training range is replaced by the training
+    mean (the insanity filter) and marked `filtered`.
     """)
     return
 
@@ -437,7 +450,11 @@ def _(interval, mo):
     HORIZONS = {"1h": {"1 bar": 1, "1 day": 24, "1 week": 168}, "4h": {"1 bar": 1, "1 day": 6, "1 week": 42}, "1d": {"1 day": 1, "1 week": 7, "1 month": 30}}[interval.value]
     EVERY = {"1h": 24, "4h": 6, "1d": 5}[interval.value]
     horizon = mo.ui.dropdown(HORIZONS, value=list(HORIZONS)[0], label="horizon")
-    walk_models = mo.ui.multiselect(["ewma", "garch", "gjr", "egarch", "aparch", "figarch", "rm2006"], value=["ewma", "garch", "gjr", "egarch"], label="models")
+    walk_models = mo.ui.multiselect(
+        ["ewma", "garch", "gjr", "egarch", "aparch", "figarch", "rm2006"] + (["har", "shar", "harq"] if interval.value != "1h" else []),
+        value=["ewma", "garch", "gjr", "egarch"] + (["har", "harq"] if interval.value != "1h" else []),
+        label="models",
+    )
     go = mo.ui.run_button(label="walk forward")
     mo.hstack([horizon, walk_models, go, mo.md(f"refit every **{EVERY}** bars (FIGARCH every {EVERY * 7})")])
     return EVERY, HORIZONS, go, horizon, walk_models
@@ -447,6 +464,10 @@ def _(interval, mo):
 def _(EVER, gr, mo, pl, vol):
     @mo.cache
     def walk(ticker_, interval_, split_iso, model_, every_, horizons_, deseason_):
+        if model_ in ("har", "shar", "harq"):
+            _fine = {"1d": "4h", "4h": "1h"}[interval_]
+            _measures = gr.timeseries.realized_from(gr.market.candles([ticker_], _fine, *EVER).collect(), interval_)
+            return vol.har(_measures, model=model_, split=split_iso, every=every_, horizons=horizons_).with_columns(pl.lit(model_).alias("model"))
         _bars = gr.market.candles([ticker_], interval_, *EVER).collect()
         _r = gr.timeseries.returns(_bars, kind="log")
         _factors = None
@@ -516,12 +537,17 @@ def _(mo, walked):
 
 
 @app.cell
-def _(alt, bars, column, deseason, estimation, fan_length, gr, in_sample, interval, mo, origin, per_year, pl, returns, ticker, vol, walk_models, walked):
+def _(EVER, alt, bars, column, deseason, estimation, fan_length, gr, in_sample, interval, mo, origin, per_year, pl, returns, ticker, vol, walk_models, walked):
     _origins = walked["close_ts"].unique().sort()
     _o = _origins[origin.value]
     _fans, _levels = [], []
     for _m in walk_models.value:
-        _w = vol.walk_forward(returns.select("ticker", "ts", "close_ts", "return"), model=_m, split=_o, every=10**9, horizons=range(1, fan_length.value + 1), simulations=500, min_obs=250)
+        if _m in ("har", "shar", "harq"):
+            _fine = {"1d": "4h", "4h": "1h"}[interval.value]
+            _meas = gr.timeseries.realized_from(gr.market.candles([ticker.value], _fine, *EVER).collect(), interval.value)
+            _w = vol.har(_meas, model=_m, split=_o, every=10**9, horizons=range(1, fan_length.value + 1))
+        else:
+            _w = vol.walk_forward(returns.select("ticker", "ts", "close_ts", "return"), model=_m, split=_o, every=10**9, horizons=range(1, fan_length.value + 1), simulations=500, min_obs=250)
         _fans.append(_w.filter(pl.col("close_ts") == _o).with_columns(pl.lit(_m).alias("model")))
         if _m in ("garch", "gjr", "aparch"):
             _fit = vol.fit(returns.filter(pl.col("close_ts") <= _o), model=_m, dist="t", min_obs=250)

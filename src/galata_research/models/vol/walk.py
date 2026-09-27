@@ -16,7 +16,7 @@ from ..._errors import Refused
 from .. import _arch
 from .._arch import DISTS, MODELS, SCALE, SIMULATED
 
-_OUT = ("ticker", "ts", "close_ts", "h", "target_ts", "variance", "cum_variance", "fitted_through", "fit_from", "refit", "after_gap")
+_OUT = ("ticker", "ts", "close_ts", "h", "target_ts", "variance", "cum_variance", "fitted_through", "fit_from", "refit", "after_gap", "filtered")
 
 
 def walk_forward(
@@ -37,7 +37,8 @@ def walk_forward(
     """Variance forecasts from every origin at or after `split`, one row per (origin, h in `horizons`).
 
     `ticker, ts, close_ts, h, target_ts, variance, cum_variance, fitted_through,
-    fit_from, refit, after_gap`, in squared return units per bar. `variance` is
+    fit_from, refit, after_gap, filtered`, in squared return units per bar
+    (`filtered` is always false here; HAR's insanity filter sets it). `variance` is
     E[σ²] of the h-th bar after the origin; `cum_variance` sums bars 1…h, the
     figure realized variance over those bars is scored against (Andersen,
     Bollerslev, Christoffersen and Diebold 2006). `target_ts` is the `ts` of
@@ -108,6 +109,7 @@ def walk_forward(
                 (pl.col("close_ts") + width * (h - 1)).alias("target_ts"),
                 pl.Series("variance", variances[:, h - 1]),
                 pl.Series("cum_variance", cumulative[:, h - 1]),
+                pl.lit(False).alias("filtered"),
             )
         )
     return pl.concat(rows).select(_OUT).sort("close_ts", "h")

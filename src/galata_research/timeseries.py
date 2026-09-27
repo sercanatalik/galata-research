@@ -237,11 +237,13 @@ def realized(
 def realized_from(fine: pl.LazyFrame | pl.DataFrame, interval: str) -> pl.DataFrame:
     """Per bucket of the coarser `interval`: realized variance and realized range from the fine bars inside it.
 
-    `ticker, ts, close_ts, n, expected, rv, rr`, where `rv = Σ r²` over the
+    `ticker, ts, close_ts, n, expected, rv, rr, rs_plus, rs_minus, rq`, where `rv = Σ r²` over the
     contiguous fine log returns whose bars open in the bucket (the first spans
     from the previous bucket's last close), and `rr = Σ ln(H/L)² / (4 ln 2)`
     over the same bars (the realized range; Christensen and Podolskij 2007,
-    Martens and van Dijk 2007), biased low by discrete sampling. Both are null
+    Martens and van Dijk 2007), biased low by discrete sampling. `rs_plus` and
+    `rs_minus` split `rv` by the sign of each return (the realized
+    semivariances), and `rq = (n/3)·Σr⁴` is the realized quarticity. All are null
     unless the bucket holds every return it should (`n = expected`): a sum over
     a partial bucket understates.
     """
@@ -262,6 +264,9 @@ def realized_from(fine: pl.LazyFrame | pl.DataFrame, interval: str) -> pl.DataFr
             pl.col("_r").count().alias("n"),
             pl.col("_r").pow(2).sum().alias("_rv"),
             pl.when(pl.col("_r").is_not_null()).then(parkinson_term()).sum().alias("_rr"),
+            pl.when(pl.col("_r") > 0).then(pl.col("_r").pow(2)).sum().alias("_rs_plus"),
+            pl.when(pl.col("_r") < 0).then(pl.col("_r").pow(2)).sum().alias("_rs_minus"),
+            pl.col("_r").pow(4).sum().alias("_q"),
         )
         .select(
             "ticker",
@@ -271,6 +276,9 @@ def realized_from(fine: pl.LazyFrame | pl.DataFrame, interval: str) -> pl.DataFr
             pl.lit(expected, pl.Int64).alias("expected"),
             pl.when(pl.col("n") == expected).then(pl.col("_rv")).alias("rv"),
             pl.when(pl.col("n") == expected).then(pl.col("_rr")).alias("rr"),
+            pl.when(pl.col("n") == expected).then(pl.col("_rs_plus")).alias("rs_plus"),
+            pl.when(pl.col("n") == expected).then(pl.col("_rs_minus")).alias("rs_minus"),
+            pl.when(pl.col("n") == expected).then(pl.col("n").cast(pl.Float64) / 3 * pl.col("_q")).alias("rq"),
         )
         .sort("ticker", "ts")
         .collect()

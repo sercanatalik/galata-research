@@ -78,7 +78,7 @@ that uses it. The GARCH study grows in `notebooks/garch.py` from item 4 onward.
   boundary, `gr.models.vol.garch` in-sample fits and summaries. `notebooks/garch.py` ①–⑤b.
 - [x] 5. **`forecast-walking-forward`**: `gr.models.vol.walk_forward`, horizons,
   `fitted_through`, `after_gap`, simulation for EGARCH/APARCH, caching. Notebook ⑥–⑦.
-- [ ] 6. **`forecast-from-realized-measures`**: `gr.models.vol.har` (HAR-RV, SHAR, HARQ) in the
+- [x] 6. **`forecast-from-realized-measures`**: `gr.models.vol.har` (HAR-RV, SHAR, HARQ) in the
   walk-forward.
 - [ ] 7. **`hand-written-likelihoods`**: `gr.models.vol.custom` (component GARCH, Beta-t-EGARCH,
   CARR), each tested against a nested case or a reference.
