@@ -13,7 +13,7 @@ import polars as pl
 from ... import backtest, stats, studies, timeseries, utils
 from ..._errors import Refused
 
-RULES = ("inverse_vol", "inverse_variance", "conditional", "expected_shortfall")
+RULES = ("inverse_vol", "inverse_variance", "conditional", "expected_shortfall", "feedback")
 _MIN_HISTORY = 20
 
 
@@ -56,6 +56,11 @@ def target(
     cap: float = 2.0,
     band: float = 0.0,
     alpha: float = 0.01,
+    gain: float = 55.0,
+    smoothing: float = 0.6,
+    kappa_bounds: tuple[float, float] = (-1.0, 1.0),
+    halflife: float = 126.0,
+    burn_in: int = 10,
 ) -> pl.DataFrame:
     """One ticker's bars with `position`, set on each origin bar from the forecast made at its close.
 
@@ -67,7 +72,13 @@ def target(
     and 1 otherwise. `expected_shortfall` is min(τ·es_t(ν₀, α)/(σ̂·es_t(ν̂, α)),
     cap), ν₀ the first origin's tail parameter (known at the split): inverse vol
     while ν̂ = ν₀, and smaller as the refitted tail grows fatter; it needs the
-    forecasts' `nu` (symmetric t; η of skew-t is treated as ν). Long only. `cap` 2 is QuantPedia's; Harvey et al. (2018)
+    forecasts' `nu` (symmetric t; η of skew-t is treated as ν). `feedback` is
+    Devanathan, Rueter, Boyd et al.'s (2026) Algorithm 2 on top of σ̂:
+    w = min(e^κ·τ/σ̂, cap), κₖ = (1−θ)·clip(−g·eₖ; kappa_bounds) + θ·κₖ₋₁,
+    eₖ = log(σ̂ⁱⁿᵈₖ/τ), σ̂ⁱⁿᵈ the bias-corrected EWMA (half-life h bars) of the
+    position's own realized returns through bar k; open loop for the first
+    `burn_in` origins. Defaults are the paper's (tuned on IVV 2000-2009).
+    Long only. `cap` 2 is QuantPedia's; Harvey et al. (2018)
     use none. `band` is a no-trade region: the position moves only when the
     rule's weight differs from it by more than `band` × the position. 0.25 is
     the static-portfolio 5/25 heuristic, not a vol-targeting result. A bar
@@ -112,6 +123,12 @@ def target(
                 if sigma[i] <= lo or sigma[i] >= hi:
                     weights[i] = raw[i]
         raw = weights
+    if rule == "feedback":
+        rets = timeseries.returns(frame, kind="simple").select("close_ts", "return")
+        r = one.select("close_ts").join(rets, on="close_ts", how="left")["return"].to_numpy()
+        held = _feedback(tau, sigma, r, cap, band, gain, smoothing, kappa_bounds, halflife, burn_in, per_year)
+        positions = pl.DataFrame({"close_ts": one["close_ts"], "position": held}).with_columns(pl.col("position").fill_nan(None))
+        return frame.join(positions, on="close_ts", how="left")
     held = np.empty(raw.size)
     current = None
     for i, w in enumerate(raw):
@@ -123,6 +140,34 @@ def target(
         held[i] = current
     positions = pl.DataFrame({"close_ts": one["close_ts"], "position": held}).with_columns(pl.col("position").fill_nan(None))
     return frame.join(positions, on="close_ts", how="left")
+
+
+def _feedback(tau, sigma, r, cap, band, gain, smoothing, bounds, halflife, burn_in, per_year) -> np.ndarray:
+    """The paper's Algorithm 2, bar by bar: each position is known at its own close, and the next bar's index
+    return is that position times the bar's return."""
+    beta = np.exp(-np.log(2) / halflife)
+    lo, hi = bounds
+    s_sum = w_sum = 0.0
+    kappa = 0.0
+    current = None
+    held = np.full(sigma.size, np.nan)
+    for i in range(sigma.size):
+        if current is not None and np.isfinite(r[i]):
+            ret = current * r[i]
+            s_sum = beta * s_sum + ret * ret
+            w_sum = beta * w_sum + 1.0
+        if i >= burn_in and w_sum > 0 and s_sum > 0:
+            error = np.log(np.sqrt(per_year * s_sum / w_sum) / tau)
+            kappa = (1 - smoothing) * min(max(-gain * error, lo), hi) + smoothing * kappa
+        else:
+            kappa = 0.0
+        if not np.isfinite(sigma[i]) or sigma[i] <= 0:
+            continue
+        w = min(np.exp(kappa) * tau / sigma[i], cap)
+        if current is None or abs(w - current) > band * current:
+            current = float(w)
+        held[i] = current
+    return held
 
 
 def _interval(width) -> str:
@@ -172,14 +217,16 @@ def _trial(positioned: pl.DataFrame, name: str, fee: float, funding) -> pl.DataF
     return r.select(pl.lit(name).alias("trial"), "ticker", "ts", "position", "bar_return", "gross", "cost", "funding", "net")
 
 
-def economics(frame: pl.DataFrame, *, benchmark: str = "hold", periods_per_year: int) -> tuple[pl.DataFrame, dict]:
+def economics(frame: pl.DataFrame, *, benchmark: str = "hold", periods_per_year: int, target: float | None = None) -> tuple[pl.DataFrame, dict]:
     """Per trial the economics beside Sharpe, and the Deflated Sharpe Ratio over every trial.
 
     `sharpe_annual, max_drawdown, drawdown_per_vol` (max drawdown ÷ the
     trial's own annualised volatility: the Bloomberg 2021 check that a smaller
     drawdown is not just a smaller position), `turnover_per_year, fees,
     funding, fee_bp_g1, fee_bp_g10` (Fleming, Kirby and Ostdiek's fee against
-    `benchmark` on the same bars).
+    `benchmark` on the same bars). With `target` (annualised), also
+    `realized_vol` and `vol_error` = |ln(realized_vol/target)|: whether a
+    volatility target was actually hit.
     """
     scored = frame.drop_nulls("net")
     names = scored["trial"].unique(maintain_order=True).to_list()
@@ -207,6 +254,7 @@ def economics(frame: pl.DataFrame, *, benchmark: str = "hold", periods_per_year:
                 "funding": float(t["funding"].fill_null(0).sum()),
                 "fee_bp_g1": stats.performance_fee(joined["net"], joined["_b"], 1.0, periods_per_year),
                 "fee_bp_g10": stats.performance_fee(joined["net"], joined["_b"], 10.0, periods_per_year),
+                **({"realized_vol": vol, "vol_error": abs(float(np.log(vol / target))) if vol else None} if target else {}),
             }
         )
     table = pl.DataFrame(rows, infer_schema_length=None)

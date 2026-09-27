@@ -106,7 +106,7 @@ for 1m history:
 
 - [x] 15. **`size-on-expected-shortfall`**: ES-target sizing for the t models: exposure moves with ν̂,
   which a σ target cannot show; `walk_forward` carries each refit's ν.
-- [ ] 16. **`control-the-volatility`**: feedback-controlled vol targeting (Devanathan, Rueter, Boyd et al.
+- [x] 16. **`control-the-volatility`**: feedback-controlled vol targeting (Devanathan, Rueter, Boyd et al.
   2026) against open-loop 1/σ̂.
 - [ ] 17. **`break-the-persistence`**: variance breaks detected (ICSS, Inclán and Tiao 1994) and GARCH
   refitted with them, testing whether daily persistence is breaks (Lamoureux and Lastrapes 1990).

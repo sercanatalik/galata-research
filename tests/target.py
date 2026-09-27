@@ -122,3 +122,49 @@ def a_forecast_without_nu_is_refused_for_es():
     f = _forecasts(bars, 60, [0.4] * 40)
     with pytest.raises(gr.Refused, match="needs each forecast's nu"):
         vol.target(f, bars, split=bars["close_ts"][60], target=0.3, rule="expected_shortfall")
+
+
+def _regime_bars(n=900, seed=30):
+    # Daily returns with a volatility that doubles half way: a model that keeps its old sigma lags.
+    rng = np.random.default_rng(seed)
+    sd = np.where(np.arange(n) < n // 2, 0.02, 0.04)
+    return _bars(list(100 * np.exp(np.cumsum(rng.normal(0, sd)))))
+
+
+def a_zero_gain_is_open_loop():
+    bars = _bars(_walk(200, 3))
+    f = _forecasts(bars, 99, list(np.full(101, 0.5)))
+    fb = vol.target(f, bars, split=bars["close_ts"][99], target=0.3, rule="feedback", gain=0.0)
+    iv = vol.target(f, bars, split=bars["close_ts"][99], target=0.3, rule="inverse_vol")
+    assert fb["position"].to_list() == pytest.approx(iv["position"].to_list(), nan_ok=True)
+
+
+def the_controller_corrects_a_biased_forecast():
+    bars = _regime_bars()
+    true_annual = np.where(np.arange(900) < 450, 0.02, 0.04) * np.sqrt(365)
+    f = _forecasts(bars, 99, list(true_annual[99:] / 2))  # sigma-hat half the truth throughout
+    kw = dict(split=bars["close_ts"][99], target=0.3, cap=5.0)
+    realized = {}
+    for rule in ("inverse_vol", "feedback"):
+        pos = vol.target(f, bars, rule=rule, halflife=30, **kw)
+        net = gr.backtest.returns(pos, pl.col("position"), fee=0.0)["net"].drop_nulls()
+        realized[rule] = float(net.std()) * np.sqrt(365)
+    assert abs(np.log(realized["feedback"] / 0.3)) < abs(np.log(realized["inverse_vol"] / 0.3))
+
+
+def the_leverage_multiplier_stays_in_its_bounds():
+    bars = _regime_bars(400)
+    f = _forecasts(bars, 99, list(np.full(301, 0.01)))  # a forecast far too low: the error is extreme
+    got = vol.target(f, bars, split=bars["close_ts"][99], target=0.3, rule="feedback", cap=1e9, kappa_bounds=(-1.0, 1.0))
+    ratio = got["position"].drop_nulls().to_numpy() / (0.3 / 0.01)
+    assert (ratio >= np.exp(-1) - 1e-9).all() and (ratio <= np.exp(1) + 1e-9).all()
+
+
+def a_feedback_position_uses_nothing_after_its_close():
+    closes = _walk(300, 5)
+    bars = _bars(closes)
+    f = _forecasts(bars, 99, list(np.full(201, 0.5)))
+    a = vol.target(f, bars, split=bars["close_ts"][99], target=0.3, rule="feedback")["position"]
+    changed = _bars(closes[:201] + [c * 1.7 for c in closes[201:]])
+    b = vol.target(f, changed, split=changed["close_ts"][99], target=0.3, rule="feedback")["position"]
+    assert b[:201].to_list() == pytest.approx(a[:201].to_list(), nan_ok=True)

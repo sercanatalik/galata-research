@@ -948,16 +948,25 @@ def _(mo):
     It equals inverse vol while ν̂ stays at its value at the split, and holds
     less when a refit finds a fatter tail. The chart below shows how far ν̂
     moved.
+
+    *Feedback* closes the loop (Devanathan, Rueter, Boyd et al. 2026): the
+    leverage is multiplied by $e^{\kappa}$, and κ moves against the gap
+    between the position's own realized volatility (EWMA, half-life 126) and
+    the target: $\kappa_k=(1-\theta)\,\mathrm{clip}(-g\,e_k)+\theta\kappa_{k-1}$,
+    with g = 55 and θ = 0.6, the paper's values. On the S&P it cut the
+    tracking error from 2.3% to 0.4%. `vol_error` in the table,
+    |ln(realized/target)|, is how close each trial came.
     """)
     return
 
 
 @app.cell
 def _(bars, per_year, split, vol, walked):
-    targeted = vol.trials(bars, walked, split=split, rules=("inverse_vol", "conditional", "expected_shortfall"), bands=(0.0, 0.25))
-    econ, deflated = vol.economics(targeted, periods_per_year=per_year)
+    targeted = vol.trials(bars, walked, split=split, rules=("inverse_vol", "conditional", "expected_shortfall", "feedback"), bands=(0.0, 0.25))
+    tau = vol.estimation_target(bars, split, per_year)
+    econ, deflated = vol.economics(targeted, periods_per_year=per_year, target=tau)
     econ = econ.sort("sharpe_annual", descending=True, nulls_last=True)
-    return deflated, econ, targeted
+    return deflated, econ, targeted, tau
 
 
 @app.cell

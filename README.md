@@ -403,6 +403,17 @@ nothing on BTC daily: ν̂ moved only between 3.06 and 3.46 across refits, so
 the ES positions are within about 1% of inverse vol's (Sharpe −0.37 against
 −0.38 for GARCH, −0.22 against −0.23 for EGARCH).
 
+**Closing the loop changes the trading result.** Feedback-controlled targeting
+(Devanathan, Rueter, Boyd et al. 2026, their g = 55 and θ = 0.6 as published)
+multiplies the leverage by e^κ, with κ steered by the gap between the
+position's own realized volatility and the target. Against a 47.1% target it
+lands within about 1% (vol error 0.004–0.012, against 0.08–0.12 open-loop),
+and lifts every model's net Sharpe (GARCH −0.37 → −0.06, EGARCH −0.23 →
+−0.07, EWMA −0.38 → **+0.14**, the study's first positive trial) despite about
+4× the turnover and 2% in fees a year. One out-of-sample year, and more
+trials in the Deflated Sharpe's count: a result on this record, not yet a
+claim.
+
 **What survives.** ⑬ decides each claim from the notebook's own results by a
 rule stated beside it, and the answer depends on the bar:
 
@@ -518,6 +529,7 @@ uv run marimo check notebooks/*.py     # every notebook, as CI and tests/noteboo
 | Phase 2: multi-horizon SPA | done: HAR, HARQ, CARR beat GARCH uniformly |
 | Phase 2: Giacomini–White | done: HARQ and CARR win more when volatility is high |
 | Phase 2: expected-shortfall sizing | done: ν̂ too stable on BTC to matter |
+| Phase 2: feedback-controlled targeting | done: hits the target, lifts every net Sharpe |
 
 ---
 
