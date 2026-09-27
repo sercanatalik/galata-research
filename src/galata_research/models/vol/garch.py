@@ -15,7 +15,11 @@ from scipy import integrate, stats
 from ... import utils
 from ..._errors import Refused
 from .. import _arch
-from .._arch import DISTS, MODELS, SCALE
+from .._arch import DISTS, SCALE
+from .._arch import MODELS as ARCH_MODELS
+from . import custom
+
+MODELS = ARCH_MODELS + custom.MODELS
 
 _SHAPE = {"normal": 0, "t": 1, "skewt": 2, "ged": 1}
 _EPS = 1e-9
@@ -54,7 +58,9 @@ def fit(
     """One ticker's returns fitted in-sample: a constant mean and a (1,1) process.
 
     `model`: `ewma` (λ = 0.94, fixed), `rm2006`, `garch`, `gjr`, `egarch`,
-    `aparch`, `figarch`. `dist`: `normal`, `t`, `skewt`, `ged`. `returns` as
+    `aparch`, `figarch`, and the hand-written `cgarch` (Engle and Lee 1999) and
+    `betat` (Harvey and Chakravarty 2008), for which `dist` must be `t`.
+    `dist`: `normal`, `t`, `skewt`, `ged`. `returns` as
     `gr.timeseries.returns` gives them, or `deseasonalize`'s with
     `column="deseasonalized"`. `fit=(start, end)` keeps returns with
     `ts ≥ start` and `close_ts ≤ end`. Null returns are dropped and the
@@ -85,8 +91,9 @@ def fit(
     marked = marked.with_columns(pl.when(pl.int_range(pl.len()) == 0).then(False).otherwise(pl.col("after_gap")).alias("after_gap"))
     if marked.height < min_obs:
         raise Refused(f"{marked.height} returns, under min_obs={min_obs}: a fat-tailed fit is unstable on so few")
-    res = _arch.fit(_arch.values(marked, column), model, dist)
-    s = _arch.summary(res)
+    custom.check_model(model, dist)
+    y = _arch.values(marked, column)
+    s = custom.summary(model, y) if model in custom.MODELS else _arch.summary(_arch.fit(y, model, dist))
     p = s["params"]
     persistence = _persistence(model, dist, p)
     series = marked.select(
@@ -154,10 +161,16 @@ def _persistence(model: str, dist: str, p: dict) -> float | None:
         return a * expectation(dist, p, lambda z: (abs(z) - g * z) ** d, split=True) + p["beta[1]"]
     if model == "ewma":
         return 1.0
+    if model == "cgarch":
+        return p["rho"]
+    if model == "betat":
+        return p["phi"]
     return None
 
 
 def _sigma_bar(model: str, p: dict, persistence: float | None) -> float | None:
+    if model == "cgarch":
+        return sqrt(p["omega"]) / SCALE
     if persistence is None or not 0 < persistence < 1 or model not in ("garch", "gjr", "aparch"):
         return None
     level = p["omega"] / (1 - persistence)
@@ -195,7 +208,7 @@ def news_impact(f: Fit, z) -> pl.DataFrame:
     model alike. FIGARCH and RiskMetrics 2006 depend on the whole past, not on
     εₜ₋₁ and σₜ₋₁ alone, and are refused.
     """
-    if f.model in ("figarch", "rm2006"):
+    if f.model in ("figarch", "rm2006", *custom.MODELS):
         raise Refused(f"{f.model}'s next variance depends on the whole past; it has no one-shock news-impact curve")
     p = f.params
     sbar2 = float((f.series["sigma"] * SCALE).pow(2).mean())

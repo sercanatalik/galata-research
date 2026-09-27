@@ -14,7 +14,9 @@ import polars as pl
 from ... import timeseries, utils
 from ..._errors import Refused
 from .. import _arch
-from .._arch import DISTS, MODELS, SCALE, SIMULATED
+from .._arch import DISTS, SCALE, SIMULATED
+from . import custom
+from .garch import MODELS
 
 _OUT = ("ticker", "ts", "close_ts", "h", "target_ts", "variance", "cum_variance", "fitted_through", "fit_from", "refit", "after_gap", "filtered")
 
@@ -59,6 +61,7 @@ def walk_forward(
         raise Refused(f"model={model!r} is not one of {', '.join(MODELS)}")
     if dist not in DISTS:
         raise Refused(f"dist={dist!r} is not one of {', '.join(DISTS)}")
+    custom.check_model(model, dist)
     hs = sorted({int(h) for h in horizons})
     if not hs or hs[0] < 1:
         raise Refused(f"horizons={list(horizons)}: each must be a whole number of bars ≥ 1")
@@ -92,6 +95,13 @@ def walk_forward(
     for n, r in enumerate(refits):
         stop = refits[n + 1] if n + 1 < len(refits) else kept.height
         first_obs = 0 if window == "expanding" else r - window + 1
+        if model in custom.MODELS:
+            fitted = y[first_obs : r + 1]
+            p = custom.estimate(model, fitted)["params"]
+            blocks.append(
+                custom.forecast(model, p, y[first_obs:stop], start=r - first_obs, horizon=H, init=float(np.var(fitted)), simulations=simulations, seed=seed + r)
+            )
+            continue
         res = _arch.model(y[:stop], model, dist, seed=seed + r).fit(disp="off", first_obs=first_obs, last_obs=r + 1)
         blocks.append(_arch.forecast(res, start=r, horizon=H, simulate=model in SIMULATED, simulations=simulations))
     variances = np.vstack(blocks) / SCALE**2

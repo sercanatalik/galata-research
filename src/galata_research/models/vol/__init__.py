@@ -8,9 +8,10 @@
     gr.models.vol.har(gr.timeseries.realized_from(bars_4h, "1d"), model="harq", split=t, horizons=[1, 7])
 """
 
-from .._arch import DISTS, MODELS
-from .garch import Fit, arch_lm, diagnose, expectation, fit, kappa, ljung_box, news_impact, table
+from .._arch import DISTS
+from .carr import carr
+from .garch import MODELS, Fit, arch_lm, diagnose, expectation, fit, kappa, ljung_box, news_impact, table
 from .har import har
 from .walk import walk_forward
 
-__all__ = ["DISTS", "MODELS", "Fit", "arch_lm", "diagnose", "expectation", "fit", "har", "kappa", "ljung_box", "news_impact", "table", "walk_forward"]
+__all__ = ["DISTS", "MODELS", "Fit", "arch_lm", "carr", "diagnose", "expectation", "fit", "har", "kappa", "ljung_box", "news_impact", "table", "walk_forward"]

@@ -150,6 +150,14 @@ def _(mo):
     | FIGARCH | $(1-\beta L)\sigma_t^2=\omega+[1-\beta L-\phi L(1-L)^d]\varepsilon_t^2$ | Baillie, Bollerslev, Mikkelsen 1996: hyperbolic decay, *d* |
     | RiskMetrics 2006 | a sum of EWMAs at many horizons | Zumbach 2006: long memory with no fit |
 
+    Hand-written here, because arch does not have them:
+
+    | model | recursion | why |
+    |---|---|---|
+    | component GARCH | $q_t=\omega+\rho(q_{t-1}-\omega)+\phi(\varepsilon_{t-1}^2-\sigma_{t-1}^2)$, $\sigma_t^2=q_t+\alpha(\varepsilon_{t-1}^2-q_{t-1})+\beta(\sigma_{t-1}^2-q_{t-1})$ | Engle and Lee 1999: a long-run level that moves; best for BTC in Katsiampa 2017 |
+    | Beta-*t*-EGARCH | $\lambda_{t+1}=\omega+\phi\lambda_t+\kappa u_t+\kappa^*\operatorname{sgn}(-\varepsilon_t)(u_t+1)$, $u_t\in[-1,\nu]$ the *t* score | Harvey and Chakravarty 2008: one outlier moves σ a bounded amount |
+    | CARR | $\lambda_t=\omega+\alpha R_{t-1}+\beta\lambda_{t-1}$ on $R=\ln(H/L)$ | Chou 2005: models the range; σ = λ/√(8/π) |
+
     Distributions of $z$: normal; Student-*t* with ν degrees of freedom,
     scaled to unit variance (ν ≤ 4 means the fourth moment does not exist);
     Hansen's (1994) skewed *t* (η, λ); and the GED.
@@ -195,7 +203,7 @@ def _(mo):
 
 @app.cell
 def _(column, estimation, in_sample, vol):
-    specs = [(m, "t") for m in vol.MODELS] + [("garch", d) for d in ("normal", "skewt", "ged")] + [("gjr", "skewt")]
+    specs = [(m, "t") for m in vol.MODELS] + [("garch", d) for d in ("normal", "skewt", "ged")] + [("gjr", "skewt")]  # MODELS includes cgarch, betat
     fits = {}
     for model, dist in specs:
         try:
@@ -206,6 +214,32 @@ def _(column, estimation, in_sample, vol):
     failed = {k: str(v) for k, v in fits.items() if not isinstance(v, vol.Fit)}
     table = vol.table(good).sort("bic")
     return failed, good, table
+
+
+@app.function
+def katsiampa_table(table):
+    import marimo as mo
+    import polars as pl
+
+    ours = table.filter(pl.col("model") == "cgarch")
+    if ours.height == 0:
+        return mo.md("")
+    row = ours.row(0, named=True)
+    compare = pl.DataFrame(
+        {
+            "": ["Katsiampa 2017, BTC daily 2010–2016", "this record, estimation period"],
+            "α": [0.1825, row["alpha"]],
+            "β": [0.7855, row["beta"]],
+            "ρ": [0.9999, row["rho"]],
+            "φ": [0.0549, row["phi"]],
+        }
+    )
+    return mo.vstack(
+        [
+            mo.md("**Component GARCH against the paper that found it best for BTC.** Katsiampa's AR(1)-CGARCH(1,1) estimates (Economics Letters 158, 2017) beside ours, with a constant mean and *t* innovations here:"),
+            compare,
+        ]
+    )
 
 
 @app.cell
@@ -229,13 +263,14 @@ def _(failed, mo, pl, table):
         if gamma is not None
         else "",
     ]
-    cols = ["model", "dist", "nobs", "bic", "persistence", "half_life", "sigma_bar", "converged", "omega", "alpha[1]", "gamma[1]", "beta[1]", "delta", "d", "nu", "eta", "lambda"]
+    cols = ["model", "dist", "nobs", "bic", "persistence", "half_life", "sigma_bar", "converged", "omega", "alpha[1]", "gamma[1]", "beta[1]", "delta", "d", "alpha", "beta", "rho", "phi", "kappa", "kappa_star", "nu", "eta", "lambda"]
     mo.vstack(
         [
             mo.md("## ⑤ The fit table (estimation period)"),
             table.select([c for c in cols if c in table.columns]),
             mo.md("**On this record:** " + " ".join(x for x in lines if x)),
             mo.md(f"Failed fits: {failed}") if failed else mo.md(""),
+            katsiampa_table(table),
         ]
     )
     return
@@ -451,7 +486,7 @@ def _(interval, mo):
     EVERY = {"1h": 24, "4h": 6, "1d": 5}[interval.value]
     horizon = mo.ui.dropdown(HORIZONS, value=list(HORIZONS)[0], label="horizon")
     walk_models = mo.ui.multiselect(
-        ["ewma", "garch", "gjr", "egarch", "aparch", "figarch", "rm2006"] + (["har", "shar", "harq"] if interval.value != "1h" else []),
+        ["ewma", "garch", "gjr", "egarch", "aparch", "figarch", "rm2006", "cgarch", "betat", "carr"] + (["har", "shar", "harq"] if interval.value != "1h" else []),
         value=["ewma", "garch", "gjr", "egarch"] + (["har", "harq"] if interval.value != "1h" else []),
         label="models",
     )
@@ -469,6 +504,8 @@ def _(EVER, gr, mo, pl, vol):
             _measures = gr.timeseries.realized_from(gr.market.candles([ticker_], _fine, *EVER).collect(), interval_)
             return vol.har(_measures, model=model_, split=split_iso, every=every_, horizons=horizons_).with_columns(pl.lit(model_).alias("model"))
         _bars = gr.market.candles([ticker_], interval_, *EVER).collect()
+        if model_ == "carr":
+            return vol.carr(_bars, split=split_iso, every=every_, horizons=horizons_, min_obs=250).with_columns(pl.lit(model_).alias("model"))
         _r = gr.timeseries.returns(_bars, kind="log")
         _factors = None
         if deseason_ and interval_ != "1d":
@@ -486,7 +523,7 @@ def _(EVERY, HORIZONS, deseason, go, interval, mo, pl, split, ticker, walk, walk
     hs = tuple(sorted(set(HORIZONS.values())))
     walked = pl.concat(
         [
-            walk(ticker.value, interval.value, split.isoformat(), _m, EVERY * (7 if _m == "figarch" else 1), hs, deseason.value)
+            walk(ticker.value, interval.value, split.isoformat(), _m, EVERY * (7 if _m == "figarch" else 4 if _m in ("cgarch", "betat") else 1), hs, deseason.value)
             for _m in walk_models.value
         ]
     )
@@ -542,7 +579,9 @@ def _(EVER, alt, bars, column, deseason, estimation, fan_length, gr, in_sample, 
     _o = _origins[origin.value]
     _fans, _levels = [], []
     for _m in walk_models.value:
-        if _m in ("har", "shar", "harq"):
+        if _m == "carr":
+            _w = vol.carr(bars, split=_o, every=10**9, horizons=range(1, fan_length.value + 1), min_obs=250)
+        elif _m in ("har", "shar", "harq"):
             _fine = {"1d": "4h", "4h": "1h"}[interval.value]
             _meas = gr.timeseries.realized_from(gr.market.candles([ticker.value], _fine, *EVER).collect(), interval.value)
             _w = vol.har(_meas, model=_m, split=_o, every=10**9, horizons=range(1, fan_length.value + 1))

@@ -224,6 +224,8 @@ gr.frontier()                           # how far each dataset is durable
 | `gr.models.vol.table`, `news_impact`, `diagnose` | one row per fit; Engle–Ng's curve; Ljung–Box on z and z², ARCH-LM | ARCH-LM agrees with arch's to 1e-6 |
 | `gr.models.vol.walk_forward(returns, *, model, split, window, every, horizons, factors)` | one row per (origin, h): `variance`, `cum_variance`, `target_ts`, `fitted_through` | fitted on each refit's window only, fixed between refits; no return after an origin is used; EGARCH and APARCH simulated, seeded; deseasonalised fits re-seasonalised by the target cell |
 | `gr.models.vol.har(measures, *, model, split, window, every, horizons)` | HAR, SHAR, HARQ forecasts of realized variance, in `walk_forward`'s columns plus `filtered` | direct regressions per horizon; a training row only if its target is known at the refit; the insanity filter, stated |
+| `gr.models.vol.fit` / `walk_forward` with `model="cgarch"` or `"betat"` | component GARCH (Engle and Lee 1999) and Beta-t-EGARCH (Harvey and Chakravarty 2008), hand-written | Student-t; CGARCH with φ = 0 equals GARCH's recursion; Beta-t's score bounded in [−1, ν]; each recovers a simulation |
+| `gr.models.vol.carr(bars, *, split, ...)` | CARR (Chou 2005) on ln(H/L), walked forward | exponential QMLE; σ = λ/√(8/π), the constant measured on Brownian bars |
 | `gr.timeseries.stationary_bootstrap_indices`, `optimal_block` | resampling indices; Politis–White block | agrees with arch to 1e-6 |
 | `gr.utils.require`, `window`, `instant` | a refusal naming what is missing; micros | a naive time is refused |
 

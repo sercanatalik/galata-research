@@ -80,7 +80,7 @@ that uses it. The GARCH study grows in `notebooks/garch.py` from item 4 onward.
   `fitted_through`, `after_gap`, simulation for EGARCH/APARCH, caching. Notebook ⑥–⑦.
 - [x] 6. **`forecast-from-realized-measures`**: `gr.models.vol.har` (HAR-RV, SHAR, HARQ) in the
   walk-forward.
-- [ ] 7. **`hand-written-likelihoods`**: `gr.models.vol.custom` (component GARCH, Beta-t-EGARCH,
+- [x] 7. **`hand-written-likelihoods`**: `gr.models.vol.custom` (component GARCH, Beta-t-EGARCH,
   CARR), each tested against a nested case or a reference.
 - [ ] 8. **`score-the-forecasts`**: `gr.models.evaluate` (QLIKE, MSE, FZ0, DM+HLN, MZ-GLS, MCS,
   SPA, Kupiec, Christoffersen, DQ, fluctuation test). Notebook ⑧, ⑨, ⑪.
