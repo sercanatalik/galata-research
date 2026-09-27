@@ -110,6 +110,31 @@ def extra_claims(defs, gr, pl) -> list[dict]:
     return rows
 
 
+@app.function
+def summarise(compared, pl):
+    """The registered per-claim rule: generalises, BTC-specific or mixed, over the bars where BTC decided the claim."""
+    # garch.py names the persistence claim per bar ("at 4h", "at 1h"); the registration counts it as one claim.
+    named = compared.with_columns(pl.col("claim").str.replace(r"at \d+h ", "intraday "))
+    decided = named.filter(pl.col("btc").is_not_null() & (pl.col("btc") != "can't tell"))
+    rows = []
+    for claim in decided["claim"].unique(maintain_order=True).to_list():
+        c = decided.filter(pl.col("claim") == claim)
+        bars = c["bars"].unique().to_list()
+        tickers = c["ticker"].unique().to_list()
+        everywhere = all(c.filter((pl.col("bars") == b) & (pl.col("ticker") == t))["replication"].to_list() == ["replicates"] for b in bars for t in tickers)
+        both_differ = sum(c.filter(pl.col("bars") == b)["replication"].to_list().count("differs") == len(tickers) for b in bars)
+        decidable = c.filter(pl.col("replication") != "can't tell")
+        rows.append(
+            {
+                "claim": claim,
+                "bars BTC decided": len(bars),
+                "verdict": "generalises" if everywhere else "BTC-specific" if both_differ > len(bars) / 2 else "mixed",
+                "replicates where decidable": f"{(decidable['replication'] == 'replicates').sum()} of {decidable.height}",
+            }
+        )
+    return pl.DataFrame(rows)
+
+
 @app.cell
 def _(mo):
     tickers = mo.ui.multiselect(["BTC", "ETH", "HYPE"], value=["BTC", "ETH", "HYPE"], label="tickers")
@@ -122,13 +147,22 @@ def _(mo):
 @app.cell
 async def _(garch_app, go, gr, intervals, mo, pl, tickers):
     mo.stop(not go.value, mo.md("Press **replay the study**: each (ticker, bars) replays garch.py from start to end, minutes each."))
+    _CLAIMS = (
+        "t beats normal", "no leverage effect", "α+β≈1 intraday is the daily cycle", "HAR beats GARCH", "something beats GARCH(1,1)",
+        "better σ ≠ better P&L", "targeting does not cut drawdown per vol", "GARCH outside the multi-horizon MCS",
+        "HARQ beats GARCH at every horizon", "feedback tracks the target better", "feedback's Sharpe gain is not significant",
+    )  # fmt: skip
     _rows = []
     for _t in tickers.value:
         for _i in intervals.value:
-            _run = await garch_app.clone().embed(defs=settings(_t, _i))
-            _d = _run.defs
-            _claims = _d["verdicts"].to_dicts() + extra_claims(_d, gr, pl)
-            _rows += [{"ticker": _t, "bars": _i, "frontier": _d["bars"]["close_ts"].max(), **c} for c in _claims]
+            try:
+                _d = (await garch_app.clone().embed(defs=settings(_t, _i))).defs
+                _claims = _d["verdicts"].to_dicts() + extra_claims(_d, gr, pl)
+                _frontier = _d["bars"]["close_ts"].max()
+            except Exception as _why:  # a replay that cannot finish decides nothing: every claim is can't tell
+                _claims = [{"claim": c, "verdict": "can't tell", "on this record": f"garch.py failed: {type(_why).__name__}: {str(_why)[:80]}", "rule": "—"} for c in _CLAIMS]
+                _frontier = None
+            _rows += [{"ticker": _t, "bars": _i, "frontier": _frontier, **c} for c in _claims]
     replayed = pl.DataFrame(_rows)
     return (replayed,)
 
@@ -153,6 +187,8 @@ def _(mo, pl, replayed):
         [
             mo.md("## Each claim, by ticker and bar: does ETH's or HYPE's verdict equal BTC's?"),
             _grid,
+            mo.md("By the registered rule, each claim over the bars where BTC decided it:"),
+            summarise(compared, pl),
             mo.md("Every verdict, with its number and rule:"),
             replayed.select("ticker", "bars", "claim", "verdict", "on this record", "rule"),
         ]

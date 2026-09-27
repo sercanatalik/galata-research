@@ -434,6 +434,24 @@ paper's actual claim holds in every span: vol error 0.004–0.013 against
 rejects 6.0% of true nulls at 5% on Ledoit and Wolf's GARCH null (their 5.5%);
 the HAC version rejects 7.25% (their 7.2%).
 
+**Replicated on ETH and HYPE, most claims hold only in part.**
+`planning/registered/replication.md` (commit `20fbe74`) set BTC's verdicts as
+predictions before any other ticker was run. `notebooks/replication.py` then
+replays `garch.py` unchanged for ETH and HYPE at 1d, 4h and 1h. ETH repeats 21
+of BTC's 28 decided verdicts, and HYPE 12 (6 differ). HYPE 1d decides nothing:
+its EGARCH-t forecasts overflow and `garch.py` fails (roadmap item 22). By the
+registered rule all eleven claims are *mixed*; none generalises, and none is
+BTC-specific. Where a verdict could be reached:
+- **every decided cell agrees:** t beats normal, a better σ is not a better
+  P&L, and feedback's Sharpe gain is not significant;
+- **HAR and HARQ beat GARCH:** agrees at ETH 1d, the only other cell that
+  could decide it;
+- **ticker by ticker:** whether anything beats GARCH(1,1) or leaves it out of
+  the confidence set (2 of 5 cells agree);
+- **BTC alone:** the 4h leverage effect;
+- **not everywhere:** feedback's tracking fails on ETH daily (1 of 6 models)
+  and on HYPE 4h.
+
 **Breaks do not explain the persistence.** Sansó, Aragó and Carrion's κ₂
 finds no variance break in BTC's daily or hourly returns. It is itself
 oversized under persistent GARCH (17–41% at a nominal 5%, measured), so a lack
@@ -561,6 +579,7 @@ uv run marimo check notebooks/*.py     # every notebook, as CI and tests/noteboo
 | Phase 2: feedback-controlled targeting | done: hits the target; the Sharpe gain refuted by a registered test |
 | Phase 2: variance breaks | done: none under κ₂; persistence is not breaks |
 | Phase 2: multi-horizon confidence set | done: CARR, HARQ, HAR, GJR; GARCH and EWMA out |
+| Replication on ETH and HYPE, registered | done: ETH 21/28, HYPE 12/28; every claim mixed |
 
 ---
 

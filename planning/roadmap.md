@@ -123,7 +123,14 @@ Chosen by the operator on 2026-09-27, in this order (the suite first, so the oth
   `planning/registered/feedback-sharpe.md` (`cdda013`) before the run; the verdict is **refuted**. On the unseen
   span (40% split to the old 70% split), feedback's net Sharpe is below open loop's for all four models walked
   (Ledoit–Wolf p 0.82–0.95). It still hits the target in every span.
-- [ ] 21. **`replicate-on-other-tickers`**: the scorecard, confidence sets and targeting on ETH and HYPE.
+- [x] 21. **`replicate-on-other-tickers`**: the scorecard, confidence sets and targeting on ETH and HYPE. Done,
+  registered first (`20fbe74`): ETH repeats 21 of BTC's 28 decided verdicts, HYPE 12. Every claim is *mixed*.
+  t beats normal, better σ ≠ better P&L, and feedback's Sharpe gain not being significant agree in every
+  decided cell; the MCS verdicts and the 4h leverage effect do not travel. HYPE 1d failed on EGARCH-t (item 22).
+- [ ] 22. **`egarch-t-has-no-horizon`**: under Student-t innovations EGARCH's multi-step variance does not exist.
+  E[exp(α|z| + γz)] is infinite for any t, so the simulated 7- and 30-day forecasts are Monte Carlo means of
+  an infinite expectation. On HYPE daily they overflow and crash `garch.py`; on BTC they only look finite.
+  Found by item 21. Decide what an EGARCH-t forecast beyond one step may be, and re-score what used it.
 
 ---
 
