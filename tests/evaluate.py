@@ -318,3 +318,74 @@ def the_horizon_confidence_set_reproduces():
 def the_p_values_never_fall():
     got = ev.mcs_horizons(_three({"a": 0.0, "b": 0.1, "c": 0.3, "d": 0.5}), outer=39, inner=19).drop_nulls("eliminated").sort("eliminated")
     assert got["pvalue"].to_list() == sorted(got["pvalue"].to_list())
+
+
+def _normal_pair(n, mu=(0.05, 0.02), rho=0.5, seed=1):
+    return np.random.default_rng(seed).multivariate_normal(list(mu), [[1, rho], [rho, 1]], size=n)
+
+
+def _vech_garch_pair(n, seed):
+    # Ledoit and Wolf's null (§4.2): diagonal-vech GARCH(1,1), identical marginals, mean 16.5/52 each.
+    c, a, b = np.array([0.15, 0.13, 0.15]), np.array([0.075, 0.05, 0.075]), np.array([0.90, 0.89, 0.90])
+    rng = np.random.default_rng(seed)
+    h = c / (1 - a - b)
+    out = np.empty((n + 200, 2))
+    for t in range(n + 200):
+        cov = np.array([[h[0], h[1]], [h[1], h[2]]])
+        r = np.linalg.cholesky(cov) @ rng.standard_normal(2)
+        out[t] = r
+        h = c + a * np.array([r[0] ** 2, r[0] * r[1], r[1] ** 2]) + b * h
+    return out[200:] + 16.5 / 52
+
+
+def the_difference_is_of_the_sample_sharpe_ratios():
+    x = _normal_pair(300)
+    got = ev.sharpe_difference(x[:, 0], x[:, 1], reps=99)
+    assert got["delta"] == pytest.approx(x[:, 0].mean() / x[:, 0].std() - x[:, 1].mean() / x[:, 1].std(), rel=1e-12)
+
+
+def a_one_period_block_gives_the_sample_covariance():
+    from galata_research.models.evaluate import _block_psi, _moment_columns
+
+    y = _moment_columns(_normal_pair(200))
+    assert _block_psi(y, 1) == pytest.approx(np.cov(y.T, bias=True), abs=1e-12)
+
+
+def the_hac_error_matches_memmel_under_iid_normal():
+    # 100,000 pairs: the fourth-moment terms in Ψ̂ are then within about 1% of their normal values.
+    n = 100_000
+    x = _normal_pair(n, seed=2)
+    got = ev.sharpe_difference(x[:, 0], x[:, 1], reps=19)
+    sa, sb, rho = got["sharpe_a"], got["sharpe_b"], float(np.corrcoef(x.T)[0, 1])
+    memmel = sqrt((2 - 2 * rho + 0.5 * (sa**2 + sb**2 - 2 * sa * sb * rho**2)) / n)
+    assert got["se_hac"] == pytest.approx(memmel, rel=0.03)
+
+
+def the_bootstrap_test_holds_its_size():
+    # 400 null datasets: a size of 5% rejects 20 ± 4.4; three binomial sd above is 8.3%.
+    rejected = sum(ev.sharpe_difference(*_vech_garch_pair(120, s).T, reps=199, seed=s)["p_boot"] <= 0.05 for s in range(400))
+    assert rejected / 400 <= 0.05 + 3 * sqrt(0.05 * 0.95 / 400)
+
+
+def a_real_difference_is_found():
+    rng = np.random.default_rng(3)
+    x = rng.normal(0.3, 1, 500)
+    y = 0.5 * x + sqrt(0.75) * rng.normal(0, 1, 500) - 0.15  # Sharpe ratio 0 against 0.3
+    got = ev.sharpe_difference(x, y, reps=999)
+    assert got["p_boot"] < 0.01 and got["ci"][0] > 0
+
+
+def a_null_pair_is_dropped_together():
+    x = _normal_pair(100)
+    a, b = list(x[:, 0]), list(x[:, 1])
+    a[5], b[9] = None, None
+    got = ev.sharpe_difference(a, b, reps=19, block=2)
+    assert got["rows"] == 98
+
+
+def a_constant_or_short_series_is_refused():
+    x = _normal_pair(50)
+    with pytest.raises(Refused, match="constant"):
+        ev.sharpe_difference(np.ones(50), x[:, 1], reps=19)
+    with pytest.raises(Refused, match="too few for blocks"):
+        ev.sharpe_difference(x[:15, 0], x[:15, 1], reps=19, block=8)

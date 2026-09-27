@@ -419,6 +419,21 @@ and lifts every model's net Sharpe (GARCH −0.37 → −0.06, EGARCH −0.23 �
 trials in the Deflated Sharpe's count: a result on this record, not yet a
 claim.
 
+**The Sharpe gain did not survive a registered test; the tracking did.**
+`planning/registered/feedback-sharpe.md` fixed a test before it was run
+(commit `cdda013`). It walked the same procedure from a 40% split
+(2024-08-02) and scored only the unseen span to the old split (2025-08-30,
+393 days), using Ledoit and Wolf's (2008) studentized block-bootstrap test of
+two Sharpe ratios with Holm. The registered verdict is **refuted**: feedback's
+net Sharpe is below open loop's for all four models walked (Δ −0.03 to −0.10
+a year, p 0.82–0.95). HAR and HARQ could not be walked, as registered. On the
+seen year the gain is real in the point estimate but not significant (p
+0.23–0.74), and the block length changes no p by more than 0.01. The
+paper's actual claim holds in every span: vol error 0.004–0.013 against
+0.02–0.15 open-loop. On this bootstrap, `gr.models.evaluate.sharpe_difference`
+rejects 6.0% of true nulls at 5% on Ledoit and Wolf's GARCH null (their 5.5%);
+the HAC version rejects 7.25% (their 7.2%).
+
 **Breaks do not explain the persistence.** Sansó, Aragó and Carrion's κ₂
 finds no variance break in BTC's daily or hourly returns. It is itself
 oversized under persistent GARCH (17–41% at a nominal 5%, measured), so a lack
@@ -543,7 +558,7 @@ uv run marimo check notebooks/*.py     # every notebook, as CI and tests/noteboo
 | Phase 2: multi-horizon SPA | done: HAR, HARQ, CARR beat GARCH uniformly |
 | Phase 2: Giacomini–White | done: HARQ and CARR win more when volatility is high |
 | Phase 2: expected-shortfall sizing | done: ν̂ too stable on BTC to matter |
-| Phase 2: feedback-controlled targeting | done: hits the target, lifts every net Sharpe |
+| Phase 2: feedback-controlled targeting | done: hits the target; the Sharpe gain refuted by a registered test |
 | Phase 2: variance breaks | done: none under κ₂; persistence is not breaks |
 | Phase 2: multi-horizon confidence set | done: CARR, HARQ, HAR, GJR; GARCH and EWMA out |
 

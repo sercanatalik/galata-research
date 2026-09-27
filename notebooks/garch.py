@@ -1171,6 +1171,139 @@ def _(card, compare, econ, good, interval, mcs_table, mo, pl, table):
 
 @app.cell
 def _(mo):
+    stress_go = mo.ui.run_button(label="run the registered test")
+    mo.vstack(
+        [
+            mo.md(r"""
+            ## ⑭ Does feedback's gain survive? A registered test
+
+            ⑩ found feedback targeting lifting every net Sharpe in the year
+            after the 70% split. That was read off one year, so it was not a
+            claim. `planning/registered/feedback-sharpe.md` (commit `cdda013`)
+            fixed how it becomes one **before this section was run**. It
+            fixes:
+            - **the hypothesis:** feedback's net Sharpe beats open-loop inverse
+              vol's, model by model;
+            - **the span:** the same procedure walked from a 40% split
+              (2024-08-02) and scored only up to the old split (2025-08-30),
+              where no one had seen either rule trade;
+            - **the test:** Ledoit and Wolf's (2008) studentized circular
+              block bootstrap, M = 4,999, seed 0, automatic block;
+            - **Holm** across the models walked, and **the decision rule**.
+
+            Always BTC, 1d, the record through 2026-09-27, whatever is
+            selected above.
+
+            Ledoit and Wolf write Δ = SR_a − SR_b as a smooth function of the two
+            means and uncentred second moments, $f(a,b,c,d)=a/\sqrt{c-a^2}-b/\sqrt{d-b^2}$.
+            They studentize it by a HAC error: the prewhitened QS kernel of
+            Andrews and Monahan (1992). Each bootstrap replicate is studentized
+            by its own block covariance (Götze and Künsch 1996). The test
+            inverts a symmetric interval: $p=(\#\{|\hat\Delta^*-\hat\Delta|/s^*\ge|\hat\Delta|/s\}+1)/(M+1)$.
+            Jobson–Korkie/Memmel assumes i.i.d. normal returns, and at 5% it
+            rejects 7.4% of the time under t-GARCH (their Table 1). On their
+            GARCH null this implementation measures 6.0% for the bootstrap and
+            7.25% for HAC; they report 5.5% and 7.2%.
+            """),
+            stress_go,
+        ]
+    )
+    return (stress_go,)
+
+
+@app.cell
+def _(EVER, gr, mo, pl, stress_go, vol, walk):
+    mo.stop(not stress_go.value, mo.md("Press **run the registered test** to walk BTC daily from the 40% split (cached once run)."))
+    from datetime import datetime, timezone
+
+    stress_end = datetime(2026, 9, 27, tzinfo=timezone.utc)
+    stress_bars = gr.market.candles(["BTC"], "1d", *EVER).collect().filter(pl.col("close_ts") <= stress_end)
+    stress_split = stress_bars["close_ts"][int(stress_bars.height * 0.4) - 1]
+    stress_seen = stress_bars["close_ts"][int(stress_bars.height * 0.7) - 1]
+
+    def _walked(split_):
+        _parts, _skipped = [], {}
+        for _m in ("ewma", "garch", "gjr", "egarch", "har", "harq"):
+            try:
+                _parts.append(walk("BTC", "1d", split_.isoformat(), _m, 5, (1, 7, 30), False))
+            except gr.Refused as _why:  # registered: reported as skipped, not replaced
+                _skipped[_m] = str(_why)
+        return pl.concat(_parts), _skipped
+
+    _early, stress_skipped = _walked(stress_split)
+    _late, _ = _walked(stress_seen)
+    _rules = dict(rules=("inverse_vol", "feedback"), bands=(0.0,))
+    stress_early = vol.trials(stress_bars, _early, split=stress_split, **_rules).join(stress_bars.select("ts", "close_ts"), on="ts")
+    stress_late = vol.trials(stress_bars, _late, split=stress_seen, **_rules).join(stress_bars.select("ts", "close_ts"), on="ts")
+    return stress_bars, stress_early, stress_end, stress_late, stress_seen, stress_skipped, stress_split
+
+
+@app.cell
+def _(gr, mo, pl, stress_bars, stress_early, stress_end, stress_late, stress_seen, stress_skipped, stress_split, vol):
+    import numpy as _np
+
+    _per = 365
+
+    def _test(trials, lo, hi, split_, **kw):
+        _span = trials.filter((pl.col("close_ts") > lo) & (pl.col("close_ts") <= hi)).drop_nulls("net")
+        _tau = vol.estimation_target(stress_bars, split_, _per)
+        _rows = []
+        for _m in sorted({t.split(" ")[0] for t in _span["trial"].unique().to_list() if t != "hold"}):
+            _fb = _span.filter(pl.col("trial") == f"{_m} feedback band 0").select("ts", pl.col("net").alias("a"))
+            _iv = _span.filter(pl.col("trial") == f"{_m} inverse_vol band 0").select("ts", pl.col("net").alias("b"))
+            _pair = _fb.join(_iv, on="ts").sort("ts")
+            _r = gr.models.evaluate.sharpe_difference(_pair["a"], _pair["b"], **kw)
+            _vol = lambda s: abs(float(_np.log(float(s.std()) * _per**0.5 / _tau)))
+            _rows.append(
+                {
+                    "model": _m, "bars": _r["rows"],
+                    "sharpe_feedback": _r["sharpe_a"] * _per**0.5, "sharpe_open_loop": _r["sharpe_b"] * _per**0.5,
+                    "delta_annual": _r["delta"] * _per**0.5, "p_boot": _r["p_boot"], "p_hac": _r["p_hac"], "block": _r["block"],
+                    "vol_error_feedback": _vol(_pair["a"]), "vol_error_open_loop": _vol(_pair["b"]),
+                }
+            )  # fmt: skip
+        return pl.DataFrame(_rows)
+
+    def _holm(table, alpha=0.05):
+        _order = table.sort("p_boot")["model"].to_list()
+        _reject, _open = set(), True
+        for _i, _m in enumerate(_order):
+            _open = _open and table.filter(pl.col("model") == _m)["p_boot"][0] <= alpha / (len(_order) - _i)
+            if _open:
+                _reject.add(_m)
+        return table.with_columns(pl.col("model").is_in(list(_reject)).alias("holm_rejects"))
+
+    stress_table = _holm(_test(stress_early, stress_split, stress_seen, stress_split))
+    _k = stress_table.height
+    _pos_rej = stress_table.filter(pl.col("holm_rejects") & (pl.col("delta_annual") > 0)).height
+    _nonpos = stress_table.filter(pl.col("delta_annual") <= 0).height
+    stress_verdict = "confirmed" if _pos_rej > _k / 2 and _nonpos == 0 else "refuted" if _nonpos >= _k / 2 else "not confirmed"
+    stress_seen_table = _test(stress_late, stress_seen, stress_end, stress_seen)
+    stress_full_table = _test(stress_early, stress_split, stress_end, stress_split)
+    stress_blocks = pl.concat(
+        [_test(stress_early, stress_split, stress_seen, stress_split, block=_b).select("model", "block", "delta_annual", "p_boot") for _b in (1, 2, 4, 6, 8, 10)]
+    ).pivot(on="block", index="model", values="p_boot")
+    mo.vstack(
+        [
+            mo.md(
+                f"**Confirmatory**: walked from {stress_split:%Y-%m-%d}, scored to {stress_seen:%Y-%m-%d}. "
+                f"H1 is **{stress_verdict}**, by the registered rule: {_pos_rej} of {_k} models reject after Holm with Δ̂ > 0, and {_nonpos} have Δ̂ ≤ 0."
+                + (f" Skipped, as registered: {', '.join(f'{m} ({w})' for m, w in stress_skipped.items())}." if stress_skipped else "")
+            ),
+            stress_table,
+            mo.md(f"*Secondary.* The seen year, {stress_seen:%Y-%m-%d} to {stress_end:%Y-%m-%d}, from its own walk:"),
+            stress_seen_table,
+            mo.md(f"*Secondary.* {stress_split:%Y-%m-%d} to {stress_end:%Y-%m-%d} from the 40% walk:"),
+            stress_full_table,
+            mo.md("*Secondary.* Bootstrap p on the confirmatory span, by block length (Ledoit and Wolf's grid):"),
+            stress_blocks,
+        ]
+    )
+    return stress_blocks, stress_full_table, stress_seen_table, stress_table, stress_verdict
+
+
+@app.cell
+def _(mo):
     mo.md(r"""
     ## References
 
@@ -1234,6 +1367,15 @@ def _(mo):
     has (not) its moments", *FMPM* 39(4) · Devanathan, Rueter, Boyd, Candès,
     Hastie, Kochenderfer et al. 2026, "Single-Asset Adaptive Leveraged
     Volatility Control", arXiv 2603.01298.
+
+    **Registered test (⑭).** Ledoit and Wolf 2008, *J. Empirical Finance*
+    15(5):850–859 · Andrews 1991, *Econometrica* 59(3):817–858 · Andrews and
+    Monahan 1992, *Econometrica* 60(4):953–966 · Politis and Romano 1992, in
+    *Exploring the Limits of Bootstrap*, 263–270 · Götze and Künsch 1996,
+    *Ann. Statistics* 24(5):1914–1933 · Patton, Politis, White 2009,
+    *Econometric Reviews* 28(4):372–375 · Holm 1979, *Scand. J. Statistics*
+    6(2):65–70 · Nosek, Ebersole, DeHaven, Mellor 2018, *PNAS*
+    115(11):2600–2606 · Harvey 2017, *J. Finance* 72(4):1399–1440.
     """)
     return
 

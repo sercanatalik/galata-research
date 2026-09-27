@@ -118,8 +118,11 @@ Chosen by the operator on 2026-09-27, in this order (the suite first, so the oth
   the suite deterministic. Done: three fixtures called `np.random.seed`, which arch has ignored since 5.0;
   each run drew new data. The shock test (10% of draws) now asserts the exact rise α̂·Δr², the recovery
   test (4%) four robust standard errors; 1% and 0.5% of 200 draws still fail, and the fixtures are seeded.
-- [ ] 20. **`stress-the-feedback`**: does feedback targeting's gain survive other split points, a block
-  bootstrap of the Sharpe difference, and a claim registered before the run?
+- [x] 20. **`stress-the-feedback`**: does feedback targeting's gain survive other split points, a block
+  bootstrap of the Sharpe difference, and a claim registered before the run? Done: registered in
+  `planning/registered/feedback-sharpe.md` (`cdda013`) before the run; the verdict is **refuted**. On the unseen
+  span (40% split to the old 70% split), feedback's net Sharpe is below open loop's for all four models walked
+  (Ledoit–Wolf p 0.82–0.95). It still hits the target in every span.
 - [ ] 21. **`replicate-on-other-tickers`**: the scorecard, confidence sets and targeting on ETH and HYPE.
 
 ---

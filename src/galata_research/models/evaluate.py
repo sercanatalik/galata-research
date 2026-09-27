@@ -601,3 +601,127 @@ def mcs_horizons(
         },
         schema_overrides={"eliminated": pl.Int64},
     ).sort("pvalue", descending=True)
+
+
+# ── Two Sharpe ratios ───────────────────────────────────────────────────────
+#
+# Ledoit and Wolf (2008), "Robust performance hypothesis testing with the
+# Sharpe ratio", J. Empirical Finance 15(5), 850–859, read in their working
+# paper (IEW 320). Δ = f(μ_a, μ_b, γ_a, γ_b) with γ the uncentred second
+# moment; its HAC error is the prewhitened QS kernel (Andrews and Monahan
+# 1992), and the test inverts a symmetric studentized circular block
+# bootstrap interval. Jobson–Korkie/Memmel assumes i.i.d. normal returns and is
+# liberal under fat tails and clustering (their Table 1), which is what returns
+# sized on σ̂ have.
+
+
+def _sharpe_delta(mu: np.ndarray, gamma: np.ndarray):
+    """Δ = f(v) and ∇f(v) for v = (μ_a, μ_b, γ_a, γ_b), over any leading axes (LW eq. 2 and the gradient under eq. 4)."""
+    a, b, c, d = mu[..., 0], mu[..., 1], gamma[..., 0], gamma[..., 1]
+    va, vb = c - a * a, d - b * b
+    delta = a / np.sqrt(va) - b / np.sqrt(vb)
+    grad = np.stack([c / va**1.5, -d / vb**1.5, -0.5 * a / va**1.5, 0.5 * b / vb**1.5], axis=-1)
+    return delta, grad
+
+
+def _moment_columns(x: np.ndarray) -> np.ndarray:
+    """y_t = (r_a − μ̂_a, r_b − μ̂_b, r_a² − γ̂_a, r_b² − γ̂_b) over the last two axes (…, T, 2) → (…, T, 4)."""
+    sq = x**2
+    return np.concatenate([x - x.mean(axis=-2, keepdims=True), sq - sq.mean(axis=-2, keepdims=True)], axis=-1)
+
+
+def _qs_kernel(x: np.ndarray) -> np.ndarray:
+    a = 6 * np.pi * x / 5
+    with np.errstate(divide="ignore", invalid="ignore"):
+        k = 25 / (12 * np.pi**2 * x**2) * (np.sin(a) / a - np.cos(a))
+    return np.where(x == 0, 1.0, k)
+
+
+def _prewhitened_qs(y: np.ndarray) -> np.ndarray:
+    """Ψ̂ of LW §3.1: a VAR(1) prewhitening with singular values capped at 0.97 (Andrews and Monahan 1992), the QS
+    kernel on its residuals at Andrews' (1991) AR(1) plug-in bandwidth 1.3221(α̂(2)T)^{1/5}, recoloured, times T/(T−4)."""
+    t, k = y.shape
+    coef, *_ = np.linalg.lstsq(y[:-1], y[1:], rcond=None)
+    u, s, vt = np.linalg.svd(coef.T)
+    a = u @ np.diag(np.minimum(s, 0.97)) @ vt
+    e = y[1:] - y[:-1] @ a.T
+    n = e.shape[0]
+    rho = np.array([float(e[1:, i] @ e[:-1, i]) / float(e[:-1, i] @ e[:-1, i]) for i in range(k)])
+    s2 = np.array([float(np.mean((e[1:, i] - rho[i] * e[:-1, i]) ** 2)) for i in range(k)])
+    alpha2 = float(np.sum(4 * rho**2 * s2**2 / (1 - rho) ** 8) / np.sum(s2**2 / (1 - rho) ** 4))
+    band = 1.3221 * (alpha2 * n) ** 0.2
+    psi = e.T @ e / n
+    if band > 0:
+        weights = _qs_kernel(np.arange(1, n) / band)
+        for j, w in enumerate(weights, start=1):
+            g = e[j:].T @ e[:-j] / n
+            psi += w * (g + g.T)
+    back = np.linalg.inv(np.eye(k) - a)
+    return back @ psi @ back.T * t / (t - 4)
+
+
+def _block_psi(y: np.ndarray, block: int) -> np.ndarray:
+    """Ψ̂* of LW §3.2.2 (Götze and Künsch 1996): (1/l) Σ ζ_j ζ_j′, ζ_j the j-th block sum of y over √b; over leading axes."""
+    l = y.shape[-2] // block
+    z = y[..., : l * block, :].reshape(*y.shape[:-2], l, block, y.shape[-1]).sum(axis=-2) / sqrt(block)
+    return np.einsum("...li,...lj->...ij", z, z) / l
+
+
+def sharpe_difference(a, b, *, block: int | str = "auto", reps: int = 4999, seed: int = 0, level: float = 0.95) -> dict:
+    """Ledoit and Wolf's (2008) test of H0: SR_a = SR_b on paired per-period returns.
+
+    Δ̂ = μ̂_a/σ̂_a − μ̂_b/σ̂_b (σ̂ with divisor T, as f(v̂) gives). `se_hac` is
+    s(Δ̂) = √(∇f′Ψ̂∇f/T) from the prewhitened QS kernel; `p_hac` = 2Φ(−|Δ̂|/s).
+    The bootstrap resamples circular blocks of pairs, studentizes each replicate
+    by its own block Ψ̂*, and gives `p_boot` = (#{|Δ̂*−Δ̂|/s(Δ̂*) ≥ |Δ̂|/s(Δ̂)} + 1)/(M + 1)
+    (LW eq. 9) and the symmetric `level` interval Δ̂ ± z*·s(Δ̂) (eq. 7).
+    `block="auto"`: the circular-block Politis–White length, 1.5^{1/3} × the
+    median stationary length over y's four columns (D_CB = (4/3)ĝ² against
+    D_SB = 2ĝ²; Patton, Politis and White 2009), rounded up. A null in either
+    series drops the pair. Not annualised: multiply Δ̂ by √(periods per year).
+    """
+    from math import ceil
+
+    pair = pl.DataFrame({"a": pl.Series(a, dtype=pl.Float64), "b": pl.Series(b, dtype=pl.Float64)}).drop_nulls().drop_nans()
+    x = pair.to_numpy()
+    t = x.shape[0]
+    if t < 10:
+        raise Refused(f"{t} paired returns are too few to compare two Sharpe ratios")
+    if (x.std(axis=0) == 0).any():
+        raise Refused("a constant series has no Sharpe ratio")
+    y = _moment_columns(x)
+    if block == "auto":
+        stationary = float(np.median([timeseries.optimal_block(pl.Series(y[:, j])) for j in range(4)]))
+        block = max(1, ceil(1.5 ** (1 / 3) * stationary))
+    if t < 2 * block:
+        raise Refused(f"{t} paired returns are too few for blocks of {block}")
+    delta, grad = _sharpe_delta(x.mean(axis=0), (x**2).mean(axis=0))
+    se = sqrt(float(grad @ _prewhitened_qs(y) @ grad) / t)
+    d = abs(delta) / se
+
+    rng = np.random.default_rng(seed)
+    count = -(-t // block)
+    stats_ = []
+    for start in range(0, reps, 500):
+        m = min(500, reps - start)
+        idx = ((rng.integers(0, t, size=(m, count))[:, :, None] + np.arange(block)) % t).reshape(m, -1)[:, :t]
+        xs = x[idx]
+        ds, gs = _sharpe_delta(xs.mean(axis=1), (xs**2).mean(axis=1))
+        psi = _block_psi(_moment_columns(xs), block)
+        ses = np.sqrt(np.einsum("mi,mij,mj->m", gs, psi, gs) / t)
+        stats_.append(np.abs(ds - delta) / ses)
+    boot = np.concatenate(stats_)
+    z = float(np.quantile(boot, level))
+    return {
+        "delta": float(delta),
+        "sharpe_a": float(x[:, 0].mean() / x[:, 0].std()),
+        "sharpe_b": float(x[:, 1].mean() / x[:, 1].std()),
+        "se_hac": se,
+        "p_hac": float(2 * stats.norm.sf(d)),
+        "p_boot": (int(np.sum(boot >= d)) + 1) / (reps + 1),
+        "ci": (float(delta - z * se), float(delta + z * se)),
+        "block": int(block),
+        "reps": reps,
+        "seed": seed,
+        "rows": t,
+    }
