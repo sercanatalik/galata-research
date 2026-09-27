@@ -135,6 +135,41 @@ def summarise(compared, pl):
     return pl.DataFrame(rows)
 
 
+@app.function
+def survival_table(replayed, pl) -> str:
+    """The README's table: per claim, whether it holds on each ticker at 1d · 4h · 1h, and how often BTC's verdict repeats."""
+    sources = {
+        "t beats normal": "Troster et al. 2019; *against*: Chu et al. 2017",
+        "no leverage effect": "Cheikh et al. 2020",
+        "α+β≈1 intraday is the daily cycle": "Andersen and Bollerslev 1997",
+        "HAR beats GARCH": "Bergsli et al. 2022",
+        "something beats GARCH(1,1)": "Hansen and Lunde 2005",
+        "better σ ≠ better P&L": "Becker et al. 2015",
+        "targeting does not cut drawdown per vol": "Harvey et al. 2018; Ghia and Hou 2021",
+        "GARCH outside the multi-horizon MCS": "Quaedvlieg 2021",
+        "HARQ beats GARCH at every horizon": "Bollerslev, Patton, Quaedvlieg 2016",
+        "feedback tracks the target better": "Devanathan et al. 2026",
+        "feedback's Sharpe gain is not significant": "Ledoit and Wolf 2008; ⑭",
+    }
+    holds = {"consistent": "yes", "yes": "yes", "contradicts": "no", "no": "no"}
+    named = replayed.with_columns(pl.col("claim").str.replace(r"at \d+h ", "intraday "))
+    cell = {(r["claim"], r["ticker"], r["bars"]): holds.get(r["verdict"], "—") for r in named.iter_rows(named=True)}
+    tickers = [t for t in ("BTC", "ETH", "HYPE") if t in named["ticker"].to_list()]
+    bars = [b for b in ("1d", "4h", "1h") if b in named["bars"].to_list()]
+    lines = ["| claim (source) | " + " | ".join(f"{t} {' · '.join(bars)}" for t in tickers) + " | repeats BTC |", "|---|" + "---|" * (len(tickers) + 1)]
+    for claim in named["claim"].unique(maintain_order=True).to_list():
+        same = tried = 0
+        for t in tickers[1:]:
+            for b in bars:
+                mine, btc = cell.get((claim, t, b), "—"), cell.get((claim, "BTC", b), "—")
+                if mine != "—" and btc != "—":
+                    tried += 1
+                    same += mine == btc
+        row = [" · ".join(cell.get((claim, t, b), "—") for b in bars) for t in tickers]
+        lines.append(f"| {claim} ({sources.get(claim, '—')}) | " + " | ".join(row) + f" | {same} of {tried} |")
+    return "\n".join(lines)
+
+
 @app.cell
 def _(mo):
     tickers = mo.ui.multiselect(["BTC", "ETH", "HYPE"], value=["BTC", "ETH", "HYPE"], label="tickers")
@@ -187,6 +222,8 @@ def _(mo, pl, replayed):
         [
             mo.md("## Each claim, by ticker and bar: does ETH's or HYPE's verdict equal BTC's?"),
             _grid,
+            mo.md("Whether each claim holds, per ticker at 1d · 4h · 1h (the README's table):"),
+            mo.md(survival_table(replayed, pl)),
             mo.md("By the registered rule, each claim over the bars where BTC decided it:"),
             summarise(compared, pl),
             mo.md("Every verdict, with its number and rule:"),

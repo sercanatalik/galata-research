@@ -135,6 +135,17 @@ Chosen by the operator on 2026-09-27, in this order (the suite first, so the oth
   `garch.py` walks it one step ahead. No BTC verdict moved. HYPE 1d, run after the fix and so secondary,
   repeats 6 of BTC's 10 decided 1d verdicts, and *t beats normal* fails there (ΔBIC +1).
 
+Chosen by the operator on 2026-09-28:
+
+- [x] 23. **`refresh-what-survives`**: the README's verdict table is BTC-only and stale (1d drawdown now reads
+  *contradicts*). Rebuild it per ticker × bar from `replication.py` on the current code, generated rather than
+  typed, with the registered labels kept apart from later runs. Done: `survival_table` generates it. Two claims
+  hold wherever decided on all three tickers (better σ ≠ better P&L; feedback's Sharpe gain not significant).
+  Whether anything beats GARCH, and GARCH's multi-horizon MCS membership, repeat BTC in 2 of 6 cells.
+- [ ] 24. **`har-vs-garch-long-history`**: *HAR beats GARCH* is decided in only two cells. Register it and test it
+  on years of BTC and ETH from `gr.reference`'s published archives. Blocked until the other session commits
+  `gr.reference`.
+
 ---
 
 ## What the record holds

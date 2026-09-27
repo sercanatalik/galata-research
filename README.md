@@ -481,22 +481,38 @@ therefore not the Lamoureux–Lastrapes artefact: it fits Rambaccussing and
 Mazibas's genuine long memory. The hourly unit root is the daily cycle, which
 deseasonalising removes.
 
-**What survives.** ⑬ decides each claim from the notebook's own results by a
-rule stated beside it, and the answer depends on the bar:
+**What survives.** ⑬ decides each claim from the notebook's own results, by
+a rule stated beside it. `notebooks/replication.py` replays that notebook,
+unchanged, for each ticker and bar, and generates the table below
+(`survival_table`). It was run on 2026-09-28, with the record through
+2026-09-27 and the code after item 22. `yes` means the claim holds there, `no`
+means it does not, and `—` means the section could not decide. The last column
+counts how often ETH's and HYPE's decided cells repeat BTC's.
 
-| claim (source) | 1d | 4h | 1h |
-|---|---|---|---|
-| t beats normal (Troster et al. 2019; *against*: Chu et al. 2017, IGARCH-normal best) | yes, ΔBIC −97 | yes, −710 | yes, −699 |
-| no leverage effect (Cheikh et al. 2020) | yes, γ 0.057 | **no**, γ 0.106 (> 2 se) | yes, γ 0.053 |
-| α+β ≈ 1 intraday is the daily cycle (Andersen and Bollerslev 1997; *in tension*: Rambaccussing and Mazibas 2020) | — | **no**, 0.961 → 0.982 | yes, 1.0000 → 0.9891 |
-| HAR beats GARCH (Bergsli et al. 2022) | yes, 3 of 3 horizons | — (too little 1h RV) | — |
-| something beats GARCH(1,1) (Hansen and Lunde 2005) | no, in every MCS* | yes, at every horizon* | no* |
-| a better σ is not a better P&L (Becker et al. 2015) | yes, ρ 0.26 | yes, ρ −0.40 | yes, ρ 0.20 |
-| targeting does not cut drawdown per vol (Harvey et al. 2018; Ghia and Hou 2021) | yes, 1.27 vs 1.21 | **no**, 0.84 vs 0.87 | yes, 0.21 vs 0.21 |
+| claim (source) | BTC 1d · 4h · 1h | ETH 1d · 4h · 1h | HYPE 1d · 4h · 1h | repeats BTC |
+|---|---|---|---|---|
+| t beats normal (Troster et al. 2019; *against*: Chu et al. 2017) | yes · yes · yes | yes · yes · yes | no · yes · yes | 5 of 6 |
+| no leverage effect (Cheikh et al. 2020) | yes · no · yes | yes · yes · yes | yes · yes · yes | 4 of 6 |
+| α+β≈1 intraday is the daily cycle (Andersen and Bollerslev 1997) | — · no · yes | — · no · yes | — · no · no | 3 of 4 |
+| HAR beats GARCH (Bergsli et al. 2022) | yes · — · — | yes · — · — | yes · — · — | 2 of 2 |
+| something beats GARCH(1,1) (Hansen and Lunde 2005) | no · yes · no | yes · yes · yes | yes · no · no | 2 of 6 |
+| better σ ≠ better P&L (Becker et al. 2015) | yes · yes · yes | yes · yes · yes | yes · yes · yes | 6 of 6 |
+| targeting does not cut drawdown per vol (Harvey et al. 2018; Ghia and Hou 2021) | no · no · no | no · no · yes | no · no · yes | 4 of 6 |
+| GARCH outside the multi-horizon MCS (Quaedvlieg 2021) | yes · yes · no | yes · no · yes | no · no · no | 2 of 6 |
+| HARQ beats GARCH at every horizon (Bollerslev, Patton, Quaedvlieg 2016) | yes · — · — | yes · — · — | no · — · — | 1 of 2 |
+| feedback tracks the target better (Devanathan et al. 2026) | yes · yes · yes | no · yes · yes | yes · no · yes | 4 of 6 |
+| feedback's Sharpe gain is not significant (Ledoit and Wolf 2008; ⑭) | yes · yes · yes | yes · yes · yes | yes · yes · yes | 6 of 6 |
 
-\*With the notebook's default models (EWMA, GARCH, GJR, EGARCH, HAR, HARQ).
-Adding CARR and the hand-written models changes the set: at 1d and 30 days
-it holds CARR alone.
+With the notebook's default models (EWMA, GARCH, GJR, EGARCH at one step, HAR
+and HARQ except at 1h). Adding CARR and the hand-written models changes the
+sets: at BTC 1d and 30 days the confidence set holds CARR alone. The
+*registered* replication (`20fbe74`, reported above) ran before item 22, when
+HYPE 1d could not be run. This table fills that cell, so its HYPE 1d column is
+secondary. Two claims hold wherever they were decided on all three tickers: a
+better σ is not a better P&L, and feedback's Sharpe gain is not significant.
+Whether anything beats GARCH(1,1) turns on the ticker and the bar. A verdict
+that moves with the specification is an uncertainty standard errors do not
+show (Menkveld et al. 2024, *Nonstandard Errors*, *JF* 79(3):2339–2390).
 
 ---
 
