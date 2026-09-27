@@ -214,6 +214,10 @@ gr.frontier()                           # how far each dataset is durable
 | `gr.root()` | where the record is | `GALATA_VAR`, then `galata-research.toml`, then the sibling checkout |
 | `gr.timeseries.returns(bars, *, kind)` | `ticker, ts, close_ts, return`, simple or log | null on a ticker's first bar and after a hole: the backtest's rule |
 | `gr.timeseries.periods_per_year(interval)` | 525,600 · 8,760 · 2,190 · 365 | calendar time: the venue never closes |
+| `gr.timeseries.realized(bars, estimator, window)` | `n, sigma` per bar: close-to-close, Parkinson, Garman–Klass, Rogers–Satchell, Yang–Zhang | one count for all five: a contiguous return, not in a gap; a figure only for a full window; no clamp |
+| `gr.timeseries.realized_from(fine, interval)` | RV and realized range per coarser bucket | null unless the bucket holds every fine return |
+| `gr.timeseries.ewma_vol(bars, *, lam)`, `ewma_max` | RiskMetrics' EWMA σ; the larger of a fast and a slow one | σ at close t is the forecast for t+1; warm-up until the seed weighs < 1%; a hole bridged |
+| `gr.timeseries.signature(bars_1m, minutes)` | mean daily RV per sampling interval | whole days only |
 | `gr.timeseries.stationary_bootstrap_indices`, `optimal_block` | resampling indices; Politis–White block | agrees with arch to 1e-6 |
 | `gr.utils.require`, `window`, `instant` | a refusal naming what is missing; micros | a naive time is refused |
 
@@ -239,7 +243,7 @@ Over the busiest BTC minute, 3,426 trades matched with a median staleness of
 
 ## Studies
 
-`gr.stats` (Sharpe, PSR, the expected maximum Sharpe, DSR, PBO, the permutation percentile, the stationary bootstrap with a Politis–White block, the Reality Check and SPA),
+`gr.stats` (Sharpe, PSR, the expected maximum Sharpe, DSR, PBO, the permutation percentile, the Reality Check and SPA), `gr.timeseries` (returns, annualisation, realized and EWMA volatility, the stationary bootstrap with a Politis–White block),
 `gr.backtest.returns` (next-bar, fees on turnover, holes not spanned,
 `modelled` on every row; settled funding charged on every hour held when
 `funding=gr.market.funding(...)` is passed, and `funding_charged` says where
@@ -255,6 +259,7 @@ trial, so N is the true N) back these notebooks:
 | `donchian_ensemble.py` | the pre-registered test below |
 | `random_timing.py` | is it the timing, or just the exposure? Each trial against 1,000 twins with its own runs shuffled: **none beats its twins at 5%** |
 | `whole_set.py` | does *anything* in the set beat its benchmark? White's Reality Check and Hansen's SPA over 70 trials: **no**, against buy-and-hold (p ≈ 0.7) or cash (p ≥ 0.07) |
+| `volatility.py` | what was the volatility? Five window estimators, two EWMA baselines, RV and realized range from finer bars, and the signature plot. On BTC the range estimators read **above** close-to-close, 7–12% at the median on 1d and 1h, as legacy's testnet week found |
 | `permuted_bars.py` | is there structure to find at all? The whole search re-run on 200 markets with the bars permuted: the real best (1.08) is **below** the permuted median (1.13), p = 0.59 |
 
 **A pre-registered test.** `planning/preregistered/donchian-ensemble.md` froze

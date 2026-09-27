@@ -69,7 +69,7 @@ that uses it. The GARCH study grows in `notebooks/garch.py` from item 4 onward.
 - [x] 1. **`shape-the-common-library`**: Phase 0. `gr.utils`, `gr.timeseries` (periods_per_year,
   returns, bootstrap moved from `stats`), public `studies.trial` / `replay` / `runs`, notebooks
   off private names. No behaviour changes.
-- [ ] 2. **`measure-realized-volatility`**: `timeseries.realized` (CC, Parkinson, GK, RS, YZ,
+- [x] 2. **`measure-realized-volatility`**: `timeseries.realized` (CC, Parkinson, GK, RS, YZ,
   realized range, RV from finer bars), `ewma_vol`, `ewma_max`, `signature`. Notebook
   `notebooks/volatility.py`.
 - [ ] 3. **`walk-forward-origins-and-seasonality`**: `timeseries.walk_forward_origins`
