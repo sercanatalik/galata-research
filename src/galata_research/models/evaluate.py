@@ -582,7 +582,7 @@ def mcs_horizons(
             tb = _pair_stats(sample, w, None, block)
             exceed += np.max(tb - crit(sample)) > t_max
         p = exceed / outer
-        running = max(running, p)
+        running = max(running, float(p))
         rows = {}
         for (i, j), v in zip(pairs, t_obs - c_obs):
             rows[i] = max(rows.get(i, -np.inf), v)

@@ -389,3 +389,10 @@ def a_constant_or_short_series_is_refused():
         ev.sharpe_difference(np.ones(50), x[:, 1], reps=19)
     with pytest.raises(Refused, match="too few for blocks"):
         ev.sharpe_difference(x[:15, 0], x[:15, 1], reps=19, block=8)
+
+
+def a_positive_elimination_p_still_builds_the_set():
+    # The first-listed model eliminated with p > 0: numpy and Python p-values once mixed, and polars refused the column.
+    got = ev.mcs_horizons(_three({"a": 0.03, "b": 0.0, "worse": 0.6}), outer=59, inner=29)
+    assert got.schema["included"] == pl.Boolean and got.schema["pvalue"] == pl.Float64
+    assert got.filter(pl.col("model") == "a")["pvalue"].item() > 0
