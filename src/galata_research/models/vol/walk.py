@@ -18,7 +18,8 @@ from .._arch import DISTS, SCALE, SIMULATED
 from . import custom
 from .garch import MODELS, with_measures
 
-_OUT = ("ticker", "ts", "close_ts", "h", "target_ts", "variance", "cum_variance", "fitted_through", "fit_from", "refit", "after_gap", "filtered")
+_OUT = ("ticker", "ts", "close_ts", "h", "target_ts", "variance", "cum_variance", "fitted_through", "fit_from", "refit", "after_gap", "filtered", "nu")
+_TAIL = ("nu", "eta")
 
 
 def walk_forward(
@@ -40,8 +41,10 @@ def walk_forward(
     """Variance forecasts from every origin at or after `split`, one row per (origin, h in `horizons`).
 
     `ticker, ts, close_ts, h, target_ts, variance, cum_variance, fitted_through,
-    fit_from, refit, after_gap, filtered`, in squared return units per bar
-    (`filtered` is always false here; HAR's insanity filter sets it). `variance` is
+    fit_from, refit, after_gap, filtered, nu`, in squared return units per bar
+    (`filtered` is always false here; HAR's insanity filter sets it; `nu` is
+    the refit's tail parameter: ν for t, GED and the hand-written t models,
+    η for skew-t, null for normal). `variance` is
     E[σ²] of the h-th bar after the origin; `cum_variance` sums bars 1…h, the
     figure realized variance over those bars is scored against (Andersen,
     Bollerslev, Christoffersen and Diebold 2006). `target_ts` is the `ts` of
@@ -94,7 +97,7 @@ def walk_forward(
     y = _arch.values(kept, column)
     x = kept["_x"].to_numpy() * SCALE**2 if "_x" in kept.columns else None
     H = hs[-1]
-    blocks = []
+    blocks, tails = [], []
     for n, r in enumerate(refits):
         stop = refits[n + 1] if n + 1 < len(refits) else kept.height
         first_obs = 0 if window == "expanding" else r - window + 1
@@ -102,6 +105,7 @@ def walk_forward(
             fitted = y[first_obs : r + 1]
             xf = None if x is None else x[first_obs : r + 1]
             p = custom.estimate(model, fitted, xf)["params"]
+            tails.append((stop - r, next((p[k] for k in _TAIL if k in p), None)))
             init = float(np.log(np.var(fitted))) if model == "rgarch" else float(np.var(fitted))  # msgarch, cgarch: a variance
             blocks.append(
                 custom.forecast(
@@ -111,11 +115,14 @@ def walk_forward(
             )
             continue
         res = _arch.model(y[:stop], model, dist, seed=seed + r).fit(disp="off", first_obs=first_obs, last_obs=r + 1)
+        fitted_params = _arch.summary_params(res)
+        tails.append((stop - r, next((fitted_params[k] for k in _TAIL if k in fitted_params), None)))
         blocks.append(_arch.forecast(res, start=r, horizon=H, simulate=model in SIMULATED, simulations=simulations))
     variances = np.vstack(blocks) / SCALE**2
     if factors is not None:
         variances = variances * _target_factor2(schedule, factors, width, H)
     cumulative = np.cumsum(variances, axis=1)
+    nus = [v for count, v in tails for _ in range(count)]
     base = schedule.select("ticker", "ts", "close_ts", "fitted_through", "fit_from", "refit").with_columns(
         kept["after_gap"].slice(first).alias("after_gap")
     )
@@ -128,6 +135,7 @@ def walk_forward(
                 pl.Series("variance", variances[:, h - 1]),
                 pl.Series("cum_variance", cumulative[:, h - 1]),
                 pl.lit(False).alias("filtered"),
+                pl.Series("nu", nus, dtype=pl.Float64),
             )
         )
     return pl.concat(rows).select(_OUT).sort("close_ts", "h")

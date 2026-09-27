@@ -129,3 +129,10 @@ def the_table_says_where_its_fit_ended():
 def a_first_window_under_min_obs_is_refused(returns):
     with pytest.raises(Refused, match="under min_obs=500"):
         vol.walk_forward(returns, model="garch", split=_split(returns, 299))
+
+
+def every_refit_block_carries_its_nu(returns):
+    w = vol.walk_forward(returns, model="garch", dist="t", split=_split(returns, 599), every=50, horizons=[1])
+    blocks = w.with_columns(pl.col("refit").cast(pl.Int32).cum_sum().alias("block")).group_by("block").agg(pl.col("nu").n_unique().alias("k"), pl.col("nu").first())
+    assert (blocks["k"] == 1).all() and blocks["nu"].null_count() == 0 and blocks.height == 7
+    assert vol.walk_forward(returns, model="garch", dist="normal", split=_split(returns, 849), every=50, horizons=[1])["nu"].null_count() > 0

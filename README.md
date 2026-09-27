@@ -268,7 +268,7 @@ Every loader returns a `pl.LazyFrame`, or a DuckDB relation with
 | `evaluate.proxies`, `evaluate.align` | a proxy per bar; forecasts joined to it, point or over exactly h bars | a hole leaves a cumulative target blank; rows after a gap dropped |
 | `evaluate.scorecard`, `mcs`, `spa`, `dm`, `mz_gls`, `fluctuation`, `uspa`, `aspa`, `gw` | QLIKE and MSE per model × h; DM (HLN); the Model Confidence Set and SPA; MZ-GLS; Giacomini–Rossi; Quaedvlieg's uniform and average multi-horizon SPA; Giacomini–White conditional test | every score on the same aligned rows; seeded bootstraps |
 | `evaluate.value_at_risk`, `var_backtest` | VaR/ES by filtered historical simulation; Kupiec, Christoffersen, DQ, FZ0 | each statistic checked by hand in the tests |
-| `vol.target`, `vol.trials`, `vol.economics` | a position at each close from σ̂; every trial; Sharpe, drawdown per unit vol, turnover, fees, FKO fee, DSR | the target known at the split; no second shift; every trial counted |
+| `vol.target`, `vol.trials`, `vol.economics`, `vol.es_t` | a position at each close from σ̂ (or from the refitted t's 1% expected shortfall); every trial; Sharpe, drawdown per unit vol, turnover, fees, FKO fee, DSR | the target known at the split; no second shift; every trial counted |
 
 Install with `uv sync --extra models`. Without it `import galata_research`
 still works and `gr.models` is refused by name.
@@ -310,6 +310,7 @@ trial, so N is the true N) back these notebooks:
 | `whole_set.py` | does *anything* in the set beat its benchmark? White's Reality Check and Hansen's SPA over 70 trials: **no**, against buy-and-hold (p ≈ 0.7) or cash (p ≥ 0.07) |
 | `volatility.py` | what was the volatility? Five window estimators, two EWMA baselines, RV and realized range from finer bars, the signature plot, the calendar in hourly volatility, and the walk-forward schedule. On BTC the range estimators read **above** close-to-close, 7–12% at the median on 1d and 1h, as legacy's testnet week found |
 | `garch.py` | GARCH, GARCH-t and variations, in sample and walked forward, scored and traded: see [The volatility study](#the-volatility-study) |
+| `liquidity.py` | when is the market liquid? Hour-of-week depth, volume and trade count, per venue, since 2023, from the reference store and the tape. On BTC, Binance's ±1% depth is best at **10 UTC** and worst at 22 UTC (×1.12), while volume peaks at **14 UTC** (×1.7–2.1 the day's mean) and troughs at 4–5 UTC on Binance, Bybit and Hyperliquid alike. The day's shape barely moved from 2023 to 2026 (Spearman ρ 0.92–0.96 year on year) |
 | `permuted_bars.py` | is there structure to find at all? The whole search re-run on 200 markets with the bars permuted: the real best (1.08) is **below** the permuted median (1.13), p = 0.59 |
 
 **A pre-registered test.** `planning/preregistered/donchian-ensemble.md` froze
@@ -396,6 +397,11 @@ Deflated Sharpe Ratio of 0.33. Drawdown per unit of volatility does not
 improve (1.21–1.37 against hold's 1.21). And the forecasts' order does not
 carry over: ρ(QLIKE rank, Sharpe rank) is 0.21, so HARQ, first by QLIKE, is
 fourth by Sharpe, as Becker, Clements, Doolan and Hurn (2015) warn.
+
+Sizing on the refitted Student-t's 1% expected shortfall instead of σ̂ adds
+nothing on BTC daily: ν̂ moved only between 3.06 and 3.46 across refits, so
+the ES positions are within about 1% of inverse vol's (Sharpe −0.37 against
+−0.38 for GARCH, −0.22 against −0.23 for EGARCH).
 
 **What survives.** ⑬ decides each claim from the notebook's own results by a
 rule stated beside it, and the answer depends on the bar:
@@ -511,6 +517,7 @@ uv run marimo check notebooks/*.py     # every notebook, as CI and tests/noteboo
 | Phase 2: MS-GARCH | done: a fast-switching mixture, no forecast gain |
 | Phase 2: multi-horizon SPA | done: HAR, HARQ, CARR beat GARCH uniformly |
 | Phase 2: Giacomini–White | done: HARQ and CARR win more when volatility is high |
+| Phase 2: expected-shortfall sizing | done: ν̂ too stable on BTC to matter |
 
 ---
 

@@ -17,7 +17,7 @@ from ..._errors import Refused
 
 MODELS = ("har", "shar", "harq")
 _LAGS = {timedelta(days=1): (1, 7, 30), timedelta(hours=4): (1, 6, 42)}
-_OUT = ("ticker", "ts", "close_ts", "h", "target_ts", "variance", "cum_variance", "fitted_through", "fit_from", "refit", "after_gap", "filtered")
+_OUT = ("ticker", "ts", "close_ts", "h", "target_ts", "variance", "cum_variance", "fitted_through", "fit_from", "refit", "after_gap", "filtered", "nu")
 
 
 def har(
@@ -114,6 +114,7 @@ def har(
             pl.Series("variance", point[:, h - 1]),
             pl.Series("cum_variance", cumul[:, h - 1]),
             pl.Series("filtered", flags[:, h - 1]),
+            pl.lit(None, pl.Float64).alias("nu"),
         )
         for h in hs
     ]

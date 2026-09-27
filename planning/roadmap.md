@@ -100,6 +100,18 @@ Phase 2, in the follow-up table's order, skipping the two that wait for 1m histo
 - [x] 14. **`ask-when-models-win`**: the Giacomini–White (2006) conditional predictive ability test,
   "does GARCH win specifically in high vol?".
 
+Phase 2, continued in the table's order. Multi-ticker views wait (the operator's call, 2026-09-27),
+revisiting legacy's EWMA/GARCH exclusion is the operator's decision, and HAR-CJ and 5m RV still wait
+for 1m history:
+
+- [x] 15. **`size-on-expected-shortfall`**: ES-target sizing for the t models: exposure moves with ν̂,
+  which a σ target cannot show; `walk_forward` carries each refit's ν.
+- [ ] 16. **`control-the-volatility`**: feedback-controlled vol targeting (Devanathan, Rueter, Boyd et al.
+  2026) against open-loop 1/σ̂.
+- [ ] 17. **`break-the-persistence`**: variance breaks detected (ICSS, Inclán and Tiao 1994) and GARCH
+  refitted with them, testing whether daily persistence is breaks (Lamoureux and Lastrapes 1990).
+- [ ] 18. **`confidence-across-horizons`**: Quaedvlieg's multi-horizon Model Confidence Set (uMCS, aMCS).
+
 ---
 
 ## What the record holds

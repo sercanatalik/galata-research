@@ -8,7 +8,7 @@ from ..._errors import Refused
 from .._arch import SCALE
 from . import custom
 
-_OUT = ("ticker", "ts", "close_ts", "h", "target_ts", "variance", "cum_variance", "fitted_through", "fit_from", "refit", "after_gap", "filtered")
+_OUT = ("ticker", "ts", "close_ts", "h", "target_ts", "variance", "cum_variance", "fitted_through", "fit_from", "refit", "after_gap", "filtered", "nu")
 
 
 def carr(
@@ -68,6 +68,7 @@ def carr(
             pl.Series("variance", variances[:, h - 1]),
             pl.Series("cum_variance", cumulative[:, h - 1]),
             pl.lit(False).alias("filtered"),
+            pl.lit(None, pl.Float64).alias("nu"),
         )
         for h in hs
     ]

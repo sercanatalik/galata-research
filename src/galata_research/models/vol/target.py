@@ -13,8 +13,27 @@ import polars as pl
 from ... import backtest, stats, studies, timeseries, utils
 from ..._errors import Refused
 
-RULES = ("inverse_vol", "inverse_variance", "conditional")
+RULES = ("inverse_vol", "inverse_variance", "conditional", "expected_shortfall")
 _MIN_HISTORY = 20
+
+
+def es_t(nu: float, alpha: float) -> float:
+    """Expected shortfall of a unit-variance Student-t at level α, as a positive magnitude.
+
+    (f_ν(q)/α)·((ν + q²)/(ν − 1))·√((ν − 2)/ν), q = t_ν⁻¹(α): the unit-scale t's
+    closed form rescaled to unit variance; the normal's φ(z_α)/α as ν → ∞. At
+    α = 1%: 4.043 (ν = 3), 3.008 (ν = 10), 2.665 (normal).
+    """
+    from scipy import stats as st
+
+    if not 0 < alpha < 0.5:
+        raise Refused(f"alpha={alpha} must be a lower-tail probability in (0, 0.5)")
+    if nu is None or not np.isfinite(nu) or nu > 1000:
+        return float(st.norm.pdf(st.norm.ppf(alpha)) / alpha)
+    if nu <= 2:
+        raise Refused(f"nu={nu}: a t with ν ≤ 2 has no variance to scale to")
+    q = st.t.ppf(alpha, nu)
+    return float(st.t.pdf(q, nu) / alpha * (nu + q * q) / (nu - 1) * np.sqrt((nu - 2) / nu))
 
 
 def estimation_target(bars: pl.DataFrame, split, periods_per_year: int) -> float:
@@ -36,6 +55,7 @@ def target(
     rule: str = "inverse_vol",
     cap: float = 2.0,
     band: float = 0.0,
+    alpha: float = 0.01,
 ) -> pl.DataFrame:
     """One ticker's bars with `position`, set on each origin bar from the forecast made at its close.
 
@@ -44,7 +64,10 @@ def target(
     fixed in advance, doubling the leverage swings; `conditional` (Bongaerts,
     Kang and van Dijk 2020) is min(τ/σ̂, cap) when σ̂ is in the top or bottom
     quintile of the earlier origins' σ̂ (expanding; medium until 20 exist)
-    and 1 otherwise. Long only. `cap` 2 is QuantPedia's; Harvey et al. (2018)
+    and 1 otherwise. `expected_shortfall` is min(τ·es_t(ν₀, α)/(σ̂·es_t(ν̂, α)),
+    cap), ν₀ the first origin's tail parameter (known at the split): inverse vol
+    while ν̂ = ν₀, and smaller as the refitted tail grows fatter; it needs the
+    forecasts' `nu` (symmetric t; η of skew-t is treated as ν). Long only. `cap` 2 is QuantPedia's; Harvey et al. (2018)
     use none. `band` is a no-trade region: the position moves only when the
     rule's weight differs from it by more than `band` × the position. 0.25 is
     the static-portfolio 5/25 heuristic, not a vol-targeting result. A bar
@@ -67,9 +90,18 @@ def target(
         tau = float(target)
     else:
         raise Refused(f"target={target!r} must be 'estimation' or a positive annualised volatility declared in advance")
-    one = forecasts.filter(pl.col("h") == 1).select("close_ts", "variance").sort("close_ts")
+    cols = ["close_ts", "variance"] + (["nu"] if "nu" in forecasts.columns else [])
+    one = forecasts.filter(pl.col("h") == 1).select(cols).sort("close_ts")
     sigma = (one["variance"] * per_year).sqrt().to_numpy()
-    raw = np.minimum(tau / sigma, cap) if rule != "inverse_variance" else np.minimum((tau / sigma) ** 2, cap)
+    if rule == "expected_shortfall":
+        if "nu" not in one.columns or one["nu"].null_count() == one.height:
+            raise Refused("expected-shortfall sizing needs each forecast's nu: walk a t, skew-t, GED, cgarch, betat or msgarch model")
+        nus = one["nu"].to_numpy()
+        nu0 = nus[0]
+        scale = np.array([es_t(nu0, alpha) / es_t(v, alpha) for v in nus])
+        raw = np.minimum(tau / sigma * scale, cap)
+    else:
+        raw = np.minimum(tau / sigma, cap) if rule != "inverse_variance" else np.minimum((tau / sigma) ** 2, cap)
     if rule == "conditional":
         weights = np.ones(sigma.size)
         for i in range(sigma.size):
@@ -128,6 +160,8 @@ def trials(
         f = forecasts.filter(pl.col("model") == model)
         for rule in rules:
             for band in bands:
+                if rule == "expected_shortfall" and ("nu" not in f.columns or f["nu"].null_count() == f.height):
+                    continue  # no tail parameter to size on (HAR, CARR, normal models)
                 positioned = globals()["target"](f, frame, split=split, target=target, rule=rule, cap=cap, band=band)
                 out.append(_trial(positioned, f"{model} {rule} band {band:g}", fee, funding))
     return pl.concat(out)

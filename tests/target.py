@@ -81,3 +81,44 @@ def the_count_is_everything_run():
     assert t["trial"].n_unique() == 13
     _, deflated = vol.economics(t, periods_per_year=365)
     assert deflated["trials"] == 13
+
+
+def the_t_expected_shortfall_matches_integration():
+    from scipy import integrate, stats
+
+    nu, alpha = 3.0, 0.01
+    scale = np.sqrt((nu - 2) / nu)
+    tail, _ = integrate.quad(lambda u: stats.t.ppf(u, nu) * scale, 1e-12, alpha, limit=200)
+    assert vol.es_t(nu, alpha) == pytest.approx(-tail / alpha, abs=1e-6)
+    assert round(vol.es_t(3.0, 0.01), 3) == 4.043
+    assert vol.es_t(float("inf"), 0.01) == pytest.approx(2.665, abs=1e-3)
+
+
+def _nu_forecasts(bars, first, n, nus):
+    return pl.DataFrame(
+        [{"model": "m", "close_ts": bars["close_ts"][first + i], "h": 1, "variance": 0.4**2 / 365, "nu": nus[i]} for i in range(n)]
+    )
+
+
+def the_same_tail_sizes_as_inverse_vol():
+    bars = _bars(_walk(120))
+    f = _nu_forecasts(bars, 60, 40, [5.0] * 40)
+    es = vol.target(f, bars, split=bars["close_ts"][60], target=0.3, rule="expected_shortfall")
+    iv = vol.target(f, bars, split=bars["close_ts"][60], target=0.3, rule="inverse_vol")
+    assert es["position"].to_list() == pytest.approx(iv["position"].to_list(), nan_ok=True)
+
+
+def a_fatter_tail_sizes_smaller():
+    bars = _bars(_walk(120))
+    f = _nu_forecasts(bars, 60, 40, [8.0] * 20 + [3.0] * 20)
+    es = vol.target(f, bars, split=bars["close_ts"][60], target=0.3, rule="expected_shortfall")["position"]
+    iv = vol.target(f, bars, split=bars["close_ts"][60], target=0.3, rule="inverse_vol")["position"]
+    ratio = vol.es_t(8.0, 0.01) / vol.es_t(3.0, 0.01)
+    assert es[90] == pytest.approx(iv[90] * ratio) and es[90] < iv[90]
+
+
+def a_forecast_without_nu_is_refused_for_es():
+    bars = _bars(_walk(120))
+    f = _forecasts(bars, 60, [0.4] * 40)
+    with pytest.raises(gr.Refused, match="needs each forecast's nu"):
+        vol.target(f, bars, split=bars["close_ts"][60], target=0.3, rule="expected_shortfall")

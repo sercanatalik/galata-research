@@ -942,16 +942,32 @@ def _(mo):
       quadratic-utility investor would pay to switch from holding.
 
     Every trial counts toward the Deflated Sharpe Ratio.
+
+    *Expected-shortfall* sizing divides by the 1% ES of the refitted
+    Student-t rather than by σ̂: $w=\min(\tau\,\mathrm{ES}(\nu_0)/(\hat\sigma\,\mathrm{ES}(\hat\nu)),2)$.
+    It equals inverse vol while ν̂ stays at its value at the split, and holds
+    less when a refit finds a fatter tail. The chart below shows how far ν̂
+    moved.
     """)
     return
 
 
 @app.cell
 def _(bars, per_year, split, vol, walked):
-    targeted = vol.trials(bars, walked, split=split, rules=("inverse_vol", "conditional"), bands=(0.0, 0.25))
+    targeted = vol.trials(bars, walked, split=split, rules=("inverse_vol", "conditional", "expected_shortfall"), bands=(0.0, 0.25))
     econ, deflated = vol.economics(targeted, periods_per_year=per_year)
     econ = econ.sort("sharpe_annual", descending=True, nulls_last=True)
     return deflated, econ, targeted
+
+
+@app.cell
+def _(alt, mo, pl, walked):
+    _nu = walked.filter((pl.col("h") == pl.col("h").min()) & pl.col("nu").is_not_null()).select("close_ts", "model", "nu")
+    mo.vstack(
+        [mo.md("ν̂ of each refit over the walk (t, skew-t η, and the hand-written t models): what expected-shortfall sizing responds to."),
+         alt.Chart(_nu).mark_line(strokeWidth=1, interpolate="step-after").encode(x=alt.X("close_ts:T", title=None), y=alt.Y("nu:Q", title="ν̂"), color="model:N").properties(height=160, width="container")]
+    ) if _nu.height else mo.md("")
+    return
 
 
 @app.cell

@@ -56,6 +56,11 @@ def forecast(res, *, start: int, horizon: int, simulate: bool, simulations: int)
     return np.asarray(f.variance, dtype=float)
 
 
+def summary_params(res) -> dict:
+    """The fitted parameters as a dict of floats."""
+    return {k: float(v) for k, v in res.params.items()}
+
+
 def summary(res) -> dict:
     """Plain values from an arch result: params and std_err as dicts, the series as lists."""
     return {
