@@ -4,7 +4,7 @@ import numpy as np
 import polars as pl
 import pytest
 from arch import arch_model
-from conftest import utc
+from conftest import garch_t, utc
 
 import galata_research as gr
 from galata_research import Refused
@@ -25,9 +25,7 @@ def _frame(values, *, width=DAY):
 
 @pytest.fixture(scope="module", name="returns")
 def _returns():
-    np.random.seed(21)
-    sim = arch_model(None, dist="t").simulate([0.0, 0.05, 0.08, 0.9, 5.0], 900, burn=500)
-    return _frame((sim["data"].to_numpy() / 100).tolist())
+    return _frame(garch_t(900, seed=21))
 
 
 def _split(frame, i):
@@ -49,9 +47,14 @@ def a_shock_moves_the_forecast_from_its_own_origin(returns):
     kw = dict(model="garch", split=_split(returns, 599), every=1000, horizons=[1])
     base = vol.walk_forward(returns, **kw)["variance"].to_list()
     moved = vol.walk_forward(_frame(shocked), **kw)["variance"].to_list()
+    # One fit, at the split: the paths differ only through alpha * (r_k - mu)^2.
+    f = vol.fit(returns.head(600), model="garch")
+    alpha, mu = f.params["alpha[1]"], f.params["mu"] / f.scale
+    rise = alpha * ((0.25 - mu) ** 2 - (values[k] - mu) ** 2)
     i = k - 599  # the origin whose close is bar k's
+    assert rise > base[i]  # a slip to k+1 would leave no rise; this makes the absence visible
     assert moved[:i] == pytest.approx(base[:i])
-    assert moved[i] > 10 * base[i]
+    assert moved[i] - base[i] == pytest.approx(rise, rel=1e-9)
 
 
 def a_later_return_does_not_change_an_earlier_forecast(returns):
@@ -93,9 +96,7 @@ def a_simulated_forecast_reproduces(returns):
 
 
 def _hourly(n=2000):
-    np.random.seed(5)
-    sim = arch_model(None, dist="t").simulate([0.0, 0.05, 0.08, 0.9, 5.0], n, burn=500)
-    return _frame((sim["data"].to_numpy() / 100).tolist(), width=HOUR)
+    return _frame(garch_t(n, seed=5), width=HOUR)
 
 
 def a_factor_fitted_past_the_split_is_refused():

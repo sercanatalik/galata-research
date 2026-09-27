@@ -8,7 +8,7 @@ import numpy as np
 import polars as pl
 import pytest
 from arch import arch_model
-from conftest import utc
+from conftest import garch_t, utc
 
 import galata_research as gr
 from galata_research import Refused
@@ -30,16 +30,18 @@ def _frame(values, *, ticker="BTC"):
 @pytest.fixture(scope="module", name="simulated")
 def _simulated():
     # GARCH(1,1)-t on the ×100 scale: ω 0.05, α 0.08, β 0.9, ν 5, seeded; returned in return units.
-    np.random.seed(11)
-    sim = arch_model(None, dist="t").simulate([0.0, 0.05, 0.08, 0.9, 5.0], 5000, burn=500)
-    return _frame((sim["data"].to_numpy() / 100).tolist())
+    return _frame(garch_t(5000, seed=11))
+
+
+def a_simulation_repeats_from_its_seed():
+    assert garch_t(300, seed=11) == garch_t(300, seed=11)
+    assert garch_t(300, seed=11) != garch_t(300, seed=12)
 
 
 def a_garch_t_recovers_its_simulation(simulated):
     f = vol.fit(simulated, model="garch", dist="t")
-    assert f.params["alpha[1]"] == pytest.approx(0.08, abs=0.03)
-    assert f.params["beta[1]"] == pytest.approx(0.9, abs=0.03)
-    assert f.params["nu"] == pytest.approx(5.0, abs=1.5)
+    for name, truth in (("alpha[1]", 0.08), ("beta[1]", 0.9), ("nu", 5.0)):
+        assert abs(f.params[name] - truth) < 4 * f.std_err[name], name  # four robust standard errors
     assert f.persistence == pytest.approx(f.params["alpha[1]"] + f.params["beta[1]"])
     assert f.half_life == pytest.approx(np.log(0.5) / np.log(f.persistence))
 

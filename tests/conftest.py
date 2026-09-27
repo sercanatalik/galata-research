@@ -79,6 +79,20 @@ def utc(iso: str) -> datetime:
     return datetime.fromisoformat(iso).replace(tzinfo=UTC)
 
 
+def garch_t(n: int, seed: int) -> list[float]:
+    """GARCH(1,1)-t returns on the ×100 scale (ω 0.05, α 0.08, β 0.9, ν 5), in return units.
+
+    arch draws from its distribution's own generator since 5.0; `np.random.seed`
+    does not reach it, so the seed is given to the distribution.
+    """
+    from arch import arch_model
+    from arch.univariate import StudentsT
+
+    model = arch_model(None, dist="t")
+    model.distribution = StudentsT(seed=seed)
+    return (model.simulate([0.0, 0.05, 0.08, 0.9, 5.0], n, burn=500)["data"].to_numpy() / 100).tolist()
+
+
 class Tape:
     def __init__(self, root: Path):
         self.root = root

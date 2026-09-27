@@ -112,6 +112,16 @@ for 1m history:
   refitted with them, testing whether daily persistence is breaks (Lamoureux and Lastrapes 1990).
 - [x] 18. **`confidence-across-horizons`**: Quaedvlieg's multi-horizon Model Confidence Set (uMCS, aMCS).
 
+Chosen by the operator on 2026-09-27, in this order (the suite first, so the other two can trust it):
+
+- [x] 19. **`find-the-flaky-test`**: identify the test that failed once and passed on rerun (twice), and make
+  the suite deterministic. Done: three fixtures called `np.random.seed`, which arch has ignored since 5.0;
+  each run drew new data. The shock test (10% of draws) now asserts the exact rise α̂·Δr², the recovery
+  test (4%) four robust standard errors; 1% and 0.5% of 200 draws still fail, and the fixtures are seeded.
+- [ ] 20. **`stress-the-feedback`**: does feedback targeting's gain survive other split points, a block
+  bootstrap of the Sharpe difference, and a claim registered before the run?
+- [ ] 21. **`replicate-on-other-tickers`**: the scorecard, confidence sets and targeting on ETH and HYPE.
+
 ---
 
 ## What the record holds
@@ -599,8 +609,10 @@ What each risk turned into, on BTC (`notebooks/garch.py`, ⑬, which computes th
   stalled at the start values.
 - **The persistence finding depends on the bar**: deseasonalising lowers α+β at 1h (1.0000 → 0.9891) but not
   at 4h (0.961 → 0.982), and GJR's γ crosses the leverage rule at 4h only (0.106, just over 2 se).
-- **An intermittent test failure**: twice, a full run failed one test that five clean reruns did not
-  reproduce (after a heavy run; not identified). Open.
+- **An intermittent test failure** was unseeded data, not load: `np.random.seed` does not reach arch's
+  generators (arch 5.0 gave each distribution its own), so three fixtures drew new returns every run, and
+  two tests with round-number tolerances failed on 10% and 4% of draws. It reproduced in an isolated
+  worktree, so concurrent edits were not the cause. Fixed by item 19.
 - **Short samples bit where expected**: HAR cannot be walked at 4h because 1h realized variance starts in
   2026-03; the notebook reports it as skipped rather than failing.
 
