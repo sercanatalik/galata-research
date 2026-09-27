@@ -584,9 +584,17 @@ def _(mo):
     The forecast for horizon *h* is $E_t[\sigma^2_{t+h}]$. For GARCH it decays
     to the long-run level geometrically,
     $\sigma^2_{t+h|t}=\bar\sigma^2+(\alpha+\beta)^{h-1}(\sigma^2_{t+1|t}-\bar\sigma^2)$
-    (Andersen, Bollerslev, Christoffersen and Diebold 2006). EGARCH and APARCH
-    have no such formula beyond one step, so they are simulated: 500 seeded
-    paths. The grey points are each target bar's Parkinson range, a noisy
+    (Andersen, Bollerslev, Christoffersen and Diebold 2006). APARCH has no
+    such formula beyond one step, so it is simulated: 500 seeded paths.
+
+    **EGARCH is walked one step ahead only.** Its recursion is in logs,
+    $\ln\sigma^2_{t+1}=\omega+\beta\ln\sigma^2_t+\alpha(|z_t|-E|z|)+\gamma z_t$,
+    so $E_t[\sigma^2_{t+2}]$ carries the factor $E[e^{\alpha|z|+\gamma z}]$.
+    Under a Student-t that factor is infinite: the density falls like a power
+    of |z|, and the exponential outgrows it. There is no two-step variance to
+    forecast. A simulated mean of 500 paths is then a random number that never
+    settles. On HYPE daily it overflowed, and on BTC it only looked finite.
+    Under a normal or GED tail the factor is finite (item 22). The grey points are each target bar's Parkinson range, a noisy
     proxy, which is why they are dots and not a line.
 
     **HAR, SHAR, HARQ** forecast the *realized* variance built from finer
@@ -640,8 +648,9 @@ def _(EVER, gr, mo, pl, vol):
         _factors = None
         if deseason_ and interval_ != "1d":
             _factors = gr.timeseries.seasonal_factors(_r, fit=(_bars["ts"].min(), split_iso))
+        _hs = horizons_[:1] if model_ == "egarch" else horizons_  # EGARCH-t has no variance beyond one step (⑥)
         return vol.walk_forward(
-            _r, model=model_, dist="t", split=split_iso, every=every_, horizons=horizons_, factors=_factors, simulations=500, min_obs=250
+            _r, model=model_, dist="t", split=split_iso, every=every_, horizons=_hs, factors=_factors, simulations=500, min_obs=250
         ).with_columns(pl.lit(model_).alias("model"))
 
     return (walk,)
@@ -710,7 +719,7 @@ def _(EVER, alt, bars, column, deseason, estimation, fan_length, gr, in_sample, 
     _origins = walked["close_ts"].unique().sort()
     _o = _origins[origin.value]
     _fans, _levels = [], []
-    for _m in [m for m in walk_models.value if m not in skipped]:
+    for _m in [m for m in walk_models.value if m not in skipped and m != "egarch"]:  # EGARCH-t has no fan beyond one step (⑥)
         if _m == "carr":
             _w = vol.carr(bars, split=_o, every=10**9, horizons=range(1, fan_length.value + 1), min_obs=250)
         elif _m == "rgarch":

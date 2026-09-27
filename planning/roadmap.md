@@ -127,10 +127,13 @@ Chosen by the operator on 2026-09-27, in this order (the suite first, so the oth
   registered first (`20fbe74`): ETH repeats 21 of BTC's 28 decided verdicts, HYPE 12. Every claim is *mixed*.
   t beats normal, better σ ≠ better P&L, and feedback's Sharpe gain not being significant agree in every
   decided cell; the MCS verdicts and the 4h leverage effect do not travel. HYPE 1d failed on EGARCH-t (item 22).
-- [ ] 22. **`egarch-t-has-no-horizon`**: under Student-t innovations EGARCH's multi-step variance does not exist.
+- [x] 22. **`egarch-t-has-no-horizon`**: under Student-t innovations EGARCH's multi-step variance does not exist.
   E[exp(α|z| + γz)] is infinite for any t, so the simulated 7- and 30-day forecasts are Monte Carlo means of
   an infinite expectation. On HYPE daily they overflow and crash `garch.py`; on BTC they only look finite.
-  Found by item 21. Decide what an EGARCH-t forecast beyond one step may be, and re-score what used it.
+  Found by item 21. Decide what an EGARCH-t forecast beyond one step may be, and re-score what used it. Done:
+  `walk_forward` refuses EGARCH with a t or skew-t tail beyond one step (GED kept: ν̂ ≥ 1.01 by arch's bound);
+  `garch.py` walks it one step ahead. No BTC verdict moved. HYPE 1d, run after the fix and so secondary,
+  repeats 6 of BTC's 10 decided 1d verdicts, and *t beats normal* fails there (ΔBIC +1).
 
 ---
 

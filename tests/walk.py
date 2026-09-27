@@ -89,7 +89,7 @@ def the_analytic_models_match_arch_at_one_step(returns):
 
 
 def a_simulated_forecast_reproduces(returns):
-    kw = dict(model="egarch", split=_split(returns, 849), every=25, horizons=[1, 5], simulations=200, seed=3)
+    kw = dict(model="aparch", split=_split(returns, 849), every=25, horizons=[1, 5], simulations=200, seed=3)
     a, b = vol.walk_forward(returns, **kw), vol.walk_forward(returns, **kw)
     assert a.equals(b)
     assert a.filter(pl.col("h") == 5)["variance"].null_count() == 0
@@ -137,3 +137,21 @@ def every_refit_block_carries_its_nu(returns):
     blocks = w.with_columns(pl.col("refit").cast(pl.Int32).cum_sum().alias("block")).group_by("block").agg(pl.col("nu").n_unique().alias("k"), pl.col("nu").first())
     assert (blocks["k"] == 1).all() and blocks["nu"].null_count() == 0 and blocks.height == 7
     assert vol.walk_forward(returns, model="garch", dist="normal", split=_split(returns, 849), every=50, horizons=[1])["nu"].null_count() > 0
+
+
+@pytest.mark.parametrize("dist", ["t", "skewt"])
+def every_polynomial_tail_refuses_egarch_beyond_one_step(returns, dist):
+    # E[exp(α|z| + γz)] is infinite under a Student-t: the two-step variance does not exist.
+    with pytest.raises(Refused, match="no variance beyond one step"):
+        vol.walk_forward(returns, model="egarch", dist=dist, split=_split(returns, 599), every=100, horizons=[1, 7])
+
+
+def a_one_step_egarch_t_forecast_is_kept(returns):
+    w = vol.walk_forward(returns, model="egarch", dist="t", split=_split(returns, 599), every=100, horizons=[1])
+    assert w.height == 301 and w["variance"].is_finite().all()
+
+
+def a_thin_tailed_egarch_still_walks_beyond_one_step(returns):
+    for dist in ("normal", "ged"):
+        w = vol.walk_forward(returns, model="egarch", dist=dist, split=_split(returns, 799), every=100, horizons=[1, 7], simulations=200)
+        assert w["variance"].is_finite().all() and set(w["h"].unique().to_list()) == {1, 7}

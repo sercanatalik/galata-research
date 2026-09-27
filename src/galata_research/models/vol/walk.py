@@ -20,6 +20,8 @@ from .garch import MODELS, with_measures
 
 _OUT = ("ticker", "ts", "close_ts", "h", "target_ts", "variance", "cum_variance", "fitted_through", "fit_from", "refit", "after_gap", "filtered", "nu")
 _TAIL = ("nu", "eta")
+# Densities decaying like a power of |z|: E[exp(c|z|)] is infinite under them for every c > 0.
+_POLYNOMIAL_TAILS = ("t", "skewt")
 
 
 def walk_forward(
@@ -54,7 +56,9 @@ def walk_forward(
     rolling window of that many returns (`gr.timeseries.walk_forward_origins`)
     and held fixed between refits. EGARCH and APARCH have no analytic forecast
     beyond one step and are simulated there, with `simulations` paths from
-    the fitted distribution seeded from `seed` and the refit.
+    the fitted distribution seeded from `seed` and the refit. EGARCH with a
+    t or skew-t tail is refused beyond one step: its multi-step variance
+    E[e^{α|z|+γz}]·… is infinite, so there is nothing to simulate (item 22).
 
     With `factors` (from `gr.timeseries.seasonal_factors`, fitted on a window
     ending no later than `split`), the model is fitted to returns divided by
@@ -69,6 +73,11 @@ def walk_forward(
     hs = sorted({int(h) for h in horizons})
     if not hs or hs[0] < 1:
         raise Refused(f"horizons={list(horizons)}: each must be a whole number of bars ≥ 1")
+    if model == "egarch" and dist in _POLYNOMIAL_TAILS and hs[-1] > 1:
+        raise Refused(
+            f"EGARCH with dist={dist!r} has no variance beyond one step: E_t[σ²_t+2] carries E[exp(α|z| + γz)], "
+            "infinite under a Student-t tail, so a simulated mean never settles; walk it with horizons=[1], or dist='normal' or 'ged'"
+        )
     utils.require(returns, ("ticker", "ts", "close_ts", column), "make returns with gr.timeseries.returns")
     frame = utils.lazy(returns).sort("ts").collect()
     tickers = frame["ticker"].unique().sort().to_list()

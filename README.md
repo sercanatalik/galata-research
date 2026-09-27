@@ -264,7 +264,7 @@ Every loader returns a `pl.LazyFrame`, or a DuckDB relation with
 |---|---|---|
 | `vol.fit(returns, *, model, dist, fit, measures)` | a `Fit`: parameters, persistence, half-life, σ̄, the in-sample σ and z | ewma, rm2006, garch, gjr, egarch, aparch, figarch, cgarch, betat, msgarch (two-regime Markov switching), and rgarch (Realized GARCH, with `measures`); each model's own persistence (GJR's γ weighted by E[z²·1(z<0)], EGARCH's β); gaps bridged, `after_gap` marked |
 | `vol.table`, `vol.news_impact`, `vol.diagnose` | one row per fit; Engle–Ng's curve; Ljung–Box and ARCH-LM | ARCH-LM agrees with arch's to 1e-6 |
-| `vol.walk_forward(returns, *, model, split, window, every, horizons, factors)` | one row per (origin, h): `variance`, `cum_variance`, `target_ts`, `fitted_through` | fitted on each refit's window only, fixed between refits; EGARCH and APARCH simulated, seeded; deseasonalised fits re-seasonalised |
+| `vol.walk_forward(returns, *, model, split, window, every, horizons, factors)` | one row per (origin, h): `variance`, `cum_variance`, `target_ts`, `fitted_through` | fitted on each refit's window only, fixed between refits; EGARCH and APARCH simulated, seeded; EGARCH with a t or skew-t tail refused beyond one step; deseasonalised fits re-seasonalised |
 | `vol.har(measures, *, model, ...)`, `vol.carr(bars, ...)` | HAR, SHAR, HARQ on realized variance; CARR on the range | a training row only if its target is known at the refit; the insanity filter, marked `filtered` |
 | `evaluate.proxies`, `evaluate.align` | a proxy per bar; forecasts joined to it, point or over exactly h bars | a hole leaves a cumulative target blank; rows after a gap dropped |
 | `evaluate.scorecard`, `mcs`, `spa`, `dm`, `mz_gls`, `fluctuation`, `uspa`, `aspa`, `gw`, `mcs_horizons` | QLIKE and MSE per model × h; DM (HLN); the Model Confidence Set and SPA; MZ-GLS; Giacomini–Rossi; Quaedvlieg's uniform and average multi-horizon SPA and confidence set; Giacomini–White conditional test | every score on the same aligned rows; seeded bootstraps |
@@ -358,8 +358,13 @@ of the history as the estimation period and the rest walked forward.
 | component GARCH | 0.974 | 0.824 | 0.579 |
 | GJR | 0.976 | 0.794 | 0.606 |
 | GARCH | 0.982 | 0.817 | 0.578 |
-| EGARCH | 0.990 | 0.910 | 0.667 |
+| EGARCH | 0.990 | — | — |
 | Beta-t-EGARCH | 0.995 | 0.837 | 0.550 |
+
+EGARCH's 7- and 30-day cells are withdrawn. With a Student-t tail its
+multi-step variance does not exist, so the 0.910 and 0.667 once shown were
+draws of a Monte Carlo mean that never settles; see *EGARCH-t has no horizon*
+below. Beta-t-EGARCH is built so that its moments exist, and it keeps its row.
 
 Realized GARCH (Hansen, Huang and Shek 2012), fed daily RV from six 4h
 returns, ties GARCH at one day (0.982), and is the best of EWMA, GARCH, HARQ
@@ -438,10 +443,13 @@ the HAC version rejects 7.25% (their 7.2%).
 `planning/registered/replication.md` (commit `20fbe74`) set BTC's verdicts as
 predictions before any other ticker was run. `notebooks/replication.py` then
 replays `garch.py` unchanged for ETH and HYPE at 1d, 4h and 1h. ETH repeats 21
-of BTC's 28 decided verdicts, and HYPE 12 (6 differ). HYPE 1d decides nothing:
-its EGARCH-t forecasts overflow and `garch.py` fails (roadmap item 22). By the
-registered rule all eleven claims are *mixed*; none generalises, and none is
-BTC-specific. Where a verdict could be reached:
+of BTC's 28 decided verdicts, and HYPE 12 (6 differ). HYPE 1d decided nothing
+in the registered run: its EGARCH-t forecasts overflowed and `garch.py` failed.
+By the registered rule all eleven claims are *mixed*; none generalises, and
+none is BTC-specific. Run again after the fix below, HYPE 1d repeats 6 of BTC's
+10 decided 1d verdicts. That run is secondary because it came after the
+registration. *t beats normal* is among the four it does not repeat
+(ΔBIC +1), the first cell to break that claim. Where a verdict could be reached:
 - **every decided cell agrees:** t beats normal, a better σ is not a better
   P&L, and feedback's Sharpe gain is not significant;
 - **HAR and HARQ beat GARCH:** agrees at ETH 1d, the only other cell that
@@ -451,6 +459,18 @@ BTC-specific. Where a verdict could be reached:
 - **BTC alone:** the 4h leverage effect;
 - **not everywhere:** feedback's tracking fails on ETH daily (1 of 6 models)
   and on HYPE 4h.
+
+**EGARCH-t has no horizon.** EGARCH's recursion is in logs,
+ln σ²ₜ₊₁ = ω + β ln σ²ₜ + α(|zₜ| − E|z|) + γzₜ. So E_t[σ²_{t+2}] carries
+E[e^{α|z| + γz}], which is infinite under a Student-t: the density falls like
+a power of |z|, and the exponential outgrows it. There is no multi-step
+variance to forecast. The running mean of e^{0.2|z|} under t(3.5) jumps from
+1.17 to 269 and on to 3.7e4 as draws are added; under the normal it converges
+to 1.182. `vol.walk_forward` now refuses EGARCH with a t or skew-t tail beyond
+one step. GED is kept: arch bounds its shape at ν ≥ 1.01, where the
+expectation is finite. `garch.py` walks EGARCH-t one step ahead only. Re-run,
+none of BTC's 33 verdicts at 1d, 4h and 1h moved; the 1d multi-horizon MCS p
+for GARCH went from 0.075 to 0.060.
 
 **Breaks do not explain the persistence.** Sansó, Aragó and Carrion's κ₂
 finds no variance break in BTC's daily or hourly returns. It is itself
@@ -580,6 +600,7 @@ uv run marimo check notebooks/*.py     # every notebook, as CI and tests/noteboo
 | Phase 2: variance breaks | done: none under κ₂; persistence is not breaks |
 | Phase 2: multi-horizon confidence set | done: CARR, HARQ, HAR, GJR; GARCH and EWMA out |
 | Replication on ETH and HYPE, registered | done: ETH 21/28, HYPE 12/28; every claim mixed |
+| EGARCH-t beyond one step | done: refused, since that variance does not exist; no BTC verdict moved |
 
 ---
 
