@@ -97,7 +97,7 @@ Phase 2, in the follow-up table's order, skipping the two that wait for 1m histo
   with a Hamilton filter, fitted and walked forward.
 - [x] 13. **`compare-across-horizons`**: Quaedvlieg's (2021) multi-horizon SPA, uniform and average,
   one verdict across the horizon path.
-- [ ] 14. **`ask-when-models-win`**: the Giacomini–White (2006) conditional predictive ability test,
+- [x] 14. **`ask-when-models-win`**: the Giacomini–White (2006) conditional predictive ability test,
   "does GARCH win specifically in high vol?".
 
 ---

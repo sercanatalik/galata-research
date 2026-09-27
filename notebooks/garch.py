@@ -808,6 +808,41 @@ def _(aligned, benchmark, ev, mo, pl, walked):
 
 
 @app.cell
+def _(aligned, benchmark, ev, mo, pl, walked):
+    _bench = benchmark.value if benchmark.value in walked["model"].unique().to_list() else walked["model"][0]
+    _h = int(aligned["h"].min())
+    _rows = []
+    for _m in walked["model"].unique().sort().to_list():
+        if _m == _bench:
+            continue
+        try:
+            _g = ev.gw(aligned, _h, model=_m, benchmark=_bench)
+            _rows.append({"model": _m, "n": _g["n"], "GW p": _g["p_value"], "coef on log forecast": _g["coefficients"]["log_forecast"], "rule picks model": _g["decision_share"]})
+        except Exception:
+            continue
+    mo.vstack(
+        [
+            mo.md(rf"""
+            ### When does a model win?
+
+            Being better *on average* can hide being better only in some
+            states. Giacomini and White (2006) ask whether the loss difference
+            against {_bench} can be predicted from what is known at the
+            origin: its own last known value, and the volatility state (the
+            benchmark's forecast log-variance). A small p-value says *when* a
+            model wins is predictable. A positive coefficient on the log
+            forecast says it gains as volatility rises. The last column is how
+            often their decision rule would have picked the model.
+            *{ev.GW_THEORY}* The walks here are expanding unless changed, so
+            read these as indicative.
+            """),
+            pl.DataFrame(_rows) if _rows else mo.md("No pair had enough origins."),
+        ]
+    )
+    return
+
+
+@app.cell
 def _(aligned, alt, benchmark, ev, mo, pl, walked):
     _models = walked["model"].unique().sort().to_list()
     _bench = benchmark.value if benchmark.value in _models else _models[0]

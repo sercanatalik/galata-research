@@ -232,3 +232,55 @@ def the_block_variance_matches_the_hac_on_white_noise():
     draws = [np.random.default_rng(s).normal(0, 2.0, 30_000) for s in range(20, 28)]
     assert np.mean([_block_variance(x[:, None], 3)[0] for x in draws]) == pytest.approx(4.0, rel=0.03)
     assert np.mean([_qs_variance(x) for x in draws]) == pytest.approx(4.0, rel=0.03)
+
+
+def _gw_aligned(d, log_f, h=1):
+    rows = []
+    for i, (di, lf) in enumerate(zip(d, log_f)):
+        f = float(np.exp(lf))
+        rows.append({"model": "b", "close_ts": T0 + i * DAY, "h": h, "forecast": f, "proxy": f * 2.0})
+        # QLIKE(b) − QLIKE(m) = d: give m the same forecast and a proxy lower by d·f (QLIKE = p/f + ln f).
+        rows.append({"model": "m", "close_ts": T0 + i * DAY, "h": h, "forecast": f, "proxy": f * 2.0 - di * f})
+    return pl.DataFrame(rows)
+
+
+def the_gw_statistic_by_hand():
+    rng = np.random.default_rng(20)
+    d, lf = rng.normal(0, 1, 300), rng.normal(0, 0.5, 300)
+    got = ev.gw(_gw_aligned(d, lf), 1, model="m", benchmark="b")
+    x = np.column_stack([np.ones(299), d[:-1], lf[1:]])
+    z = x * d[1:, None]
+    zbar = z.mean(axis=0)
+    want = 299 * zbar @ np.linalg.solve(z.T @ z / 299, zbar)
+    assert got["statistic"] == pytest.approx(want) and got["n"] == 299
+
+
+def a_model_winning_only_in_high_vol_is_found():
+    rng = np.random.default_rng(21)
+    lf = rng.normal(0, 1, 800)
+    d = 0.8 * (lf - lf.mean()) + rng.normal(0, 1, 800)  # wins when the forecast is high, loses when low
+    a = _gw_aligned(d, lf)
+    got = ev.gw(a, 1, model="m", benchmark="b")
+    dm_p = ev.dm(np.zeros(800), d, 1)["p_value"]  # d averages to ~0
+    assert dm_p > 0.1
+    assert got["p_value"] < 0.01 and got["coefficients"]["log_forecast"] > 0
+
+
+def a_noise_differential_is_not_predictable():
+    rng = np.random.default_rng(22)
+    got = ev.gw(_gw_aligned(rng.normal(0, 1, 800), rng.normal(0, 1, 800)), 1, model="m", benchmark="b")
+    assert got["p_value"] > 0.05
+
+
+def the_lagged_differential_is_known_at_the_origin():
+    from galata_research.models.evaluate import _gw_frame
+
+    d = np.arange(1.0, 41.0)
+    frame = _gw_frame(_gw_aligned(d, np.zeros(40), h=3), 3, "m", "b")
+    assert frame["lagged_diff"].to_numpy() == pytest.approx(frame["d"].to_numpy() - 3)
+
+
+def every_gw_result_carries_the_theory_note():
+    rng = np.random.default_rng(23)
+    got = ev.gw(_gw_aligned(rng.normal(0, 1, 100), rng.normal(0, 1, 100)), 1, model="m", benchmark="b")
+    assert "rolling" in got["theory"]

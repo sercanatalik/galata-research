@@ -266,7 +266,7 @@ Every loader returns a `pl.LazyFrame`, or a DuckDB relation with
 | `vol.walk_forward(returns, *, model, split, window, every, horizons, factors)` | one row per (origin, h): `variance`, `cum_variance`, `target_ts`, `fitted_through` | fitted on each refit's window only, fixed between refits; EGARCH and APARCH simulated, seeded; deseasonalised fits re-seasonalised |
 | `vol.har(measures, *, model, ...)`, `vol.carr(bars, ...)` | HAR, SHAR, HARQ on realized variance; CARR on the range | a training row only if its target is known at the refit; the insanity filter, marked `filtered` |
 | `evaluate.proxies`, `evaluate.align` | a proxy per bar; forecasts joined to it, point or over exactly h bars | a hole leaves a cumulative target blank; rows after a gap dropped |
-| `evaluate.scorecard`, `mcs`, `spa`, `dm`, `mz_gls`, `fluctuation`, `uspa`, `aspa` | QLIKE and MSE per model × h; DM (HLN); the Model Confidence Set and SPA; MZ-GLS; Giacomini–Rossi; Quaedvlieg's uniform and average multi-horizon SPA | every score on the same aligned rows; seeded bootstraps |
+| `evaluate.scorecard`, `mcs`, `spa`, `dm`, `mz_gls`, `fluctuation`, `uspa`, `aspa`, `gw` | QLIKE and MSE per model × h; DM (HLN); the Model Confidence Set and SPA; MZ-GLS; Giacomini–Rossi; Quaedvlieg's uniform and average multi-horizon SPA; Giacomini–White conditional test | every score on the same aligned rows; seeded bootstraps |
 | `evaluate.value_at_risk`, `var_backtest` | VaR/ES by filtered historical simulation; Kupiec, Christoffersen, DQ, FZ0 | each statistic checked by hand in the tests |
 | `vol.target`, `vol.trials`, `vol.economics` | a position at each close from σ̂; every trial; Sharpe, drawdown per unit vol, turnover, fees, FKO fee, DSR | the target known at the split; no second shift; every trial counted |
 
@@ -370,6 +370,13 @@ bootstrap), CARR, HARQ and HAR beat GARCH **at every horizon** (uniform SPA p
 0.001, 0.002, 0.012), which the per-horizon confidence sets could not show;
 GARCH beats EWMA on average (p 0.019) but not uniformly (0.076); GJR adds
 nothing over GARCH (0.63).
+
+*When* they win is predictable too (Giacomini and White 2006, instruments
+known at the origin): HARQ's and CARR's edge over GARCH grows with the
+forecast volatility (coefficient +0.18 to +0.25; p 0.042 and 0.009 with a
+500-day rolling window, where the test's theory holds, and 0.000 and 0.002
+expanding), and their decision rule would pick them on about half to three
+quarters of days. EWMA and GJR show no predictable pattern.
 
 A two-regime Markov-switching GARCH (Haas, Mittnik and Paolella 2004) fits
 BTC daily as a fast-switching mixture, expected stays of about two days,
@@ -503,7 +510,7 @@ uv run marimo check notebooks/*.py     # every notebook, as CI and tests/noteboo
 | Phase 2: Realized GARCH | done: best at 30 days with HARQ |
 | Phase 2: MS-GARCH | done: a fast-switching mixture, no forecast gain |
 | Phase 2: multi-horizon SPA | done: HAR, HARQ, CARR beat GARCH uniformly |
-| Phase 2: Giacomini–White | next (roadmap item 14) |
+| Phase 2: Giacomini–White | done: HARQ and CARR win more when volatility is high |
 
 ---
 

@@ -437,3 +437,62 @@ def aspa(aligned: pl.DataFrame, *, model: str, benchmark: str, weights=None, blo
         raise Refused(f"weights {list(np.round(w, 4))} must be {hcount} non-negative numbers summing to 1")
     stat, p = _horizon_test(x, w, block, reps, seed, uniform=False)
     return {"statistic": stat, "p_value": p, "rows": d.height, "weights": w.tolist()}
+
+
+# ── When a model wins ───────────────────────────────────────────────────────
+
+GW_THEORY = "Giacomini-White asymptotics assume a rolling estimation window; expanding-window forecasts are outside them (their Comment 2)."
+
+
+def _gw_frame(aligned: pl.DataFrame, h: int, model: str, benchmark: str) -> pl.DataFrame:
+    """`close_ts, d, lagged_diff, log_forecast` at horizon h: d = QLIKE(benchmark) − QLIKE(model); lag h origins."""
+    wide = losses(aligned, h)
+    for name in (model, benchmark):
+        if name not in wide.columns:
+            raise Refused(f"no {name!r} losses at h={h}")
+    bench_f = aligned.filter((pl.col("model") == benchmark) & (pl.col("h") == h)).select("close_ts", pl.col("forecast").log().alias("log_forecast"))
+    return (
+        wide.select("close_ts", (pl.col(benchmark) - pl.col(model)).alias("d"))
+        .join(bench_f, on="close_ts", how="left")
+        .sort("close_ts")
+        .with_columns(pl.col("d").shift(h).alias("lagged_diff"))
+        .slice(h)
+        .drop_nulls()
+    )
+
+
+def gw(aligned: pl.DataFrame, h: int, *, model: str, benchmark: str) -> dict:
+    """Giacomini and White's (2006) conditional predictive ability test: can the origin's information predict who wins?
+
+    d = QLIKE(benchmark) − QLIKE(model) (positive favours the model).
+    Instruments at origin t: 1, d at t − h (the latest whose target was
+    realized by t's close), and the benchmark's log forecast variance, the
+    volatility state. Statistic n·Z̄′Ω̂⁻¹Z̄, Z = instruments × d (their eq. 4;
+    beyond one step a Bartlett-weighted HAC over h − 1 lags, eq. 8), χ²(3).
+    `coefficients` regress d on the instruments; `decision_share` is how often
+    the fitted rule picks the model (§3.4). `theory` states the window
+    assumption.
+    """
+    frame = _gw_frame(aligned, h, model, benchmark)
+    n = frame.height
+    if n < 20:
+        raise Refused(f"{n} origins are too few for a conditional test")
+    names = ("constant", "lagged_diff", "log_forecast")
+    x = np.column_stack([np.ones(n), frame["lagged_diff"].to_numpy(), frame["log_forecast"].to_numpy()])
+    d = frame["d"].to_numpy()
+    z = x * d[:, None]
+    zbar = z.mean(axis=0)
+    omega = z.T @ z / n
+    for j in range(1, h):
+        g = z[j:].T @ z[:-j] / n
+        omega += (1 - j / h) * (g + g.T)
+    stat = float(n * zbar @ np.linalg.solve(omega, zbar))
+    alpha, *_ = np.linalg.lstsq(x, d, rcond=None)
+    return {
+        "statistic": stat,
+        "p_value": float(stats.chi2.sf(stat, len(names))),
+        "coefficients": dict(zip(names, (float(a) for a in alpha))),
+        "decision_share": float(np.mean(x @ alpha > 0)),
+        "n": n,
+        "theory": GW_THEORY,
+    }
