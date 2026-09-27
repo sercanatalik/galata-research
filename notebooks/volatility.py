@@ -190,5 +190,97 @@ def _(EVER, alt, gr, mo, pl, ticker):
     return
 
 
+@app.cell
+def _(mo):
+    mo.md(r"""
+    ## The calendar in hourly volatility
+
+    Hourly crypto volatility has a calendar: the US equity open, the Asian
+    night, the weekend. A GARCH fitted through it reads the cycle as
+    persistence. On BTC's 1h returns α+β is 1.0000 raw and 0.9948 once divided
+    by the factor below, and α falls from 0.155 to 0.032 (Andersen and
+    Bollerslev 1997 found the same for FX). The factor is
+    $f_{\text{cell}}$, scaled so $\overline{f^2}=1$: a return is divided by
+    its bar's cell, and a forecast for a future bar is multiplied back by
+    that bar's, which is known in advance.
+
+    `hour_x_weekday` is an hour factor times a weekday factor, 31 numbers.
+    `hour_of_week` gives every one of the 168 cells its own, which a market
+    whose underlying keeps sessions (GOLD, CL) needs. Fitted here on the first
+    half of the 1h history only.
+    """)
+    return
+
+
+@app.cell
+def _(EVER, alt, gr, mo, pl, ticker):
+    hourly_r = gr.timeseries.returns(gr.market.candles([ticker.value], "1h", *EVER), kind="log")
+    ends = hourly_r.drop_nulls("return").select(pl.col("ts").min().alias("a"), pl.col("close_ts").max().alias("b")).row(0)
+    half = ends[0] + (ends[1] - ends[0]) / 2
+    layouts = []
+    for layout in ("hour_x_weekday", "hour_of_week"):
+        layouts.append(gr.timeseries.seasonal_factors(hourly_r, fit=(ends[0], half), by=layout).with_columns(pl.lit(layout).alias("layout")))
+    table = pl.concat(layouts)
+    heat = (
+        alt.Chart(table)
+        .mark_rect()
+        .encode(
+            x=alt.X("hour:O", title="hour, UTC"),
+            y=alt.Y("weekday:O", title="weekday (1 = Monday)"),
+            color=alt.Color("factor:Q", scale=alt.Scale(scheme="blues")),
+            tooltip=["weekday", "hour", "n", alt.Tooltip("factor:Q", format=".2f")],
+        )
+        .properties(height=150, width="container")
+        .facet(row="layout:N")
+    )
+    peak = table.filter(pl.col("layout") == "hour_x_weekday").sort("factor", descending=True).row(0, named=True)
+    mo.vstack([mo.md(f"### {ticker.value}: fitted {ends[0]:%Y-%m-%d} to {half:%Y-%m-%d}; peak cell weekday {peak['weekday']} {peak['hour']:02d}:00 at {peak['factor']:.2f}"), heat])
+    return
+
+
+@app.cell
+def _(mo):
+    mo.md(r"""
+    ## The walk-forward schedule
+
+    Out of sample, every bar's close from the split onward is an **origin**,
+    and the next bars are forecast from it (Tashman 2000; Hyndman's rolling
+    forecasting origin). Parameters are re-estimated every *k* origins, on a
+    window that either grows from the first bar or keeps the last *L*. Between
+    refits the parameters are fixed and only the filter runs forward. Every
+    origin says which bars fitted it; `fitted_through` never passes its own
+    close.
+    """)
+    return
+
+
+@app.cell
+def _(mo):
+    wf_window = mo.ui.dropdown(["expanding", "250", "500"], value="500", label="fit window")
+    wf_every = mo.ui.slider(1, 60, value=20, label="refit every (bars)")
+    mo.hstack([wf_window, wf_every])
+    return wf_every, wf_window
+
+
+@app.cell
+def _(alt, bars, gr, mo, pl, wf_every, wf_window):
+    split = bars["close_ts"][int(bars.height * 0.6)]
+    window_arg = wf_window.value if wf_window.value == "expanding" else int(wf_window.value)
+    try:
+        schedule = gr.timeseries.walk_forward_origins(bars, split, window=window_arg, every=wf_every.value)
+        refits = schedule.filter(pl.col("refit")).head(12)
+        spans = (
+            alt.Chart(refits)
+            .mark_bar(height=6)
+            .encode(x=alt.X("fit_from:T", title=None), x2="fitted_through:T", y=alt.Y("origin:O", title="refit at origin"))
+            .properties(height=220, width="container")
+        )
+        shown = mo.vstack([mo.md(f"Split at {split:%Y-%m-%d %H:%M}: **{schedule.height}** origins, **{schedule['refit'].sum()}** refits. The first twelve refits' fit windows:"), spans])
+    except gr.Refused as refused:
+        shown = mo.md(f"**Refused:** {refused}")
+    shown
+    return
+
+
 if __name__ == "__main__":
     app.run()

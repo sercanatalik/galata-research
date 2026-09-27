@@ -362,3 +362,158 @@ def signature(bars: pl.LazyFrame | pl.DataFrame, minutes) -> pl.DataFrame:
             .collect()
         )
     return pl.concat(frames).sort("ticker", "minutes")
+
+
+# ── Periodicity and the walk-forward ────────────────────────────────────────
+#
+# Hourly crypto volatility has a calendar: on BTC's 1h bars it peaks at 13:00
+# UTC (1.58× the mean) and is 0.54× on Saturdays. GARCH fitted through that
+# reads it as persistence: α+β 1.0000 raw, 0.9948 once divided by an hour ×
+# weekday factor fitted on the first half (measured 2026-09-27; Andersen and
+# Bollerslev 1997 found the same).
+
+LAYOUTS = ("hour_x_weekday", "hour_of_week", "hour_of_day")
+STATS = ("mean_abs", "median_abs")
+_SLOT = ("weekday", "hour")
+
+
+def _slots() -> list[pl.Expr]:
+    return [pl.col("ts").dt.weekday().alias("weekday"), pl.col("ts").dt.hour().alias("hour")]
+
+
+def seasonal_factors(
+    returns: pl.LazyFrame | pl.DataFrame,
+    *,
+    fit: tuple,
+    by: str = "hour_x_weekday",
+    stat: str = "mean_abs",
+) -> pl.DataFrame:
+    """`ticker, weekday, hour, n, factor`: a periodic volatility factor per calendar cell, fitted on `fit` only.
+
+    A return belongs to the weekday (Monday = 1) and hour of its bar's `ts`, in
+    UTC. Only returns with `ts ≥ start` and `close_ts ≤ end` are read. The
+    table holds the cells the returns occupy (168 at 1h, 42 at 4h, 7 at 1d),
+    scaled so the mean of factor² over them is 1: the average variance is kept.
+
+    - `hour_x_weekday` (default): the hour's statistic over the mean of the
+      24, times the weekday's over the mean of the 7. 31 numbers from about
+      210 and 720 returns each at 1h, and on BTC and ETH the same GARCH
+      persistence as 168 free cells.
+    - `hour_of_week`: each cell's own statistic, for a market whose weekday
+      pattern differs by hour (GOLD, whose underlying has sessions).
+    - `hour_of_day`: the hour's statistic, on every weekday.
+
+    `stat` is `mean_abs`, or `median_abs`, which one jump cannot move (the
+    motivation of Boudt, Croux and Laurent 2011; this is not their estimator).
+    `n` is the count of fitted returns in the cell.
+    """
+    if by not in LAYOUTS:
+        raise Refused(f"by={by!r} is not one of {', '.join(LAYOUTS)}")
+    if stat not in STATS:
+        raise Refused(f"stat={stat!r} is not one of {', '.join(STATS)}")
+    utils.require(returns, ("ticker", "ts", "close_ts", "return"), "make returns with gr.timeseries.returns")
+    lo, hi = utils.window(*fit)
+    rows = utils.lazy(returns).drop_nulls("return").with_columns(*_slots())
+    cells = rows.select("ticker", *_SLOT).unique()
+    fitted = rows.filter((pl.col("ts").dt.epoch("us") >= lo) & (pl.col("close_ts").dt.epoch("us") <= hi))
+    scale = pl.col("return").abs().mean() if stat == "mean_abs" else pl.col("return").abs().median()
+
+    def by_keys(keys):
+        return fitted.group_by("ticker", *keys).agg(scale.alias("_s"))
+
+    counts = fitted.group_by("ticker", *_SLOT).agg(pl.len().cast(pl.Int64).alias("n"))
+    if by == "hour_of_week":
+        raw = cells.join(by_keys(_SLOT), on=["ticker", *_SLOT], how="left")
+    elif by == "hour_of_day":
+        raw = cells.join(by_keys(["hour"]), on=["ticker", "hour"], how="left")
+    else:
+        hours = by_keys(["hour"]).with_columns((pl.col("_s") / pl.col("_s").mean().over("ticker")).alias("_h")).drop("_s")
+        days = by_keys(["weekday"]).with_columns((pl.col("_s") / pl.col("_s").mean().over("ticker")).alias("_d")).drop("_s")
+        raw = (
+            cells.join(hours, on=["ticker", "hour"], how="left")
+            .join(days, on=["ticker", "weekday"], how="left")
+            .with_columns((pl.col("_h") * pl.col("_d")).alias("_s"))
+        )
+    table = raw.join(counts, on=["ticker", *_SLOT], how="left").with_columns(pl.col("n").fill_null(0)).collect()
+    empty = table.filter(pl.col("_s").is_null() | (pl.col("_s") <= 0)).sort("ticker", *_SLOT)
+    if empty.height:
+        named = ", ".join(f"{r['ticker']} weekday {r['weekday']} hour {r['hour']}" for r in empty.head(5).iter_rows(named=True))
+        raise Refused(f"no return in the fit window to estimate {empty.height} cell(s) from: {named}")
+    return (
+        table.with_columns((pl.col("_s") / (pl.col("_s").pow(2).mean().over("ticker")).sqrt()).alias("factor"))
+        .select("ticker", "weekday", "hour", "n", "factor")
+        .sort("ticker", "weekday", "hour")
+    )
+
+
+def deseasonalize(returns: pl.LazyFrame | pl.DataFrame, factors: pl.DataFrame) -> pl.DataFrame:
+    """The returns with `factor`, their bar's calendar cell's, and `deseasonalized = return / factor`.
+
+    The factor depends only on the calendar, so the same join re-seasonalises a
+    forecast for any future bar: σ̂ = factor(cell of the target bar) × σ̂ of the
+    deseasonalized model, with no lookahead.
+    """
+    utils.require(returns, ("ticker", "ts", "return"), "make returns with gr.timeseries.returns")
+    out = (
+        utils.lazy(returns)
+        .with_columns(*_slots())
+        .join(factors.lazy().select("ticker", *_SLOT, "factor"), on=["ticker", *_SLOT], how="left")
+        .with_columns((pl.col("return") / pl.col("factor")).alias("deseasonalized"))
+        .drop(*_SLOT)
+        .collect()
+    )
+    missing = out.filter(pl.col("factor").is_null())
+    if missing.height:
+        raise Refused(f"no factor for {missing.height} row(s), first {missing['ticker'][0]} at {missing['ts'][0]}; fit factors on these tickers and cells")
+    return out
+
+
+def walk_forward_origins(
+    bars: pl.LazyFrame | pl.DataFrame,
+    split,
+    *,
+    window: int | str = "expanding",
+    every: int = 1,
+) -> pl.DataFrame:
+    """The rolling-origin schedule: `ticker, ts, close_ts, origin, refit, fit_from, fitted_through`.
+
+    One row per bar closing at or after `split`: its `close_ts` is an origin,
+    from which the next bar onward is forecast (Tashman 2000; Hyndman's
+    evaluation on a rolling forecasting origin). Parameters are re-estimated at
+    origins 0, k, 2k, …; a refit's fit spans `fit_from` through its own close,
+    every bar from the ticker's first (`"expanding"`) or the last `window` bars.
+    Between refits a row carries the last refit's span: parameters fixed, the
+    filter run forward. `fitted_through ≤ close_ts` on every row. Windows count
+    bars, not time, so a hole is bridged (roadmap D5).
+    """
+    if every < 1:
+        raise Refused(f"every={every}: parameters must be re-estimated at least at the first origin")
+    rolling = window != "expanding"
+    if rolling and (not isinstance(window, int) or window < 2):
+        raise Refused(f"window={window!r} must be 'expanding' or a number of bars ≥ 2")
+    utils.require(bars, ("ticker", "ts", "close_ts"), "load bars with gr.market.candles")
+    at = utils.instant("split", split)
+    frame = utils.lazy(bars).select("ticker", "ts", "close_ts").sort("ticker", "ts").collect()
+    out = []
+    for (ticker,), group in frame.group_by("ticker", maintain_order=True):
+        ts, close = group["ts"].to_list(), group["close_ts"].to_list()
+        stamps = group["close_ts"].dt.epoch("us").to_list()
+        first = next((i for i, s in enumerate(stamps) if s >= at), None)
+        if first is None:
+            raise Refused(f"{ticker}: the split {split} is after the last bar's close")
+        if rolling and window > first + 1:
+            raise Refused(f"{ticker}: window={window} bars, but only {first + 1} close by the first origin")
+        for i in range(first, len(ts)):
+            k = i - first
+            r = first + (k // every) * every
+            out.append((ticker, ts[i], close[i], k, k % every == 0, ts[r - window + 1] if rolling else ts[0], close[r]))
+    schema = {
+        "ticker": pl.String,
+        "ts": frame.schema["ts"],
+        "close_ts": frame.schema["close_ts"],
+        "origin": pl.Int64,
+        "refit": pl.Boolean,
+        "fit_from": frame.schema["ts"],
+        "fitted_through": frame.schema["close_ts"],
+    }
+    return pl.DataFrame(out, schema=schema, orient="row")

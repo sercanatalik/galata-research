@@ -218,6 +218,8 @@ gr.frontier()                           # how far each dataset is durable
 | `gr.timeseries.realized_from(fine, interval)` | RV and realized range per coarser bucket | null unless the bucket holds every fine return |
 | `gr.timeseries.ewma_vol(bars, *, lam)`, `ewma_max` | RiskMetrics' EWMA σ; the larger of a fast and a slow one | σ at close t is the forecast for t+1; warm-up until the seed weighs < 1%; a hole bridged |
 | `gr.timeseries.signature(bars_1m, minutes)` | mean daily RV per sampling interval | whole days only |
+| `gr.timeseries.seasonal_factors(returns, *, fit, by, stat)`, `deseasonalize` | a volatility factor per (weekday, hour) cell; returns divided by it | fitted on `fit` only; mean f² = 1; hour × weekday by default |
+| `gr.timeseries.walk_forward_origins(bars, split, *, window, every)` | one row per origin: `refit`, `fit_from`, `fitted_through` | `fitted_through ≤ close_ts`; rolling or expanding; fixed between refits |
 | `gr.timeseries.stationary_bootstrap_indices`, `optimal_block` | resampling indices; Politis–White block | agrees with arch to 1e-6 |
 | `gr.utils.require`, `window`, `instant` | a refusal naming what is missing; micros | a naive time is refused |
 
@@ -259,7 +261,7 @@ trial, so N is the true N) back these notebooks:
 | `donchian_ensemble.py` | the pre-registered test below |
 | `random_timing.py` | is it the timing, or just the exposure? Each trial against 1,000 twins with its own runs shuffled: **none beats its twins at 5%** |
 | `whole_set.py` | does *anything* in the set beat its benchmark? White's Reality Check and Hansen's SPA over 70 trials: **no**, against buy-and-hold (p ≈ 0.7) or cash (p ≥ 0.07) |
-| `volatility.py` | what was the volatility? Five window estimators, two EWMA baselines, RV and realized range from finer bars, and the signature plot. On BTC the range estimators read **above** close-to-close, 7–12% at the median on 1d and 1h, as legacy's testnet week found |
+| `volatility.py` | what was the volatility? Five window estimators, two EWMA baselines, RV and realized range from finer bars, the signature plot, the calendar in hourly volatility, and the walk-forward schedule. On BTC the range estimators read **above** close-to-close, 7–12% at the median on 1d and 1h, as legacy's testnet week found |
 | `permuted_bars.py` | is there structure to find at all? The whole search re-run on 200 markets with the bars permuted: the real best (1.08) is **below** the permuted median (1.13), p = 0.59 |
 
 **A pre-registered test.** `planning/preregistered/donchian-ensemble.md` froze

@@ -72,7 +72,7 @@ that uses it. The GARCH study grows in `notebooks/garch.py` from item 4 onward.
 - [x] 2. **`measure-realized-volatility`**: `timeseries.realized` (CC, Parkinson, GK, RS, YZ,
   realized range, RV from finer bars), `ewma_vol`, `ewma_max`, `signature`. Notebook
   `notebooks/volatility.py`.
-- [ ] 3. **`walk-forward-origins-and-seasonality`**: `timeseries.walk_forward_origins`
+- [x] 3. **`walk-forward-origins-and-seasonality`**: `timeseries.walk_forward_origins`
   (rolling/expanding, refit every k) and `deseasonalize` (hour-of-week, fitted on a window).
 - [ ] 4. **`fit-the-garch-family`**: the `[models]` extra, lazy `gr.models`, the `_arch` polars
   boundary, `gr.models.vol.garch` in-sample fits and summaries. `notebooks/garch.py` ①–⑤b.
