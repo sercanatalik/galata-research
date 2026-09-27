@@ -183,6 +183,7 @@ def _(mo):
     | component GARCH | $q_t=\omega+\rho(q_{t-1}-\omega)+\phi(\varepsilon_{t-1}^2-\sigma_{t-1}^2)$, $\sigma_t^2=q_t+\alpha(\varepsilon_{t-1}^2-q_{t-1})+\beta(\sigma_{t-1}^2-q_{t-1})$ | Engle and Lee 1999: a long-run level that moves; best for BTC in Katsiampa 2017 |
     | Beta-*t*-EGARCH | $\lambda_{t+1}=\omega+\phi\lambda_t+\kappa u_t+\kappa^*\operatorname{sgn}(-\varepsilon_t)(u_t+1)$, $u_t\in[-1,\nu]$ the *t* score | Harvey and Chakravarty 2008: one outlier moves σ a bounded amount |
     | CARR | $\lambda_t=\omega+\alpha R_{t-1}+\beta\lambda_{t-1}$ on $R=\ln(H/L)$ | Chou 2005: models the range; σ = λ/√(8/π) |
+    | Realized GARCH | $\log h_t=\omega+\beta\log h_{t-1}+\gamma\log x_{t-1}$, $\log x_t=\xi+\phi\log h_t+\tau(z_t)+u_t$ | Hansen, Huang and Shek 2012: a realized measure drives the variance; π = β + φγ (1d, RV from 4h) |
 
     Distributions of $z$: normal; Student-*t* with ν degrees of freedom,
     scaled to unit variance (ν ≤ 4 means the fourth moment does not exist);
@@ -228,12 +229,19 @@ def _(mo):
 
 
 @app.cell
-def _(column, estimation, in_sample, vol):
-    specs = [(m, "t") for m in vol.MODELS] + [("garch", d) for d in ("normal", "skewt", "ged")] + [("gjr", "skewt")]  # MODELS includes cgarch, betat
+def _(EVER, column, estimation, gr, in_sample, interval, ticker, vol):
+    # MODELS includes the hand-written cgarch and betat; rgarch needs a daily realized measure, so it is fitted at 1d only.
+    specs = [(m, "t") for m in vol.MODELS if m != "rgarch"] + [("garch", d) for d in ("normal", "skewt", "ged")] + [("gjr", "skewt")]
+    measures = None
+    if interval.value == "1d":
+        measures = gr.timeseries.realized_from(gr.market.candles([ticker.value], "4h", *EVER).collect(), "1d")
+        specs.append(("rgarch", "normal"))
     fits = {}
     for model, dist in specs:
         try:
-            fits[(model, dist)] = vol.fit(in_sample, model=model, dist=dist, column=column, fit=estimation, min_obs=250)
+            fits[(model, dist)] = vol.fit(
+                in_sample, model=model, dist=dist, column=column, fit=estimation, min_obs=250, measures=measures if model == "rgarch" else None
+            )
         except Exception as error:  # a fit that fails is reported, not hidden
             fits[(model, dist)] = error
     good = [f for f in fits.values() if isinstance(f, vol.Fit)]
@@ -247,9 +255,28 @@ def katsiampa_table(table):
     import marimo as mo
     import polars as pl
 
+    parts = []
+    rg = table.filter(pl.col("model") == "rgarch")
+    if rg.height:
+        r = rg.row(0, named=True)
+        parts += [
+            mo.md("**Realized GARCH against Hansen, Huang and Shek's SPY estimates** (Table II; daily RV here is from six 4h returns, so σᵤ is expected larger). `nobs` differs from the other rows: only days with a complete RV."),
+            pl.DataFrame(
+                {
+                    "": ["HHS 2012, SPY", "this record"],
+                    "β": [0.55, r["beta"]],
+                    "γ": [0.41, r["gamma"]],
+                    "φ": [1.04, r["phi"]],
+                    "τ₁": [-0.07, r["tau1"]],
+                    "τ₂": [0.07, r["tau2"]],
+                    "σᵤ": [0.38, r["sigma_u"]],
+                    "π": [0.975, r["persistence"]],
+                }
+            ),
+        ]
     ours = table.filter(pl.col("model") == "cgarch")
     if ours.height == 0:
-        return mo.md("")
+        return mo.vstack(parts) if parts else mo.md("")
     row = ours.row(0, named=True)
     compare = pl.DataFrame(
         {
@@ -261,7 +288,8 @@ def katsiampa_table(table):
         }
     )
     return mo.vstack(
-        [
+        parts
+        + [
             mo.md("**Component GARCH against the paper that found it best for BTC.** Katsiampa's AR(1)-CGARCH(1,1) estimates (Economics Letters 158, 2017) beside ours, with a constant mean and *t* innovations here:"),
             compare,
         ]
@@ -289,7 +317,7 @@ def _(failed, mo, pl, table):
         if gamma is not None
         else "",
     ]
-    cols = ["model", "dist", "nobs", "bic", "persistence", "half_life", "sigma_bar", "converged", "omega", "alpha[1]", "gamma[1]", "beta[1]", "delta", "d", "alpha", "beta", "rho", "phi", "kappa", "kappa_star", "nu", "eta", "lambda"]
+    cols = ["model", "dist", "nobs", "bic", "persistence", "half_life", "sigma_bar", "converged", "omega", "alpha[1]", "gamma[1]", "beta[1]", "delta", "d", "alpha", "beta", "rho", "phi", "kappa", "kappa_star", "gamma", "xi", "tau1", "tau2", "sigma_u", "nu", "eta", "lambda"]
     mo.vstack(
         [
             mo.md("## ⑤ The fit table (estimation period)"),
@@ -512,7 +540,7 @@ def _(interval, mo):
     EVERY = {"1h": 24, "4h": 6, "1d": 5}[interval.value]
     horizon = mo.ui.dropdown(HORIZONS, value=list(HORIZONS)[0], label="horizon")
     walk_models = mo.ui.multiselect(
-        ["ewma", "garch", "gjr", "egarch", "aparch", "figarch", "rm2006", "cgarch", "betat", "carr"] + (["har", "shar", "harq"] if interval.value != "1h" else []),
+        ["ewma", "garch", "gjr", "egarch", "aparch", "figarch", "rm2006", "cgarch", "betat", "carr"] + (["har", "shar", "harq"] if interval.value != "1h" else []) + (["rgarch"] if interval.value == "1d" else []),
         value=["ewma", "garch", "gjr", "egarch"] + (["har", "harq"] if interval.value != "1h" else []),
         label="models",
     )
@@ -530,6 +558,11 @@ def _(EVER, gr, mo, pl, vol):
             _measures = gr.timeseries.realized_from(gr.market.candles([ticker_], _fine, *EVER).collect(), interval_)
             return vol.har(_measures, model=model_, split=split_iso, every=every_, horizons=horizons_).with_columns(pl.lit(model_).alias("model"))
         _bars = gr.market.candles([ticker_], interval_, *EVER).collect()
+        if model_ == "rgarch":
+            _m4 = gr.timeseries.realized_from(gr.market.candles([ticker_], "4h", *EVER).collect(), "1d")
+            return vol.walk_forward(
+                gr.timeseries.returns(_bars, kind="log"), model="rgarch", dist="normal", measures=_m4, split=split_iso, every=every_, horizons=horizons_, simulations=500, min_obs=250
+            ).with_columns(pl.lit(model_).alias("model"))
         if model_ == "carr":
             return vol.carr(_bars, split=split_iso, every=every_, horizons=horizons_, min_obs=250).with_columns(pl.lit(model_).alias("model"))
         _r = gr.timeseries.returns(_bars, kind="log")
@@ -609,6 +642,9 @@ def _(EVER, alt, bars, column, deseason, estimation, fan_length, gr, in_sample, 
     for _m in [m for m in walk_models.value if m not in skipped]:
         if _m == "carr":
             _w = vol.carr(bars, split=_o, every=10**9, horizons=range(1, fan_length.value + 1), min_obs=250)
+        elif _m == "rgarch":
+            _m4 = gr.timeseries.realized_from(gr.market.candles([ticker.value], "4h", *EVER).collect(), "1d")
+            _w = vol.walk_forward(returns.select("ticker", "ts", "close_ts", "return"), model="rgarch", dist="normal", measures=_m4, split=_o, every=10**9, horizons=range(1, fan_length.value + 1), simulations=500, min_obs=250)
         elif _m in ("har", "shar", "harq"):
             _fine = {"1d": "4h", "4h": "1h"}[interval.value]
             _meas = gr.timeseries.realized_from(gr.market.candles([ticker.value], _fine, *EVER).collect(), interval.value)

@@ -16,7 +16,7 @@ from ..._errors import Refused
 from .. import _arch
 from .._arch import DISTS, SCALE, SIMULATED
 from . import custom
-from .garch import MODELS
+from .garch import MODELS, with_measures
 
 _OUT = ("ticker", "ts", "close_ts", "h", "target_ts", "variance", "cum_variance", "fitted_through", "fit_from", "refit", "after_gap", "filtered")
 
@@ -35,6 +35,7 @@ def walk_forward(
     simulations: int = 1000,
     seed: int = 0,
     min_obs: int = 500,
+    measures: pl.LazyFrame | pl.DataFrame | None = None,
 ) -> pl.DataFrame:
     """Variance forecasts from every origin at or after `split`, one row per (origin, h in `horizons`).
 
@@ -61,7 +62,7 @@ def walk_forward(
         raise Refused(f"model={model!r} is not one of {', '.join(MODELS)}")
     if dist not in DISTS:
         raise Refused(f"dist={dist!r} is not one of {', '.join(DISTS)}")
-    custom.check_model(model, dist)
+    custom.check_model(model, dist, measures)
     hs = sorted({int(h) for h in horizons})
     if not hs or hs[0] < 1:
         raise Refused(f"horizons={list(horizons)}: each must be a whole number of bars ≥ 1")
@@ -81,6 +82,7 @@ def walk_forward(
             raise Refused(f"factors deseasonalise raw returns; column={column!r} would divide twice")
         frame = timeseries.deseasonalize(frame, factors)
         column = "deseasonalized"
+    frame = with_measures(frame, measures, column)
     kept = frame.with_columns(pl.col(column).is_null().shift(1).fill_null(False).alias("after_gap")).drop_nulls(column)
     kept = kept.with_columns(pl.when(pl.int_range(pl.len()) == 0).then(False).otherwise(pl.col("after_gap")).alias("after_gap"))
     schedule = timeseries.walk_forward_origins(kept.select("ticker", "ts", "close_ts"), split, window=window, every=every)
@@ -90,6 +92,7 @@ def walk_forward(
     if (refits[0] + 1 if window == "expanding" else window) < min_obs:
         raise Refused(f"the first refit's window holds {refits[0] + 1 if window == 'expanding' else window} returns, under min_obs={min_obs}")
     y = _arch.values(kept, column)
+    x = kept["_x"].to_numpy() * SCALE**2 if "_x" in kept.columns else None
     H = hs[-1]
     blocks = []
     for n, r in enumerate(refits):
@@ -97,9 +100,14 @@ def walk_forward(
         first_obs = 0 if window == "expanding" else r - window + 1
         if model in custom.MODELS:
             fitted = y[first_obs : r + 1]
-            p = custom.estimate(model, fitted)["params"]
+            xf = None if x is None else x[first_obs : r + 1]
+            p = custom.estimate(model, fitted, xf)["params"]
+            init = float(np.log(np.var(fitted))) if model == "rgarch" else float(np.var(fitted))
             blocks.append(
-                custom.forecast(model, p, y[first_obs:stop], start=r - first_obs, horizon=H, init=float(np.var(fitted)), simulations=simulations, seed=seed + r)
+                custom.forecast(
+                    model, p, y[first_obs:stop], start=r - first_obs, horizon=H, init=init, simulations=simulations, seed=seed + r,
+                    x=None if x is None else x[first_obs:stop],
+                )
             )
             continue
         res = _arch.model(y[:stop], model, dist, seed=seed + r).fit(disp="off", first_obs=first_obs, last_obs=r + 1)

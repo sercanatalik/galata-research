@@ -89,6 +89,17 @@ that uses it. The GARCH study grows in `notebooks/garch.py` from item 4 onward.
 - [x] 10. **`say-what-survives`**: theory and literature blocks, the claims table filled, references
   verified, ⑬, the README study entry and screenshot.
 
+Phase 2, in the follow-up table's order, skipping the two that wait for 1m history (HAR-CJ, 5m RV):
+
+- [x] 11. **`fit-realized-garch`**: the log-linear Realized GARCH (Hansen, Huang, Shek 2012) on daily
+  RV from 4h bars, fitted and walked forward like the other models.
+- [ ] 12. **`switch-regimes`**: a two-regime Markov-switching GARCH (Haas, Mittnik, Paolella 2004 form)
+  with a Hamilton filter, fitted and walked forward.
+- [ ] 13. **`compare-across-horizons`**: Quaedvlieg's (2021) multi-horizon SPA, uniform and average,
+  one verdict across the horizon path.
+- [ ] 14. **`ask-when-models-win`**: the Giacomini–White (2006) conditional predictive ability test,
+  "does GARCH win specifically in high vol?".
+
 ---
 
 ## What the record holds
@@ -576,6 +587,8 @@ What each risk turned into, on BTC (`notebooks/garch.py`, ⑬, which computes th
   stalled at the start values.
 - **The persistence finding depends on the bar**: deseasonalising lowers α+β at 1h (1.0000 → 0.9891) but not
   at 4h (0.961 → 0.982), and GJR's γ crosses the leverage rule at 4h only (0.106, just over 2 se).
+- **An intermittent test failure**: twice, a full run failed one test that five clean reruns did not
+  reproduce (after a heavy run; not identified). Open.
 - **Short samples bit where expected**: HAR cannot be walked at 4h because 1h realized variance starts in
   2026-03; the notebook reports it as skipped rather than failing.
 

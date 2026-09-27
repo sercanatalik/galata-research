@@ -158,3 +158,59 @@ def the_custom_fits_walk_forward_without_lookahead():
         w = vol.walk_forward(r, model=model, split=r["close_ts"][699], every=100, horizons=[1, 5], simulations=100)
         assert (w["fitted_through"] <= w["close_ts"]).all(), model
         assert w["variance"].null_count() == 0 and (w["variance"] > 0).all(), model
+
+
+_SPY = {"mu": 0.0, "omega": 0.06, "beta": 0.55, "gamma": 0.41, "xi": -0.18, "phi": 1.04, "tau1": -0.07, "tau2": 0.07, "sigma_u": 0.38}
+
+
+def _simulate_rgarch(n=5000, seed=8):
+    rng = np.random.default_rng(seed)
+    p = _SPY
+    pers = p["beta"] + p["phi"] * p["gamma"]
+    lh = (p["omega"] + p["gamma"] * p["xi"]) / (1 - pers)
+    y, x = np.empty(n), np.empty(n)
+    for t in range(n):
+        z, u = rng.standard_normal(), rng.normal(0, p["sigma_u"])
+        y[t] = np.exp(lh / 2) * z
+        lx = p["xi"] + p["phi"] * lh + p["tau1"] * z + p["tau2"] * (z * z - 1) + u
+        x[t] = np.exp(lx)
+        lh = p["omega"] + p["beta"] * lh + p["gamma"] * lx
+    return y, x
+
+
+def the_realized_garch_recursion_by_hand():
+    y, x = np.array([0.5, -1.0, 0.3]), np.array([0.8, 1.2, 0.6])
+    lh = custom.rgarch_filter(_SPY, y, x, init=0.1)
+    want = [0.1]
+    for t in range(3):
+        want.append(0.06 + 0.55 * want[-1] + 0.41 * np.log(x[t]))
+    assert lh == pytest.approx(want)
+
+
+def a_simulated_realized_garch_is_recovered():
+    y, x = _simulate_rgarch()
+    p = custom.estimate("rgarch", y, x)["params"]
+    for k in ("beta", "gamma", "phi"):
+        assert p[k] == pytest.approx(_SPY[k], abs=0.1), k
+    assert p["beta"] + p["phi"] * p["gamma"] == pytest.approx(0.55 + 1.04 * 0.41, abs=0.03)
+
+
+def _rgarch_frames(n=900):
+    y, x = _simulate_rgarch(n, seed=9)
+    r = _returns((y / 100).tolist())
+    m = r.select("ticker", "ts", pl.Series("rv", x / 1e4))
+    return r, m
+
+
+def a_realized_garch_needs_its_measures():
+    r, _ = _rgarch_frames(600)
+    with pytest.raises(Refused, match="needs measures"):
+        vol.fit(r, model="rgarch", dist="normal")
+
+
+def the_realized_garch_walks_forward_without_lookahead():
+    r, m = _rgarch_frames()
+    kw = dict(model="rgarch", dist="normal", measures=m, split=r["close_ts"][699], every=100, horizons=[1, 5], simulations=200, seed=2)
+    a, b = vol.walk_forward(r, **kw), vol.walk_forward(r, **kw)
+    assert (a["fitted_through"] <= a["close_ts"]).all()
+    assert a.equals(b) and (a["variance"] > 0).all()

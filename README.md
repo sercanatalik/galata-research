@@ -261,7 +261,7 @@ Every loader returns a `pl.LazyFrame`, or a DuckDB relation with
 
 | Call | Returns | The rule it owns |
 |---|---|---|
-| `vol.fit(returns, *, model, dist, fit)` | a `Fit`: parameters, persistence, half-life, σ̄, the in-sample σ and z | ewma, rm2006, garch, gjr, egarch, aparch, figarch, cgarch, betat; each model's own persistence (GJR's γ weighted by E[z²·1(z<0)], EGARCH's β); gaps bridged, `after_gap` marked |
+| `vol.fit(returns, *, model, dist, fit, measures)` | a `Fit`: parameters, persistence, half-life, σ̄, the in-sample σ and z | ewma, rm2006, garch, gjr, egarch, aparch, figarch, cgarch, betat, and rgarch (Realized GARCH, with `measures`); each model's own persistence (GJR's γ weighted by E[z²·1(z<0)], EGARCH's β); gaps bridged, `after_gap` marked |
 | `vol.table`, `vol.news_impact`, `vol.diagnose` | one row per fit; Engle–Ng's curve; Ljung–Box and ARCH-LM | ARCH-LM agrees with arch's to 1e-6 |
 | `vol.walk_forward(returns, *, model, split, window, every, horizons, factors)` | one row per (origin, h): `variance`, `cum_variance`, `target_ts`, `fitted_through` | fitted on each refit's window only, fixed between refits; EGARCH and APARCH simulated, seeded; deseasonalised fits re-seasonalised |
 | `vol.har(measures, *, model, ...)`, `vol.carr(bars, ...)` | HAR, SHAR, HARQ on realized variance; CARR on the range | a training row only if its target is known at the refit; the insanity filter, marked `filtered` |
@@ -358,6 +358,12 @@ of the history as the estimation period and the rest walked forward.
 | GARCH | 0.982 | 0.817 | 0.578 |
 | EGARCH | 0.990 | 0.910 | 0.667 |
 | Beta-t-EGARCH | 0.995 | 0.837 | 0.550 |
+
+Realized GARCH (Hansen, Huang and Shek 2012), fed daily RV from six 4h
+returns, ties GARCH at one day (0.982), and is the best of EWMA, GARCH, HARQ
+and itself at 30 days (0.447 against HARQ's 0.470), where the confidence set
+is the two of them. In sample its persistence is 0.68 against SPY's 0.975,
+and σᵤ 1.02 against 0.38: a six-return RV is a noisy measure.
 
 The models built on intraday or range information lead at every horizon, as
 the literature on Bitcoin reports (Bergsli et al. 2022). The Model Confidence
@@ -482,6 +488,8 @@ uv run marimo check notebooks/*.py     # every notebook, as CI and tests/noteboo
 | Scoring: QLIKE, DM, the Model Confidence Set, SPA, fluctuation, VaR/ES backtests | done: HAR, HARQ and CARR lead |
 | Volatility targeting from the forecasts, with the economics beside Sharpe | done: nothing pays out of sample |
 | The volatility study's verdicts, references verified, the notebook's screenshot | done: see What survives |
+| Phase 2: Realized GARCH | done: best at 30 days with HARQ |
+| Phase 2: MS-GARCH, multi-horizon SPA, Giacomini–White | next (roadmap items 12–14) |
 
 ---
 

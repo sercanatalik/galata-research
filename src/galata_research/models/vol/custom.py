@@ -21,11 +21,13 @@ from scipy import optimize
 
 from ..._errors import Refused
 
-MODELS = ("cgarch", "betat")
+MODELS = ("cgarch", "betat", "rgarch")
+NEEDS_MEASURES = ("rgarch",)
 NAMES = {
     "cgarch": ("mu", "omega", "alpha", "beta", "rho", "phi", "nu"),
     "betat": ("mu", "omega", "phi", "kappa", "kappa_star", "nu"),
     "carr": ("omega", "alpha", "beta"),
+    "rgarch": ("mu", "omega", "beta", "gamma", "xi", "phi", "tau1", "tau2", "sigma_u"),
 }
 RANGE_MEAN = sqrt(8 / pi)  # E[ln(H/L)] / σ for driftless Brownian motion over the bar
 
@@ -93,6 +95,50 @@ def _betat_nll(x: np.ndarray, y: np.ndarray) -> float:
     return -float(np.sum(c - lam - (nu + 1) / 2 * np.log1p(e * e / (nu * np.exp(2 * lam)))))
 
 
+# ── Realized GARCH ──────────────────────────────────────────────────────────
+#
+# Hansen, Huang and Shek (2012), log-linear RG(1,1): the variance is driven by
+# a realized measure x, and a measurement equation ties x back to the variance.
+# SPY (their Table II): β 0.55, γ 0.41, φ 1.04, τ₁ −0.07, τ₂ 0.07, σᵤ 0.38.
+
+
+def rgarch_filter(p: dict, y: np.ndarray, x: np.ndarray, init: float) -> np.ndarray:
+    """log h, length n + 1: entry t is log h of y[t] given y[:t], x[:t]; entry n is the next bar's."""
+    n = y.size
+    lh = np.empty(n + 1)
+    lh[0] = init
+    lx = np.log(x)
+    for t in range(n):
+        lh[t + 1] = p["omega"] + p["beta"] * lh[t] + p["gamma"] * lx[t]
+    return lh
+
+
+def _rgarch_parts(p: dict, y: np.ndarray, x: np.ndarray, init: float):
+    lh = rgarch_filter(p, y, x, init)[:-1]
+    h = np.exp(lh)
+    z = (y - p["mu"]) / np.sqrt(h)
+    u = np.log(x) - p["xi"] - p["phi"] * lh - p["tau1"] * z - p["tau2"] * (z * z - 1)
+    return lh, h, z, u
+
+
+def _rgarch_ll(p: dict, y: np.ndarray, x: np.ndarray, init: float) -> tuple[float, float]:
+    """(ℓ(r), ℓ(x | r)), each Gaussian: the paper's §5.2 factorisation."""
+    lh, h, z, u = _rgarch_parts(p, y, x, init)
+    lr = -0.5 * float(np.sum(np.log(2 * pi) + lh + z * z))
+    s2 = p["sigma_u"] ** 2
+    lx = -0.5 * float(np.sum(np.log(2 * pi) + np.log(s2) + u * u / s2))
+    return lr, lx
+
+
+def _rgarch_nll(xs: np.ndarray, y: np.ndarray, x: np.ndarray, init: float) -> float:
+    p = dict(zip(NAMES["rgarch"], xs))
+    if p["beta"] + p["phi"] * p["gamma"] >= 1 or p["sigma_u"] <= 0:
+        return np.inf
+    lr, lx = _rgarch_ll(p, y, x, init)
+    total = lr + lx
+    return -total if np.isfinite(total) else np.inf
+
+
 # ── CARR ────────────────────────────────────────────────────────────────────
 
 
@@ -119,7 +165,10 @@ def _carr_nll(x: np.ndarray, r: np.ndarray, init: float) -> float:
 # ── Fitting ─────────────────────────────────────────────────────────────────
 
 
-def _objective(model: str, y: np.ndarray):
+def _objective(model: str, y: np.ndarray, x: np.ndarray | None = None):
+    if model == "rgarch":
+        init = float(np.log(np.var(y)))
+        return (lambda v: _rgarch_nll(v, y, x, init)), init
     if model == "cgarch":
         init = float(np.var(y))
         return (lambda x: _cgarch_nll(x, y, init)), init
@@ -129,9 +178,16 @@ def _objective(model: str, y: np.ndarray):
     return (lambda x: _carr_nll(x, y, init)), init
 
 
-def _start(model: str, y: np.ndarray) -> tuple[np.ndarray, list]:
+def _start(model: str, y: np.ndarray, x: np.ndarray | None = None) -> tuple[np.ndarray, list]:
     m, v = float(np.mean(y)), float(np.var(y))
     sd = sqrt(v)
+    if model == "rgarch":
+        # The paper's SPY estimates, ω set so log h starts at the log sample variance.
+        beta, gamma, phi, xi = 0.55, 0.41, 1.04, float(np.mean(np.log(x)) - 1.04 * log(v))
+        omega = (1 - beta) * log(v) - gamma * (xi + phi * log(v))
+        return np.array([m, omega, beta, gamma, xi, phi, -0.07, 0.07, 0.38]), [
+            (m - 10 * sd, m + 10 * sd), (-20.0, 20.0), (-0.999, 0.999), (0.0, 2.0), (-20.0, 20.0), (0.0, 3.0), (-1.0, 1.0), (-1.0, 1.0), (1e-3, 5.0)
+        ]
     if model == "cgarch":
         return np.array([m, v, 0.05, 0.85, 0.98, 0.02, 6.0]), [
             (m - 10 * sd, m + 10 * sd), (1e-6 * v, 100 * v), (0.0, 0.5), (0.0, 0.999), (0.5, 0.99999), (0.0, 0.5), (2.1, 100.0)
@@ -157,7 +213,7 @@ def _hessian(f, x: np.ndarray) -> np.ndarray:
     return out
 
 
-def estimate(model: str, y: np.ndarray) -> dict:
+def estimate(model: str, y: np.ndarray, x: np.ndarray | None = None) -> dict:
     """Fit by bounded Nelder–Mead from stated start values; standard errors from a numerical Hessian.
 
     Derivative-free on purpose: outside a joint constraint (α+β < ρ, α+β < 1)
@@ -165,8 +221,8 @@ def estimate(model: str, y: np.ndarray) -> dict:
     into it and stopped at the start values (measured on BTC daily: 2902.8 at
     the start against Nelder–Mead's 2886.5).
     """
-    nll, _ = _objective(model, y)
-    x0, bounds = _start(model, y)
+    nll, _ = _objective(model, y, x)
+    x0, bounds = _start(model, y, x)
     res = optimize.minimize(nll, x0, method="Nelder-Mead", bounds=bounds, options={"maxiter": 6000, "maxfev": 12000, "xatol": 1e-7, "fatol": 1e-7})
     x = res.x
     names = NAMES[model]
@@ -181,11 +237,20 @@ def estimate(model: str, y: np.ndarray) -> dict:
     return {"params": {n: float(v) for n, v in zip(names, x)}, "std_err": se, "nll": float(res.fun), "converged": bool(res.success)}
 
 
-def summary(model: str, y: np.ndarray) -> dict:
-    """The shape `_arch.summary` returns, for a hand-written model on the ×100 scale."""
-    est = estimate(model, y)
+def summary(model: str, y: np.ndarray, x: np.ndarray | None = None) -> dict:
+    """The shape `_arch.summary` returns, for a hand-written model on the ×100 scale.
+
+    For `rgarch`, `loglik` is the returns part ℓ(r) of the joint likelihood (the
+    paper's comparison with GARCH); AIC and BIC count every parameter.
+    """
+    est = estimate(model, y, x)
     p, n = est["params"], y.size
-    if model == "cgarch":
+    if model == "rgarch":
+        init = float(np.log(np.var(y)))
+        lr, _ = _rgarch_ll(p, y, x, init)
+        est["nll"] = -lr
+        var = np.exp(rgarch_filter(p, y, x, init)[:-1])
+    elif model == "cgarch":
         var = cgarch_filter(p, y, float(np.var(y)))[0][:-1]
     else:
         var = betat_variance(betat_filter(p, y)[:-1], p["nu"])
@@ -207,8 +272,27 @@ def summary(model: str, y: np.ndarray) -> dict:
 # ── Forecasts ───────────────────────────────────────────────────────────────
 
 
-def forecast(model: str, p: dict, y: np.ndarray, *, start: int, horizon: int, init: float | None, simulations: int, seed: int) -> np.ndarray:
+def forecast(
+    model: str, p: dict, y: np.ndarray, *, start: int, horizon: int, init: float | None, simulations: int, seed: int, x: np.ndarray | None = None
+) -> np.ndarray:
     """Variance forecasts (×100 scale) from origins start…len(y)−1: row i uses y[:i+1], parameters fixed."""
+    if model == "rgarch":
+        lh_all = rgarch_filter(p, y, x, init)
+        lh = lh_all[start + 1 :]
+        out = np.empty((lh.size, horizon))
+        out[:, 0] = np.exp(lh)
+        if horizon > 1:
+            # In-sample (z, u) pairs, drawn together so their dependence is kept (the paper's §6.2 advice).
+            _, _, z, u = _rgarch_parts(p, y[: start + 1], x[: start + 1], init)
+            rng = np.random.default_rng(seed)
+            paths = np.repeat(lh[:, None], simulations, axis=1)
+            for h in range(1, horizon):
+                pick = rng.integers(0, z.size, size=paths.shape)
+                zz, uu = z[pick], u[pick]
+                lx = p["xi"] + p["phi"] * paths + p["tau1"] * zz + p["tau2"] * (zz * zz - 1) + uu
+                paths = p["omega"] + p["beta"] * paths + p["gamma"] * lx
+                out[:, h] = np.exp(paths).mean(axis=1)
+        return out
     if model == "cgarch":
         s, q = cgarch_filter(p, y, init)
         s1, q1 = s[start + 1 :], q[start + 1 :]
@@ -238,6 +322,9 @@ def forecast(model: str, p: dict, y: np.ndarray, *, start: int, horizon: int, in
     return (path / RANGE_MEAN) ** 2
 
 
-def check_model(model: str, dist: str) -> None:
-    if model in MODELS and dist != "t":
-        raise Refused(f"{model} is written for Student-t innovations; dist={dist!r} is not available for it")
+def check_model(model: str, dist: str, measures=None) -> None:
+    want = "normal" if model == "rgarch" else "t"
+    if model in MODELS and dist != want:
+        raise Refused(f"{model} is written for {'Gaussian' if want == 'normal' else 'Student-t'} innovations; use dist={want!r}, not {dist!r}")
+    if model in NEEDS_MEASURES and measures is None:
+        raise Refused(f"{model} needs measures: pass gr.timeseries.realized_from output as measures=")

@@ -54,12 +54,16 @@ def fit(
     fit: tuple | None = None,
     column: str = "return",
     min_obs: int = 500,
+    measures: pl.LazyFrame | pl.DataFrame | None = None,
 ) -> Fit:
     """One ticker's returns fitted in-sample: a constant mean and a (1,1) process.
 
     `model`: `ewma` (λ = 0.94, fixed), `rm2006`, `garch`, `gjr`, `egarch`,
     `aparch`, `figarch`, and the hand-written `cgarch` (Engle and Lee 1999) and
-    `betat` (Harvey and Chakravarty 2008), for which `dist` must be `t`.
+    `betat` (Harvey and Chakravarty 2008), for which `dist` must be `t`, and
+    `rgarch`, the log-linear Realized GARCH (Hansen, Huang and Shek 2012), which
+    takes `dist="normal"` and `measures=` (`gr.timeseries.realized_from`
+    output); its `loglik` is the returns part ℓ(r) and persistence β + φγ.
     `dist`: `normal`, `t`, `skewt`, `ged`. `returns` as
     `gr.timeseries.returns` gives them, or `deseasonalize`'s with
     `column="deseasonalized"`. `fit=(start, end)` keeps returns with
@@ -87,13 +91,15 @@ def fit(
     if fit is not None:
         lo, hi = utils.window(*fit)
         frame = frame.filter((pl.col("ts").dt.epoch("us") >= lo) & (pl.col("close_ts").dt.epoch("us") <= hi))
+    frame = with_measures(frame, measures, column)
     marked = frame.with_columns(pl.col(column).is_null().shift(1).fill_null(False).alias("after_gap")).drop_nulls(column)
     marked = marked.with_columns(pl.when(pl.int_range(pl.len()) == 0).then(False).otherwise(pl.col("after_gap")).alias("after_gap"))
     if marked.height < min_obs:
         raise Refused(f"{marked.height} returns, under min_obs={min_obs}: a fat-tailed fit is unstable on so few")
-    custom.check_model(model, dist)
+    custom.check_model(model, dist, measures)
     y = _arch.values(marked, column)
-    s = custom.summary(model, y) if model in custom.MODELS else _arch.summary(_arch.fit(y, model, dist))
+    x = marked["_x"].to_numpy() * SCALE**2 if "_x" in marked.columns else None
+    s = custom.summary(model, y, x) if model in custom.MODELS else _arch.summary(_arch.fit(y, model, dist))
     p = s["params"]
     persistence = _persistence(model, dist, p)
     series = marked.select(
@@ -120,6 +126,21 @@ def fit(
         half_life=log(0.5) / log(persistence) if persistence is not None and 0 < persistence < 1 else None,
         sigma_bar=_sigma_bar(model, p, persistence),
         series=series,
+    )
+
+
+def with_measures(frame: pl.DataFrame, measures, column: str) -> pl.DataFrame:
+    """The returns with the realized measure `_x` joined on `ts`; a return without a complete measure becomes null.
+
+    A null is then dropped and bridged like a hole (roadmap D5), and the next
+    row is `after_gap`.
+    """
+    if measures is None:
+        return frame
+    utils.require(measures, ("ticker", "ts", "rv"), "make measures with gr.timeseries.realized_from")
+    m = utils.lazy(measures).select("ticker", "ts", pl.col("rv").alias("_x")).collect()
+    return frame.join(m, on=["ticker", "ts"], how="left").with_columns(
+        pl.when(pl.col("_x").is_null() | (pl.col("_x") <= 0)).then(None).otherwise(pl.col(column)).alias(column)
     )
 
 
@@ -165,6 +186,8 @@ def _persistence(model: str, dist: str, p: dict) -> float | None:
         return p["rho"]
     if model == "betat":
         return p["phi"]
+    if model == "rgarch":
+        return p["beta"] + p["phi"] * p["gamma"]
     return None
 
 
