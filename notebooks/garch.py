@@ -607,5 +607,151 @@ def _(EVER, alt, bars, column, deseason, estimation, fan_length, gr, in_sample, 
     return
 
 
+@app.cell
+def _(interval, mo):
+    mo.md(r"""
+    ## ⑪ Scoring: which forecasts were better?
+
+    Every forecast is scored against a **proxy** for the variance it
+    forecast. A forecast for *h* bars is scored against the proxy summed over
+    exactly those *h* bars, and left blank if one is missing. The loss is
+    **QLIKE**, $\tilde\sigma^2/h+\ln h$. With a noisy but unbiased proxy it
+    ranks models as the true variance would, and it has the most power
+    (Patton 2011; Patton and Sheppard 2009). MSE on squared returns is known
+    to pick the wrong model (Hansen and Lunde 2006). With about sixteen
+    models, a single pairwise test is not enough. The **Model Confidence
+    Set** (Hansen, Lunde and Nason 2011) is the set that contains the best
+    model with 90% confidence, and a large set is an honest answer.
+    """)
+    proxy_kind = mo.ui.dropdown(["r2", "parkinson"] + (["rv"] if interval.value != "1h" else []), value="r2", label="proxy")
+    benchmark = mo.ui.dropdown(["ewma", "garch"], value="ewma", label="benchmark")
+    mo.hstack([proxy_kind, benchmark])
+    return benchmark, proxy_kind
+
+
+@app.cell
+def _(EVER, bars, gr, interval, proxy_kind, ticker, walked):
+    ev = gr.models.evaluate
+    if proxy_kind.value == "rv":
+        _fine = {"1d": "4h", "4h": "1h"}[interval.value]
+        _proxy = ev.proxies(gr.timeseries.realized_from(gr.market.candles([ticker.value], _fine, *EVER).collect(), interval.value), "rv")
+    else:
+        _proxy = ev.proxies(bars, proxy_kind.value)
+    aligned = ev.align(walked, _proxy)
+    return aligned, ev
+
+
+@app.cell
+def _(aligned, alt, benchmark, ev, mo, pl, walked):
+    _bench = benchmark.value if benchmark.value in walked["model"].unique().to_list() else walked["model"][0]
+    card = ev.scorecard(aligned, benchmark=_bench)
+    sets = []
+    for _h in sorted(aligned["h"].unique().to_list()):
+        try:
+            sets.append(ev.mcs(aligned, _h, reps=500, seed=0).with_columns(pl.lit(_h).alias("h")))
+        except Exception:
+            sets.append(pl.DataFrame({"model": [], "pvalue": [], "included": [], "rows": [], "h": []}))
+    mcs_table = pl.concat([x for x in sets if x.height]) if any(x.height for x in sets) else None
+    heat = card.join(mcs_table.select("model", "h", "included"), on=["model", "h"], how="left") if mcs_table is not None else card.with_columns(pl.lit(None).alias("included"))
+    heat = heat.with_columns(
+        pl.format(
+            "{}{}{}",
+            pl.col("qlike_ratio").round(3).cast(pl.String),
+            pl.when(pl.col("dm_p") < 0.05).then(pl.lit("*")).otherwise(pl.lit("")),
+            pl.when(pl.col("included")).then(pl.lit(" ●")).otherwise(pl.lit("")),
+        ).alias("label")
+    )
+    _base = alt.Chart(heat).encode(x=alt.X("h:O", title="horizon (bars)"), y=alt.Y("model:N", sort="ascending"))
+    _chart = _base.mark_rect().encode(color=alt.Color("qlike_ratio:Q", scale=alt.Scale(scheme="redblue", domainMid=1, reverse=True), title=f"QLIKE / {_bench}")) + _base.mark_text(fontSize=11).encode(text="label:N")
+    mo.vstack(
+        [
+            _chart.properties(height=26 * heat["model"].n_unique(), width="container"),
+            mo.md(f"Cell: QLIKE relative to **{_bench}** on the same origins (below 1 is better). `*` Diebold–Mariano p < 0.05 (Harvey–Leybourne–Newbold corrected); `●` in the 90% Model Confidence Set at that horizon."),
+            card,
+        ]
+    )
+    return (card,)
+
+
+@app.cell
+def _(aligned, alt, benchmark, ev, mo, pl, walked):
+    _models = walked["model"].unique().sort().to_list()
+    _bench = benchmark.value if benchmark.value in _models else _models[0]
+    _h = int(aligned["h"].min())
+    _lines, _flucs = [], []
+    for _m in _models:
+        if _m == _bench:
+            continue
+        _w = ev.losses(aligned, _h).select("close_ts", _m, _bench)
+        _lines.append(_w.select("close_ts", (pl.col(_bench) - pl.col(_m)).cum_sum().alias("cumulative"), pl.lit(_m).alias("model")))
+        try:
+            _flucs.append(ev.fluctuation(aligned, _h, model=_m, benchmark=_bench, mu=0.3).with_columns(pl.lit(_m).alias("model")))
+        except Exception:
+            pass
+    _cum = alt.Chart(pl.concat(_lines)).mark_line(strokeWidth=1).encode(x=alt.X("close_ts:T", title=None), y=alt.Y("cumulative:Q", title=f"Σ QLIKE({_bench}) − QLIKE(model)"), color="model:N")
+    _fl = pl.concat(_flucs) if _flucs else None
+    _parts = [
+        mo.md(rf"""
+        ## ⑨ When a model wins
+
+        The running sum of the benchmark's QLIKE minus each model's, at the
+        shortest horizon. Rising means the model is winning; a jump is one
+        episode doing the work. The fluctuation test (Giacomini and Rossi
+        2010) turns that into a test: a rolling Diebold–Mariano statistic over
+        30% of the sample. It crosses ±the dashed band when relative
+        performance was not stable. Critical values are from Rossi's own code.
+        """),
+        _cum.properties(height=240, width="container"),
+    ]
+    if _fl is not None:
+        _band = _fl.select(pl.col("critical_5").first()).item()
+        _stat = alt.Chart(_fl).mark_line(strokeWidth=1).encode(x=alt.X("close_ts:T", title=None), y=alt.Y("statistic:Q", title="fluctuation statistic"), color="model:N")
+        _rules = alt.Chart(pl.DataFrame({"y": [_band, -_band]})).mark_rule(strokeDash=[4, 4]).encode(y="y:Q")
+        _parts.append((_stat + _rules).properties(height=200, width="container"))
+    mo.vstack(_parts)
+    return
+
+
+@app.cell
+def _(aligned, alt, bars, ev, good, mo, pl, returns, walked):
+    _fitted = {f"{f.model}": f for f in good if f.dist == "t"}
+    _candidates = [m for m in walked["model"].unique().sort().to_list() if m in _fitted]
+    if not _candidates:
+        _out = mo.md("⑧ needs a walked model with an in-sample fit (the GARCH family, cgarch, betat).")
+    else:
+        _m = "garch" if "garch" in _candidates else _candidates[0]
+        _rows = walked.filter((pl.col("model") == _m) & (pl.col("h") == 1) & ~pl.col("after_gap"))
+        _var = ev.value_at_risk(_rows, _fitted[_m].series["z"], 0.01)
+        _r = returns.select(pl.col("ts").alias("target_ts"), pl.col("return").alias("r"))
+        _joined = _var.join(_r, on="target_ts", how="inner").drop_nulls("r")
+        _test = ev.var_backtest(_joined["r"], _joined["var"], _joined["es"], 0.01)
+        _plot = _joined.with_columns((pl.col("r") < pl.col("var")).alias("breach"))
+        _bars = alt.Chart(_plot).mark_bar(width=1, color="gray").encode(x=alt.X("target_ts:T", title=None), y=alt.Y("r:Q", title="return"))
+        _v = alt.Chart(_plot).mark_line(color="#d62728", strokeWidth=1).encode(x="target_ts:T", y="var:Q")
+        _e = alt.Chart(_plot).mark_line(color="#9467bd", strokeWidth=1, strokeDash=[3, 3]).encode(x="target_ts:T", y="es:Q")
+        _b = alt.Chart(_plot.filter(pl.col("breach"))).mark_point(shape="triangle-down", color="#d62728", size=40, filled=True).encode(x="target_ts:T", y="r:Q")
+        _out = mo.vstack(
+            [
+                mo.md(rf"""
+                ## ⑧ Value at risk and expected shortfall, 1%, one bar ahead
+
+                {_m}'s σ̂ times the 1% quantile of its own in-sample standardised
+                residuals (filtered historical simulation), so the fitted
+                distribution is not assumed right. That is what is being
+                tested. ES is the mean of the residuals beyond that quantile.
+                Kupiec asks whether the breach rate is 1%. Christoffersen asks
+                whether breaches cluster. DQ (Engle and Manganelli 2004) asks
+                both, with more power. FZ0 scores VaR and ES together (Patton,
+                Ziegel and Chen 2019).
+                """),
+                (_bars + _v + _e + _b).properties(height=240, width="container"),
+                mo.md(f"Breaches **{_test['hits']}** of {_test['n']} (expected {_test['expected']:.1f})."),
+                pl.DataFrame({k: [v] for k, v in _test.items()}),
+            ]
+        )
+    _out
+    return
+
+
 if __name__ == "__main__":
     app.run()

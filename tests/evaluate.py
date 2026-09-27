@@ -1,0 +1,185 @@
+from datetime import timedelta
+from math import log, sqrt
+
+import numpy as np
+import polars as pl
+import pytest
+from conftest import utc
+
+import galata_research as gr
+from galata_research import Refused
+
+ev = gr.models.evaluate
+DAY = timedelta(days=1)
+T0 = utc("2020-01-01T00:00")
+
+
+def _proxies(values, *, skip=()):
+    slots = [i for i in range(len(values) + len(skip)) if i not in skip][: len(values)]
+    return pl.DataFrame({"ticker": "BTC", "ts": [T0 + i * DAY for i in slots], "proxy": [float(v) for v in values]})
+
+
+def _forecast(origin_bar, h, *, after_gap=False, model="m", value=1.0):
+    close = T0 + (origin_bar + 1) * DAY
+    return {
+        "ticker": "BTC",
+        "model": model,
+        "close_ts": close,
+        "h": h,
+        "target_ts": close + (h - 1) * DAY,
+        "variance": value,
+        "cum_variance": value * h,
+        "after_gap": after_gap,
+    }
+
+
+def a_cumulative_proxy_is_exactly_h_bars():
+    p = _proxies([9, 9, 1, 2, 4, 9])
+    got = ev.align(pl.DataFrame([_forecast(1, 3)]), p)
+    assert got["proxy"].item() == 7.0
+
+
+def a_missing_bar_leaves_the_target_blank():
+    p = _proxies([9, 9, 1, 4, 9], skip=(3,))  # bar 3 missing
+    got = ev.align(pl.DataFrame([_forecast(1, 3)]), p)
+    assert got["proxy"].item() is None
+
+
+def an_after_gap_row_is_dropped():
+    p = _proxies([1.0] * 10)
+    f = pl.DataFrame([_forecast(1, 1), _forecast(2, 1, after_gap=True)])
+    assert ev.align(f, p).height == 1
+    assert ev.align(f, p, drop_after_gap=False).height == 2
+
+
+def the_textbook_qlike_ranks_alike():
+    rng = np.random.default_rng(0)
+    p = rng.exponential(2.0, 1000)
+    a, b = np.full(1000, 1.5), np.full(1000, 3.0)
+    ours = ev.qlike(p, a).mean() - ev.qlike(p, b).mean()
+    textbook = lambda f: p / f - np.log(p / f) - 1  # noqa: E731
+    assert ours == pytest.approx(textbook(a).mean() - textbook(b).mean())
+
+
+def the_expected_loss_is_smallest_at_the_truth():
+    p = np.random.default_rng(1).exponential(2.0, 20_000)
+    losses = {f: ev.qlike(p, np.full(p.size, f)).mean() for f in (1.0, 2.0, 4.0)}
+    assert min(losses, key=losses.get) == 2.0
+
+
+def a_zero_proxy_has_a_finite_qlike():
+    assert np.isfinite(ev.qlike(np.array([0.0]), np.array([1e-4])))
+
+
+def a_constant_advantage_is_significant():
+    rng = np.random.default_rng(2)
+    bench = rng.normal(1.0, 0.3, 500)
+    got = ev.dm(bench - 0.1 + rng.normal(0, 0.05, 500), bench, 1)
+    assert got["statistic"] < 0 and got["p_value"] < 0.01
+
+
+def the_hln_factor():
+    rng = np.random.default_rng(3)
+    got = ev.dm(rng.normal(0, 1, 50), rng.normal(0, 1, 50), 5)
+    assert got["hln_factor"] == pytest.approx(sqrt((51 - 10 + 20 / 50) / 50))
+
+
+def an_efficient_forecast_passes_mz():
+    rng = np.random.default_rng(4)
+    f = rng.uniform(0.5, 3.0, 4000)
+    got = ev.mz_gls(f * rng.exponential(1.0, f.size), f)
+    assert abs(got["alpha"]) < 0.1 and got["beta"] == pytest.approx(1.0, abs=0.1) and got["p_value"] > 0.05
+
+
+def a_forecast_twice_too_high_fails_mz():
+    rng = np.random.default_rng(4)
+    f = rng.uniform(0.5, 3.0, 4000)
+    got = ev.mz_gls(f * rng.exponential(1.0, f.size), 2 * f)
+    assert got["beta"] == pytest.approx(0.5, abs=0.07) and got["p_value"] < 0.01
+
+
+def _aligned(n=400, seed=5):
+    rng = np.random.default_rng(seed)
+    truth = rng.uniform(0.5, 2.0, n)
+    proxy = truth * rng.exponential(1.0, n)
+    rows = []
+    for model, f in {"good": truth, "bad1": truth * 3, "bad2": truth / 3, "bad3": np.full(n, truth.mean() * 4)}.items():
+        for i in range(n):
+            rows.append({"model": model, "close_ts": T0 + i * DAY, "h": 1, "forecast": float(f[i]), "proxy": float(proxy[i])})
+    return pl.DataFrame(rows)
+
+
+def a_clearly_better_model_is_the_confidence_set():
+    got = ev.mcs(_aligned(), 1, reps=300, seed=1)
+    assert got.filter(pl.col("included"))["model"].to_list() == ["good"]
+
+
+def the_seeds_reproduce():
+    a, b = ev.mcs(_aligned(), 1, reps=200, seed=1), ev.mcs(_aligned(), 1, reps=200, seed=1)
+    assert a.equals(b)
+
+
+def the_scorecard_ratios_are_to_the_benchmark_on_the_same_rows():
+    got = ev.scorecard(_aligned(), benchmark="bad1")
+    assert got.filter(pl.col("model") == "bad1")["qlike_ratio"].item() == pytest.approx(1.0)
+    assert got.filter(pl.col("model") == "good")["qlike_ratio"].item() < 1.0
+    assert got.filter(pl.col("model") == "good")["dm"].item() < 0
+
+
+def the_fluctuation_critical_values():
+    got = ev.fluctuation(_aligned(), 1, model="good", benchmark="bad1", mu=0.3)
+    assert got["critical_5"][0] == 3.012 and got["critical_10"][0] == 2.766
+
+
+def a_late_advantage_crosses():
+    rng = np.random.default_rng(6)
+    n = 600
+    rows = []
+    for i in range(n):
+        base = float(rng.normal(3.0, 0.5))
+        edge = -0.5 if i >= 0.7 * n else 0.0
+        rows.append({"model": "b", "close_ts": T0 + i * DAY, "h": 1, "loss": base})
+        rows.append({"model": "m", "close_ts": T0 + i * DAY, "h": 1, "loss": base + edge + float(rng.normal(0, 0.3))})
+    # With forecast 1, QLIKE = proxy/1 + ln 1 = proxy: the proxy column carries the loss itself.
+    frame = pl.DataFrame(rows).with_columns(pl.lit(1.0).alias("forecast"), pl.col("loss").alias("proxy")).drop("loss")
+    got = ev.fluctuation(frame, 1, model="m", benchmark="b", mu=0.2)
+    assert got["statistic"].min() < -got["critical_5"][0]
+
+
+def an_unlisted_mu_is_refused():
+    with pytest.raises(Refused, match="mu=0.25"):
+        ev.fluctuation(_aligned(), 1, model="good", benchmark="bad1", mu=0.25)
+
+
+def the_kupiec_statistic_by_hand():
+    r = np.zeros(100)
+    r[[3, 20, 41, 60, 88]] = -5.0
+    got = ev.var_backtest(r, np.full(100, -1.0), np.full(100, -2.0), 0.01)
+    assert got["hits"] == 5
+    assert got["kupiec"] == pytest.approx(2 * (95 * log(0.95 / 0.99) + 5 * log(0.05 / 0.01)))
+
+
+def a_run_of_paired_hits_fails_independence():
+    r = np.zeros(2000)
+    for start in range(10, 2000, 100):
+        r[start : start + 2] = -5.0  # 40 hits = 2%, in pairs
+    got = ev.var_backtest(r, np.full(2000, -1.0), np.full(2000, -2.0), 0.02)
+    assert got["independence_p"] < 0.01 and got["kupiec_p"] > 0.05
+
+
+def the_dq_accepts_independent_hits_at_the_rate():
+    rng = np.random.default_rng(7)
+    r = rng.standard_normal(3000)
+    got = ev.var_backtest(r, np.full(3000, -1.6449), np.full(3000, -2.06), 0.05)
+    assert got["dq_p"] > 0.01 and got["kupiec_p"] > 0.01
+
+
+def the_fz0_loss_by_hand():
+    got = ev.var_backtest(np.array([-3.0]), np.array([-2.0]), np.array([-2.5]), 0.05)
+    want = -(-2 + 3) / (0.05 * -2.5) + (-2) / (-2.5) + log(2.5) - 1
+    assert got["fz0"] == pytest.approx(want)
+
+
+def an_es_above_its_var_is_refused():
+    with pytest.raises(Refused, match="ES ≤ VaR"):
+        ev.var_backtest(np.zeros(10), np.full(10, -2.0), np.full(10, -1.0), 0.05)

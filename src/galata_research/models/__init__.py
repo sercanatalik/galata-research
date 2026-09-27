@@ -1,6 +1,7 @@
 """Fitted models over the record: the `[models]` extra (arch, scipy, numpy).
 
     gr.models.vol.fit(returns, model="gjr", dist="t")   # a Fit, in polars and plain Python
+    gr.models.evaluate.scorecard(aligned, benchmark="ewma")  # forecasts scored
 
 Loaded on first use, so the core never needs numpy. pandas, which arch
 returns, stays inside `_arch` and never reaches a caller.
@@ -14,6 +15,6 @@ try:
 except ImportError as missing:
     raise Refused(f"gr.models needs the models extra ({missing.name} is missing): uv sync --extra models") from None
 
-from . import vol
+from . import evaluate, vol
 
-__all__ = ["vol"]
+__all__ = ["evaluate", "vol"]
