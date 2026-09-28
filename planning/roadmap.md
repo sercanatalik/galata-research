@@ -158,6 +158,15 @@ depend on it:
   Def. 3.3), not iterated. On the record at 4h: all six a 0.0055, b 0.9838 (half-life 42 bars); the main dex alone
   a + b 0.9998 under DCC against 0.9955 under cDCC. A fit takes about a second, a walk of 80 refits 14 s.
   `notebooks/correlation.py`. Step 1 takes the arch models only; `cgarch`, `betat`, `msgarch`, `rgarch` are refused.
+  **Compared, as registered — 2026-09-28** (`compare-the-correlations`; `planning/preregistered/correlation-models.md`,
+  committed with the library at `c15e3b9` before any loss existed). BTC, ETH and HYPE at 4h, 1,985 origins from
+  2025-11-01, GJR-t margins, refit daily. DCC has the lowest mean multivariate QLIKE of the six estimators. The
+  registered rule decides one thing: **H2a supported**. DCC beats constant correlation on R alone (DM −5.10, Holm p
+  1e-6). It does **not** decide DCC against RiskMetrics EWMA, the 180-bar sample covariance, or EWMA on z (Holm p
+  0.97 for each), nor the minimum-variance portfolio (H3, Holm p 0.34). The 90% MCS excludes only CCC. Frobenius,
+  reported and not tested, favours EWMA (p 1e-10): large variances dominate it. **Secondary, descriptive:** on all
+  six instruments (786 origins from 2026-05-20), CCC has the lowest QLIKE, ahead of cDCC and DCC. Tier 16 runs DCC
+  on those six at 5m, 1h and 4h. `notebooks/correlation_study.py`.
   - **Two-step DCC**, with Aielli's (2013) cDCC as an option. Step 1 is each instrument's GARCH-family fit
     (`garch`, `gjr`, `cgarch`, `betat`, `ewma`) and its filtered σ. Step 2 is a and b by Gaussian QML on the
     standardised returns. Step 2's normal distribution is deliberate: a multivariate t would force one ν on
