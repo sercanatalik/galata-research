@@ -239,5 +239,24 @@ def _(fits, mo, walk_seconds):
     return
 
 
+@app.cell
+def _(gr, mo):
+    # What galata-datawatch's flow stored, as a reader held it now: the 4h
+    # correlation matrix it published, beside the fits above.
+    from datetime import UTC as _UTC, datetime as _dt
+
+    try:
+        _held = gr.signals.known_at("varcov", _dt.now(_UTC), horizon="4h")
+        _body = (
+            mo.ui.table(gr.signals.matrix(_held, "correlation"), selection=None)
+            if _held.height
+            else mo.md("No 4h figure in the last 14 days.")
+        )
+    except gr.Refused as _refused:
+        _body = mo.md(f"*{_refused}*")
+    mo.vstack([mo.md("### What the flow stored (`gr.signals.known_at`)"), _body])
+    return
+
+
 if __name__ == "__main__":
     app.run()

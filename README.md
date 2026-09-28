@@ -747,6 +747,7 @@ uv run marimo check notebooks/*.py     # every notebook, as CI and tests/noteboo
 | Phase 2: multi-horizon confidence set | done: CARR, HARQ, HAR, GJR; GARCH and EWMA out |
 | Correlation from the volatility fit: DCC, cDCC and EWMA covariance, walked forward | done (item 25, `notebooks/correlation.py`): 4h, all six, a 0.006 and b 0.984 |
 | DCC against the simpler estimators, registered | done: DCC beats constant correlation (R alone); against EWMA and the sample covariance, undecided |
+| The stored signals, read point-in-time (`gr.signals`) | done: `history`, `known_at`, `matrix` |
 | Replication on ETH and HYPE, registered | done: ETH 21/28, HYPE 12/28; every claim mixed |
 | EGARCH-t beyond one step | done: refused, since that variance does not exist; no BTC verdict moved |
 | The intermittent test failure | done: unseeded fixtures (arch ignores `np.random.seed`); seeded, tolerances derived |

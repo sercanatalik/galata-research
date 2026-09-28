@@ -167,6 +167,10 @@ depend on it:
   reported and not tested, favours EWMA (p 1e-10): large variances dominate it. **Secondary, descriptive:** on all
   six instruments (786 origins from 2026-05-20), CCC has the lowest QLIKE, ahead of cDCC and DCC. Tier 16 runs DCC
   on those six at 5m, 1h and 4h. `notebooks/correlation_study.py`.
+  **Read point-in-time — 2026-09-28** (`read-the-signals`). `gr.signals` reads galata-datawatch's `kind=signals`
+  on two clocks: `ts`, the grid position, and `computed_ts`, when the figure became known. `history(…, as_of=)`
+  keeps what had been computed by then, and a figure computed twice is its latest within the bound. `known_at(when)`
+  is each horizon's newest figure as a reader held it, and `matrix(rows, measure)` makes one asof square.
   - **Two-step DCC**, with Aielli's (2013) cDCC as an option. Step 1 is each instrument's GARCH-family fit
     (`garch`, `gjr`, `cgarch`, `betat`, `ewma`) and its filtered σ. Step 2 is a and b by Gaussian QML on the
     standardised returns. Step 2's normal distribution is deliberate: a multivariate t would force one ν on
