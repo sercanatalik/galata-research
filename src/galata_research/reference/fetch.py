@@ -9,6 +9,7 @@ opens a socket.
     galata-fetch depth binance-um BTC ETH --from 2023-01-01 --to 2026-09-26 --dry-run
     galata-fetch book bybit-linear BTC --from 2023-01-18 --to 2026-09-26 --sample weekly:wed
     galata-fetch trades okx-swap BTC ETH --from 2023-01-02 --to 2026-09-26 --days 2026-09-26  # files of 09-26 and 09-27
+    galata-fetch update --dry-run   # what the forward claims need, from each series' last day to yesterday
 
 - **Idempotent**: a day whose manifest row is `ok` is skipped; `--refetch`
   asks again and records `mismatch` if the bytes changed, keeping the old day.
@@ -233,8 +234,15 @@ def run_events(say=print) -> int:
         url = _events.FOMC_HISTORICAL.format(year=year)
         keep(_events.fomc_historical(page(url), url), url)
     contact = os.environ.get("GALATA_CONTACT", "").strip()
+    held = store / "events" / "events.parquet"
     if not contact:
-        failed.append("bls.gov is asked only with GALATA_CONTACT set: its policy refuses a client without a contact")
+        # BLS rows fetched earlier with a contact are kept, not dropped by a run that may not ask bls.gov.
+        kept = pl.read_parquet(held).filter(pl.col("source") == "bls") if held.is_file() else None
+        if kept is not None and kept.height:
+            frames.append(kept)
+            say(f"bls.gov not asked (GALATA_CONTACT unset): {kept.height} BLS events from the last fetch kept")
+        else:
+            failed.append("bls.gov is asked only with GALATA_CONTACT set: its policy refuses a client without a contact")
     else:
         for event, url in _events.BLS_INDEX.items():
             keep(_events.bls_index(page(url, f"galata-research (contact: {contact})"), event, url), url)
@@ -250,11 +258,55 @@ def run_events(say=print) -> int:
     return 1 if failed else 0
 
 
+# What `galata-fetch update` keeps current: the forward claims' series (liquidity-forward.md), sampled
+# trades on the same every-9th-day phase as the study's.
+UPDATES = (
+    ("depth", "binance-um", "BTC", None),
+    ("candles", "binance-um", "BTC", None),
+    ("candles", "binance-um", "ETH", None),
+    ("trades", "binance-um", "BTC", "every:9"),
+    ("trades", "bybit-linear", "BTC", "every:9"),
+)
+
+
+def run_update(dry_run: bool = False, say=print, today: date | None = None) -> int:
+    """`galata-fetch update`: each series in `UPDATES` from the day after its last `ok` day through yesterday, UTC.
+
+    A day asked before the archive publishes it is recorded `absent`, so the
+    range's absent days are asked again. A series never fetched is refused:
+    its start is a choice, made once by hand. The event calendar is refetched
+    whole unless `dry_run`.
+    """
+    store, _ = _root.resolve()
+    manifest = _manifest.read(store).filter(pl.col("status") == "ok")
+    yesterday = (today or datetime.now(UTC).date()) - timedelta(days=1)
+    code = 0
+    for kind, venue, ticker, sample in UPDATES:
+        held = manifest.filter((pl.col("kind") == kind) & (pl.col("venue") == venue) & (pl.col("ticker") == ticker))
+        if held.is_empty():
+            raise Refused(f"{kind} {venue} {ticker} was never fetched; seed it once with galata-fetch {kind} {venue} {ticker} --from ...")
+        first = held["date"].max() + timedelta(days=1)
+        if first > yesterday:
+            say(f"{kind} {venue} {ticker}: current through {first - timedelta(days=1)}")
+            continue
+        argv = [kind, venue, ticker, "--from", first.isoformat(), "--to", yesterday.isoformat(), "--refetch-absent"]
+        argv += ["--sample", sample] if sample else ["--days", ",".join(d.isoformat() for d in days_between(first, yesterday))]
+        code |= run(argv + (["--dry-run"] if dry_run else []), say)
+    if not dry_run:
+        code |= run_events(say)
+    return code
+
+
 def run(argv: list[str] | None = None, say=print) -> int:
     if argv is None:
         argv = sys.argv[1:]
     if argv[:1] == ["events"]:
         return run_events(say)
+    if argv[:1] == ["update"]:
+        extra = set(argv[1:]) - {"--dry-run"}
+        if extra:
+            raise Refused(f"galata-fetch update takes only --dry-run, not {', '.join(sorted(extra))}")
+        return run_update("--dry-run" in argv, say)
     args = _parser().parse_args(argv)
     if args.to < getattr(args, "from"):
         raise Refused("--to is before --from")
@@ -336,7 +388,8 @@ def _parser() -> argparse.ArgumentParser:
         prog="galata-fetch",
         description="Fetch a venue's published historical archive into the reference store. "
         f"Kinds: {', '.join(_instruments.KINDS)}. Venues: {', '.join(_instruments.VENUES)}. "
-        "`galata-fetch events` fetches the FOMC and BLS calendars instead (BLS needs GALATA_CONTACT).",
+        "`galata-fetch events` fetches the FOMC and BLS calendars instead (BLS needs GALATA_CONTACT); "
+        "`galata-fetch update [--dry-run]` brings the declared series up to yesterday.",
     )
     p.add_argument("kind", choices=_instruments.KINDS, help="trades, depth, book, candles")
     p.add_argument("venue", choices=_instruments.VENUES)

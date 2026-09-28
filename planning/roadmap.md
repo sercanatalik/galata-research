@@ -183,13 +183,22 @@ depend on it:
 
 Chosen by the operator on 2026-09-28, after item 24:
 
-- [ ] 26. **`vol-study-long-history`**: register, then run all eleven claims `garch.py` decides on Binance
-  BTC and ETH, 1d and 4h, 2020–2026 from `gr.reference`, not only *HAR beats GARCH*.
-- [ ] 27. **`har-matched-proxy`**: register, then re-score item 24's H1 and H2 against a realized-variance proxy
+- [x] 26. **`vol-study-long-history`**: register, then run all eleven claims `garch.py` decides on Binance
+  BTC and ETH, 1d and 4h, 2020–2026 from `gr.reference`, not only *HAR beats GARCH*. Done: `garch.py` reads its
+  bars through one loader (the record by default); `vol_long.py` replays it. **29 of 34** decided cells repeat the
+  record. Five claims hold everywhere; *GARCH outside the multi-horizon MCS* is sample-specific; BTC's 4h leverage
+  effect vanishes on six years (γ +0.011, se 0.006).
+- [x] 27. **`har-matched-proxy`**: register, then re-score item 24's H1 and H2 against a realized-variance proxy
   built at the same frequency as each HAR input, to test whether 5-minute RV lost only through its level bias.
-- [ ] 28. **`keep-the-reference-current`**: one command that fetches what the forward claims and the studies need
+  Done as `har-level-matched.md` (`68ae3e3`): a proxy at HAR's frequency would move GARCH's target too, so HAR's
+  level is rescaled instead, by Σr²/ΣRV before the split. **The level explains it**: rescaled 5-minute HAR beats
+  GARCH at every horizon in 3 of 4 cells (1 before), and rescaled 5-minute HARQ is significant at 1d on both and
+  at ETH 4h. Rescaling the record's coarser RV hurts BTC 1d: its bias is not stable out of sample.
+- [x] 28. **`keep-the-reference-current`**: one command that fetches what the forward claims and the studies need
   up to yesterday, idempotently, and a schedule for it, so the seven forward liquidity claims fill in from
-  2026-09-29.
+  2026-09-29. Done: `galata-fetch update` (from each series' last `ok` day, re-asking days published late), and
+  `scripts/schedule_reference_update.sh`, installed as a launchd job at 09:00. `events` without a contact now keeps
+  the 449 BLS events held instead of dropping them.
 
 ---
 

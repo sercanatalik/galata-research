@@ -346,6 +346,7 @@ galata-fetch candles binance-um   BTC     --from 2019-12-31 --to 2026-09-26
 galata-fetch trades  bybit-linear BTC     --from 2023-01-01 --to 2026-09-26 --sample every:3
 galata-fetch book    bybit-linear BTC     --from 2023-01-18 --to 2026-09-26 --sample weekly:wed
 galata-fetch trades  okx-swap     BTC ETH --from 2023-01-02 --to 2026-09-26 --days 2026-09-26
+galata-fetch update  --dry-run    # each declared series from its last day to yesterday
 ```
 
 | Call | Returns | The rule it owns |
@@ -364,6 +365,7 @@ The fetch has these rules:
 - **A changed refetch** is `mismatch`, and the old day is kept.
 - **Sized first:** `--dry-run` states the days and bytes and downloads nothing.
 - **Heavy kinds on declared days only.** A Bybit BTC book day is 93–167 MB zipped. `book`, Binance `trades` and OKX `trades` need `--days` or `--sample` (`weekly:<dow>`, or `every:<n>`, which turns through the week).
+- **Kept current by `galata-fetch update`.** It brings the forward claims' series (BTC depth and candles, ETH candles, BTC trades on both venues every ninth day) from each one's last `ok` day to yesterday, and asks again for days recorded `absent` because they were asked before publication. `scripts/schedule_reference_update.sh` runs it daily at 09:00 with launchd (`--uninstall` removes it). Without `GALATA_CONTACT` it keeps the BLS events already held.
 - **OKX's day is Beijing's.** Its file for a date runs 16:00 to 16:00 UTC and is stored under that date; a named UTC day fetches that date's file and the next. Its archive is taken from 2021-11-01: October 2021 lists every trade twice, as a BUY and a SELL, and is refused.
 
 No frame has `recv_ts`: an archive has no receipt clock, and none is made up.
@@ -422,7 +424,8 @@ trial, so N is the true N) back these notebooks:
 | `liquidity_costs.py` ⑱ | how does depth move with volatility? On BTC, doubling realized variance goes with ~8% less ±1% depth (elasticity −0.115), and the two are anti-correlated at every lag; on ETH, depth's level ignores volatility. Hour to hour, depth falls in the hour volatility rises, not hours before |
 | `liquidity_claims.py` | what survives of the liquidity study? Sixteen claims from the literature and vendors, each citation checked against its source, each verdict computed from the five study notebooks (`app.embed()`): 10 consistent, 2 contradicted, 1 mixed, 1 immaterial, 2 can't tell |
 | `liquidity_forward.py` | do the liquidity findings hold on data not yet seen? Seven claims registered in `planning/preregistered/liquidity-forward.md` (committed alone, `98b1e53`, 2026-09-28), scored only from 2026-09-29: all *not yet decidable* today. A dry run from 2026-06-01 (not a result) would support four and not two, jumps at 08:30 and depth forecasting among them |
-| `har_long.py` | does *HAR beats GARCH* hold on six years? Registered (`3e02cfb`), then run on Binance 1m klines, 2020–2026, out of sample from 2024-09: **at 1d, yes on BTC and ETH, and HARQ significantly** (uSPA p 0.016, 0.000), with the gap widening to 30 days (QLIKE ÷ GARCH 0.80, 0.62). **At 4h it does not travel**: BTC's HAR loses beyond one bar, and ETH's edge is not significant. HAR on 5-minute RV does worse, because that RV sits 9–23% above the squared return it is scored against |
+| `har_long.py` | does *HAR beats GARCH* hold on six years? Registered (`3e02cfb`), then run on Binance 1m klines, 2020–2026, out of sample from 2024-09: **at 1d, yes on BTC and ETH, and HARQ significantly** (uSPA p 0.016, 0.000), with the gap widening to 30 days (QLIKE ÷ GARCH 0.80, 0.62). **At 4h it does not travel**: BTC's HAR loses beyond one bar, and ETH's edge is not significant. HAR on 5-minute RV does worse, because that RV sits 9–23% above the squared return it is scored against. **With that level removed** (a constant fitted before the split; registered `68ae3e3`), 5-minute HAR beats GARCH at every horizon in 3 of 4 cells, and HARQ significantly at 1d on both and at ETH 4h |
+| `vol_long.py` | does the whole volatility study hold on six years? `garch.py` replayed unchanged on Binance BTC and ETH, 1d and 4h, 2020–2026 (registered `2d8d580`): **29 of 34** of the record's decided verdicts repeat. Five claims hold everywhere (t beats normal, intraday persistence, targeting and drawdown, both feedback claims); BTC's 4h leverage effect was the short sample's (γ +0.106 → +0.011); *GARCH outside the multi-horizon MCS* is sample-specific |
 | `permuted_bars.py` | is there structure to find at all? The whole search re-run on 200 markets with the bars permuted: the real best (1.08) is **below** the permuted median (1.13), p = 0.59 |
 
 **Pre-registered forward claims.** `planning/preregistered/liquidity-forward.md`
@@ -756,6 +759,9 @@ uv run marimo check notebooks/*.py     # every notebook, as CI and tests/noteboo
 | Seven forward liquidity claims, registered | registered 2026-09-28; scored from 2026-09-29 by `liquidity_forward.py` |
 | Liquidity items 10 and 11 (on the rebuilt tape; walked funding days) | blocked: the archive lost HL days after the rebuild; funding walk off in datawatch |
 | HAR vs GARCH on years of BTC and ETH, registered | done: mixed; holds at 1d on both (HARQ significant), not at 4h |
+| The whole volatility study on six years of BTC and ETH, registered | done: 29 of 34 verdicts repeat; one claim sample-specific |
+| HAR on 5-minute RV with its level removed, registered | done: the level explained its loss; rescaled, it beats GARCH in 3 of 4 cells |
+| `galata-fetch update`, scheduled daily | done: launchd at 09:00; the forward claims' series stay current |
 
 ---
 

@@ -12,6 +12,7 @@ import json
 import zipfile
 from datetime import date
 
+import polars as pl
 import pytest
 from conftest import utc
 from polars.testing import assert_frame_equal
@@ -634,3 +635,45 @@ def a_duckdb_relation_has_the_same_rows(store, archive):
         duck,
         gr.reference.depth("BTC", "2026-09-20T00:00Z", "2026-09-21T00:00Z").collect(),
     )
+
+
+# ---- update ------------------------------------------------------------------------
+
+
+def _one_series(monkeypatch, series=(("depth", "binance-um", "BTC", None),)):
+    monkeypatch.setattr(fetch, "UPDATES", series)
+    monkeypatch.setattr(fetch, "run_events", lambda say=print: 0)
+
+
+def an_update_runs_from_the_last_day_to_yesterday(store, archive, monkeypatch):
+    _one_series(monkeypatch)
+    _fetched(store, archive, "depth", "binance-um", ["2026-09-20"], _depth_file)
+    archive.publish(_depth_url("2026-09-21"), _depth_file("2026-09-21"))  # 09-22 not yet published
+    assert fetch.run_update(say=lambda _: None, today=date(2026, 9, 23)) == 0
+    status = {r["date"].isoformat(): r["status"] for r in _manifest.read(store).iter_rows(named=True)}
+    assert status == {"2026-09-20": "ok", "2026-09-21": "ok", "2026-09-22": "absent"}
+    archive.publish(_depth_url("2026-09-22"), _depth_file("2026-09-22"))  # published a day late
+    assert fetch.run_update(say=lambda _: None, today=date(2026, 9, 23)) == 0
+    assert _manifest.read(store).filter(pl.col("date") == date(2026, 9, 22))["status"].to_list() == ["ok"]
+
+
+def an_update_of_a_series_never_fetched_is_refused(store, archive, monkeypatch):
+    _one_series(monkeypatch)
+    with pytest.raises(Refused, match="depth binance-um BTC was never fetched"):
+        fetch.run_update(say=lambda _: None, today=date(2026, 9, 23))
+
+
+def an_update_dry_run_downloads_nothing(store, archive, monkeypatch):
+    _one_series(monkeypatch)
+    _fetched(store, archive, "depth", "binance-um", ["2026-09-20"], _depth_file)
+    before = len(archive.asked)
+    said = []
+    assert fetch.run(["update", "--dry-run"], say=said.append) == 0
+    assert all(method == "HEAD" for method, _ in archive.asked[before:])
+    with pytest.raises(Refused, match="takes only --dry-run"):
+        fetch.run(["update", "--jobs", "2"], say=said.append)
+
+
+def the_update_keeps_the_forward_claims_series():
+    assert {(k, v, t) for k, v, t, _ in fetch.UPDATES} >= {("depth", "binance-um", "BTC"), ("candles", "binance-um", "BTC"),
+                                                            ("trades", "binance-um", "BTC"), ("trades", "bybit-linear", "BTC")}  # fmt: skip

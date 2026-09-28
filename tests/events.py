@@ -123,3 +123,14 @@ def no_calendar_fetched_is_refused(store):
     store.mkdir(parents=True)
     with pytest.raises(Refused, match="galata-fetch events"):
         gr.reference.events("2020-01-01T00:00Z", "2021-01-01T00:00Z")
+
+
+def the_held_bls_events_survive_a_run_without_a_contact(store, monkeypatch):
+    monkeypatch.setattr(fetch, "_transport", _Site(_pages()))
+    monkeypatch.setenv("GALATA_CONTACT", "a@b.c")
+    assert fetch.run(["events"], say=lambda _: None) == 0
+    monkeypatch.delenv("GALATA_CONTACT")
+    said = []
+    assert fetch.run(["events"], say=said.append) == 0
+    assert any("3 BLS events from the last fetch kept" in s for s in said)
+    assert pl.read_parquet(store / "events" / "events.parquet").group_by("source").len().sort("source")["len"].to_list() == [3, 5]

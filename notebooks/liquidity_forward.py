@@ -32,10 +32,10 @@ def _(mo):
     works and what the verdicts would have been. It is **not a result**, and
     is never written into the registration.
 
-    To keep the claims current, fetch new days as they arrive:
-    - `galata-fetch depth binance-um BTC` and `galata-fetch candles binance-um BTC`, daily;
-    - `galata-fetch events`, before each FOMC statement;
-    - for F6, `galata-fetch trades binance-um BTC` and `galata-fetch trades bybit-linear BTC` on the same `--days`.
+    `galata-fetch update` keeps the claims' data current: BTC depth and 1m
+    candles daily, BTC trades on both venues every ninth day (F6), and the
+    event calendar. `scripts/schedule_reference_update.sh` runs it daily at
+    09:00 with launchd.
     """)
     return
 
