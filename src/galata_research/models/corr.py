@@ -762,6 +762,16 @@ def _wkd_scale(x: np.ndarray, y: np.ndarray) -> float:
     return var**-0.5
 
 
+def _change_point(running: np.ndarray, tau: int) -> int | None:
+    """Wied and Galeano's k̂ (their Eq. 8): the j < τ whose running ρ̂ sits furthest, scaled, from ρ̂ through τ − 1."""
+    if tau < 3:
+        return None
+    j = np.arange(1, tau)
+    d = (j / np.sqrt(tau)) * np.abs(running[: tau - 1] - running[tau - 2])
+    d = np.nan_to_num(d, nan=-1.0)
+    return int(j[np.argmax(d)])
+
+
 def _pearson(x: np.ndarray, y: np.ndarray) -> float:
     xc, yc = x - x.mean(), y - y.mean()
     return float((xc * yc).sum() / np.sqrt((xc * xc).sum() * (yc * yc).sum()))
@@ -799,6 +809,10 @@ def monitor(z, m: int, *, T: float = 1.5, gamma: float = 0.25, alpha: float = 0.
 
     `ratio` is the largest |Vₖ|/(c·w(k/m)) so far over every pair: ≥ 1 is an
     alarm. `first` is the k of the earliest alarm and `pair` its pair.
+    `change` estimates where that pair's correlation changed, from the
+    monitored data alone (their Eq. 8): k̂ = argmax over 1 ≤ j < τ of
+    (j/√τ)·|ρ̂ₘ₊₁^{m+j} − ρ̂ₘ₊₁^{m+τ−1}|, τ the alarm. D̂ is a constant factor
+    and does not move the argmax.
     """
     z = np.asarray(z, dtype=float)
     if z.ndim != 2 or z.shape[1] < 2:
@@ -815,7 +829,7 @@ def monitor(z, m: int, *, T: float = 1.5, gamma: float = 0.25, alpha: float = 0.
     k = np.arange(1, k_max + 1)
     b = k / m
     w = (1 + b) * np.maximum((b / (1 + b)) ** gamma, 1e-10)
-    per_pair, first, first_pair = {}, None, None
+    per_pair, first, first_pair, change = {}, None, None, None
     for i, j in pairs:
         x, y = z[:m, i], z[:m, j]
         scale = _wkd_scale(x, y)
@@ -826,10 +840,12 @@ def monitor(z, m: int, *, T: float = 1.5, gamma: float = 0.25, alpha: float = 0.
         crossed = np.flatnonzero(v > 1)
         if crossed.size and (first is None or crossed[0] + 1 < first):
             first, first_pair = int(crossed[0] + 1), (names[i], names[j])
+            change = _change_point(after, first)
     return {
         "alarm": first is not None,
         "first": first,
         "pair": first_pair,
+        "change": change,
         "ratio": max(per_pair.values()),
         "pairs": per_pair,
         "critical": c,

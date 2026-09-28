@@ -543,3 +543,15 @@ def no_monitor_from_a_short_baseline_or_without_returns_after_it():
         corr.monitor(z, 300)
     with pytest.raises(Refused, match="two or more"):
         corr.monitor(z[:501], 500)
+
+
+def the_alarm_says_where_the_correlation_changed():
+    rng = np.random.default_rng(4)
+    found = []
+    for _ in range(20):
+        z = rng.standard_normal((1_500, 2))
+        z[700:, 1] = 0.8 * z[700:, 0] + 0.6 * z[700:, 1]  # 0 → 0.8 at monitored return 101
+        f = corr.monitor(z, 600, T=1.5)
+        assert f["alarm"] and f["change"] is not None and f["change"] < f["first"]
+        found.append(f["change"])
+    assert abs(np.median(found) - 101) <= 15
