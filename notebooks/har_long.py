@@ -121,9 +121,9 @@ def _(EVERY, FINE_A, HELD, HORIZONS, MODELS, SPLIT, bars, gr, mo, pl):
 def _(bars, gr, pl, walked):
     ev = gr.models.evaluate
 
-    def aligned_for(ticker, interval, rv):
+    def aligned_for(ticker, interval, rv, frame=None):
         # One frame per cell and RV version: the GARCH family, plus HAR and HARQ built with that RV.
-        f = walked.filter((pl.col("ticker") == ticker) & (pl.col("interval") == interval) & pl.col("rv").is_in(["-", rv]))
+        f = (walked if frame is None else frame).filter((pl.col("ticker") == ticker) & (pl.col("interval") == interval) & pl.col("rv").is_in(["-", rv]))
         proxy = ev.proxies(bars[(ticker, interval)], "r2")  # garch.py's default proxy
         return ev.align(f.drop("interval", "rv"), proxy)
 
@@ -187,6 +187,71 @@ def _(alt, cards, mo, pl):
     mo.vstack([mo.md("## Every model against GARCH (blue: better than GARCH)"), _chart, mo.md("Not registered: context for the verdicts, which use only the rules above.")])
     return
 
+
+@app.cell
+def _(mo):
+    mo.md(r"""
+    ## The level, removed (item 27)
+
+    Registered in `planning/preregistered/har-level-matched.md` (`68ae3e3`),
+    after the verdicts above. HAR forecasts its own measure's level, and
+    5-minute RV sits above the squared return it is scored against. Here each
+    HAR and HARQ forecast is multiplied by c = Σr² / ΣRV over the bars closing
+    by the split, per ticker, bars and RV version. Nothing else changes.
+
+    | # | claim | rule |
+    |---|---|---|
+    | H4 | rescaled HAR beats GARCH, RV from 5 minutes | as H1 |
+    | H5 | rescaled HAR beats GARCH, RV as the record builds it | as H1 |
+    | H6 | rescaled HARQ beats GARCH at every horizon, RV from 5 minutes | uSPA p < 0.05 |
+    """)
+    return
+
+
+@app.cell
+def _(BARS, FINE_A, SPLIT, TICKERS, bars, gr, pl):
+    _rows = []
+    _cut = pl.lit(SPLIT).str.to_datetime(time_zone="UTC")
+    for _t in TICKERS:
+        for _i in BARS:
+            _r2 = gr.timeseries.returns(bars[(_t, _i)], kind="log").select("ts", (pl.col("return") ** 2).alias("r2"))
+            for _rv, _fine in (("A", FINE_A[_i]), ("B", "5m")):
+                _m = gr.timeseries.realized_from(bars[(_t, _fine)], _i).select("ts", "close_ts", "rv")
+                _j = _m.join(_r2, on="ts").drop_nulls().filter(pl.col("close_ts") <= _cut)
+                _rows.append({"ticker": _t, "interval": _i, "rv": _rv, "c": _j["r2"].sum() / _j["rv"].sum(), "bars": _j.height})
+    scales = pl.DataFrame(_rows)
+    return (scales,)
+
+
+@app.cell
+def _(BARS, TICKERS, aligned_for, ev, mo, pl, scales, walked):
+    _scaled = walked.join(scales.select("ticker", "interval", "rv", "c"), on=["ticker", "interval", "rv"], how="left").with_columns(
+        pl.when(pl.col("model").is_in(["har", "harq"])).then(pl.col(c) * pl.col("c")).otherwise(pl.col(c)).alias(c) for c in ("variance", "cum_variance")
+    ).drop("c")
+    _rows = []
+    for _t in TICKERS:
+        for _i in BARS:
+            for _rv, _hyp in (("B", "H4"), ("A", "H5")):
+                _al = aligned_for(_t, _i, _rv, frame=_scaled)
+                _card = ev.scorecard(_al, benchmark="garch")
+                _q = _card.select("model", "h", "qlike")
+                _har = _q.filter(pl.col("model").is_in(["har", "harq"])).group_by("h").agg(pl.col("qlike").min().alias("har"))
+                _hg = _har.join(_q.filter(pl.col("model") == "garch").select("h", pl.col("qlike").alias("garch")), on="h").sort("h")
+                _wins = int((_hg["har"] < _hg["garch"]).sum())
+                _best = _card.filter(pl.col("model").is_in(["har", "harq"])).sort("qlike").group_by("h", maintain_order=True).first().sort("h")
+                _rows.append({"#": _hyp, "ticker": _t, "bars": _i, "verdict": "consistent" if _wins == _hg.height else "contradicts" if _wins == 0 else "mixed",
+                              "measured": f"{_wins} of {_hg.height} horizons; best HAR ÷ GARCH " + ", ".join(f"h{h} {r:.3f} ({m})" for h, r, m in _best.select("h", "qlike_ratio", "model").iter_rows())})  # fmt: skip
+                if _rv == "B":
+                    _p = ev.uspa(_al, model="harq", benchmark="garch", reps=499)["p_value"]
+                    _rows.append({"#": "H6", "ticker": _t, "bars": _i, "verdict": "yes" if _p < 0.05 else "no", "measured": f"uSPA p {_p:.3f}"})
+    level_verdicts = pl.DataFrame(_rows).sort("#", "ticker", "bars")
+    _h4 = level_verdicts.filter(pl.col("#") == "H4")
+    _n4 = _h4["verdict"].to_list().count("consistent")
+    _both_1d = _h4.filter((pl.col("bars") == "1d") & (pl.col("verdict") == "consistent")).height == 2
+    _reading = ("**The level explains H2**: H4 consistent in three or more cells, both at 1d." if _n4 >= 3 and _both_1d
+                else "**The level does not explain H2**: H4 has no more consistent cells than H2 (1)." if _n4 <= 1 else "**Neither**, by the registered reading.")  # fmt: skip
+    mo.vstack([mo.md("### The scale c, fitted before the split"), scales, mo.md("### The twelve verdicts of item 27"), mo.ui.table(level_verdicts, selection=None, page_size=12), mo.md(_reading)])
+    return (level_verdicts,)
 
 if __name__ == "__main__":
     app.run()

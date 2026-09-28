@@ -61,3 +61,39 @@ Cells: {BTC, ETH} × {1d, 4h}, twelve verdicts.
 ## Results
 
 *Appended after the run. Nothing above this line may change.*
+
+### Run of 2026-09-28 (`notebooks/har_long.py`, item 27 section)
+
+- **Run.** Item 24's cached walks, unchanged; its twelve verdicts reproduce
+  exactly.
+- **Deviations.** None.
+- **The scale c** (Σr² ÷ ΣRV, bars closing by 2024-09-01):
+
+| | BTC 1d | BTC 4h | ETH 1d | ETH 4h |
+|---|---|---|---|---|
+| 5 minutes | 0.898 | 0.828 | 0.920 | 0.815 |
+| the record's RV | 1.084 | 0.941 | 1.129 | 0.960 |
+
+| # | BTC 1d | BTC 4h | ETH 1d | ETH 4h |
+|---|---|---|---|---|
+| H4 | **consistent**: best HAR ÷ GARCH 0.949, 0.958, 0.898 | **mixed** (2 of 3): 0.952, 0.982, 1.245 | **consistent**: 0.954, 0.859, 0.699 | **consistent**: 0.957, 0.925, 0.932 |
+| H5 | **mixed** (1 of 3): 1.001, 1.015, 0.897 | **mixed** (1 of 3): 0.983, 1.054, 1.370 | **consistent**: 0.972, 0.897, 0.715 | **consistent**: 0.967, 0.943, 0.958 |
+| H6 | **yes** (uSPA p 0.026) | **no** (p 1.000) | **yes** (p 0.000) | **yes** (p 0.002) |
+
+**Against *What would count*: the level explains H2.** H4 is consistent in
+three cells, both at 1d, against H2's one. Against the predictions:
+- **H4:** held in 3 of 4 cells.
+- **H5:** not held. It was consistent in 2 cells, below the predicted 3.
+- **H6:** held in 3 of 4. ETH 4h is significant, where *no* was predicted.
+
+**Read.**
+- **Once its level is fixed, 5-minute RV is mostly the better HAR input.**
+  Rescaled 5-minute HARQ has a lower ratio than item 24's best H1 HAR in 9
+  of 12 cell-horizons. It loses at BTC 1d at 7 and 30 days and at ETH 1d at
+  30 days. At 4h, where H1 failed on BTC, it is better at every horizon.
+  That is mostly Liu, Patton and Sheppard's (2015) ranking, recovered.
+- **Rescaling the record's coarser RV hurts BTC 1d** (1 of 3 horizons, from
+  3 of 3). Its in-sample level ratio (1.08) did not hold out of sample, so the
+  coarse RV's bias is not a stable constant to remove.
+- **The finding item 24 left open is closed.** HAR on 5-minute RV lost
+  through its level, not its information.

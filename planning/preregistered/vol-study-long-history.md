@@ -93,3 +93,50 @@ longer.
 ## Results
 
 *Appended after the run. Nothing above this line may change.*
+
+### Run of 2026-09-28 (`notebooks/vol_long.py`)
+
+- **The samples.** Every cell ran from 2020-01-01 to 2026-09-27. The split
+  was 2024-09-18 (1d) and 2024-09-18 16:00 (4h).
+- **Deviation: the first run failed at 4h.** It was run as a plain-Python
+  `App.embed`, outside marimo's kernel. There altair refuses a chart over
+  5,000 rows, and `garch.py`'s price chart has ~14,600 at 4h; both 4h cells
+  failed before any fit, the 1d cells ran. The driver now lifts altair's
+  row limit, a display setting. The run below is the second, and its 1d
+  verdicts equal the first's. No rule, model or number of `garch.py` changed.
+
+The record's verdict → six years' verdict:
+
+| claim | BTC 1d | BTC 4h | ETH 1d | ETH 4h | reading |
+|---|---|---|---|---|---|
+| t beats normal | yes → yes | yes → yes | yes → yes | yes → yes | holds |
+| no leverage effect | yes → yes | **no → yes** (γ +0.011, se 0.006) | yes → yes | yes → yes | mixed |
+| α+β≈1 intraday is the daily cycle | — | no → no | — | no → no | holds |
+| something beats GARCH(1,1) | **no → yes** (outside at h = 30) | yes → yes | yes → yes | yes → yes | mixed |
+| better σ ≠ better P&L | yes → yes | yes → yes | **yes → no** (ρ 0.77) | yes → yes | mixed |
+| targeting does not cut drawdown per vol | no → no | no → no | no → no | no → no | holds |
+| GARCH outside the multi-horizon MCS | **yes → no** (uMCS p 0.156) | yes → yes | yes → yes | **no → yes** (p 0.005) | sample-specific |
+| feedback tracks the target better | yes → yes | yes → yes | no → no | yes → yes | holds |
+| feedback's Sharpe gain is not significant | yes → yes | yes → yes | yes → yes | yes → yes | holds |
+| *HAR beats GARCH* (not counted) | yes → yes | — → mixed | yes → yes | — → yes | — |
+| *HARQ beats GARCH at every horizon* (not counted) | yes → yes | — → no | yes → yes | — → no | — |
+
+**Headline: 29 of 34 decided cells repeat.**
+- **Five claims hold everywhere:**
+  - *t beats normal*;
+  - the intraday persistence verdict;
+  - targeting not cutting drawdown per vol;
+  - both feedback claims.
+- **Three are mixed.**
+- **One, *GARCH outside the multi-horizon MCS*, is sample-specific.**
+
+**Against the expectation.**
+- **The out-of-sample ranking claims moved most**, as expected. The five
+  cells that differ are all ranking claims, save *no leverage effect* at
+  BTC 4h.
+- ***feedback tracks the target* did not move**, against the expectation.
+- **The leverage flip goes the way a longer sample should.** The record's
+  4h γ (+0.106 on 18 months) shrinks to +0.011 (se 0.006) on six years:
+  BTC's 4h "leverage" effect was the short sample's.
+- ***t beats normal* holds more firmly.** ΔBIC at 4h is −2,930 (BTC) and
+  −2,225 (ETH), against −710 on the record.
