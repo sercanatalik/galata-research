@@ -18,7 +18,7 @@ clock and the cast are applied once, here, so a notebook never reads a
 re-fetched bar twice or a bar's open as its close.
 """
 
-from . import account, backtest, jumps, leadlag, liquidity, market, reference, stats, studies, timeseries, utils
+from . import account, backtest, jumps, leadlag, liquidity, market, reference, signals, stats, studies, timeseries, utils
 from ._errors import Refused
 from ._frontier import frontier
 from ._root import root
@@ -38,6 +38,7 @@ __all__ = [
     "reference",
     "mask_gaps",
     "root",
+    "signals",
     "stats",
     "studies",
     "timeseries",

@@ -286,6 +286,26 @@ def the_correlation_reverts_to_its_long_run_level(pair):
     assert np.allclose(r40 - rbar, s**39 * (r1 - rbar), atol=1e-5)  # R̄ from the in-sample fit, z from the filter: ~2e-6 apart
 
 
+def the_correlation_target_is_what_the_forecast_reverts_to(pair):
+    w = corr.walk_forward(pair, model="garch", dist="normal", split=_split(pair, 800), every=1000, horizons=[1, 40])
+    f = corr.fit(pair.filter(pl.col("ts") <= pair["ts"][800]), model="garch", dist="normal")
+    d = np.sqrt(np.diag(f.qbar))
+    off = w.filter(pl.col("ticker_i") != pl.col("ticker_j")).sort("close_ts")
+    target = off.filter(pl.col("h") == 1)["correlation_target"].to_numpy()
+    r1 = off.filter(pl.col("h") == 1)["correlation"].to_numpy()
+    r40 = off.filter(pl.col("h") == 40)["correlation"].to_numpy()
+    assert np.allclose(target, (f.qbar / np.outer(d, d))[0, 1], atol=1e-5)  # the in-sample fit's Q̄, normalised
+    assert np.allclose(r40 - target, (f.a + f.b) ** 39 * (r1 - target), atol=1e-5)
+    own = w.filter(pl.col("ticker_i") == pl.col("ticker_j"))
+    assert np.allclose(own["correlation_target"].to_numpy(), 1.0)
+
+
+def no_target_where_nothing_reverts(pair):
+    for kind in ("ewma", "sample", "iewma"):
+        w = corr.walk_forward(pair, model="garch", dist="normal", corr=kind, sample_window=50, split=_split(pair, 599), every=1000, horizons=[1])
+        assert w["correlation_target"].is_null().all(), kind
+
+
 def every_pair_of_an_origin_shares_one_fit_span(pair):
     w = corr.walk_forward(pair, model="garch", dist="normal", split=_split(pair, 599), every=5, horizons=[1])
     per_origin = w.group_by("close_ts").agg(pl.col("fitted_through").n_unique().alias("spans"), pl.col("refit").first()).sort("close_ts")
@@ -325,3 +345,70 @@ def a_factor_fitted_past_the_split_is_refused(pair):
     f = gr.timeseries.seasonal_factors(pair, fit=(pair["ts"][0], pair["close_ts"][-1]), by="hour_of_day")
     with pytest.raises(Refused, match="after the split"):
         corr.walk_forward(pair, model="garch", split=_split(pair, 700), factors=f)
+
+
+# ── the baselines and the scorer (compare-the-correlations) ─────────────────
+
+
+def a_constant_correlation_is_the_window_moment(pair):
+    w = corr.walk_forward(pair, model="garch", dist="normal", corr="ccc", split=_split(pair, 599), every=1000, horizons=[1, 5])
+    rho = w.filter(pl.col("ticker_i") != pl.col("ticker_j"))
+    assert rho["correlation"].round(12).n_unique() == 1  # constant across origins and horizons (through D·R·D, to rounding)
+    assert (rho["a"] == 0).all() and (rho["b"] == 0).all()
+    assert rho["n_eff"].unique().to_list() == [600.0]
+
+
+def the_sample_covariance_is_the_last_windows_moment(pair):
+    w = corr.walk_forward(pair, corr="sample", sample_window=50, split=_split(pair, 599), horizons=[1])
+    btc = pair.filter(pl.col("ticker") == "BTC")["return"].to_numpy()
+    first = w.filter((pl.col("ticker_i") == "BTC") & (pl.col("ticker_j") == "BTC")).sort("close_ts")["covariance"][0]
+    assert first == pytest.approx(float(np.mean(btc[550:600] ** 2)), rel=1e-12)
+    assert w["a"].is_null().all() and (w["n_eff"] == 50).all()
+
+
+def the_losses_are_their_formulas():
+    s = np.array([[2.0, 0.5], [0.5, 1.0]])
+    r = np.array([1.0, -1.0])
+    got = corr.losses(s, r)
+    inv = np.linalg.inv(s)
+    assert got["stein"] == pytest.approx(np.log(np.linalg.det(s)) + r @ inv @ r)
+    assert got["frobenius"] == pytest.approx(((np.outer(r, r) - s) ** 2).sum())
+    w = inv @ np.ones(2) / (np.ones(2) @ inv @ np.ones(2))
+    assert got["gmv"] == pytest.approx((w @ r) ** 2)
+    assert w.sum() == pytest.approx(1.0)
+
+
+def every_model_is_scored_on_the_same_bars(pair):
+    kw = dict(split=_split(pair, 700), horizons=[1])
+    forecasts = {
+        "ewma": corr.walk_forward(pair, corr="ewma", **kw),
+        "sample": corr.walk_forward(pair, corr="sample", sample_window=100, **kw),
+    }
+    scored = corr.score(forecasts, pair)
+    per = scored.group_by("model").agg(pl.col("close_ts").sort())
+    assert per["close_ts"][0].to_list() == per["close_ts"][1].to_list()
+    assert scored.height == 2 * 199  # origins 700…898; the last origin's bar is past the sample
+    table = corr.compare(scored, loss="stein", benchmark="ewma", reps=200)
+    assert set(table["model"]) == {"ewma", "sample"} and table.filter(pl.col("model") == "ewma")["dm"][0] is None
+
+
+def a_dcc_beats_constant_correlation_on_its_own_process(three):
+    # The scorer's sanity: on data a DCC generated, DCC's Stein loss is lower than CCC's.
+    kw = dict(model="garch", dist="normal", split=three["close_ts"][2999], every=1000, horizons=[1])
+    forecasts = {name: corr.walk_forward(three, corr=name, **kw) for name in ("dcc", "ccc")}
+    table = corr.compare(corr.score(forecasts, three), loss="stein", benchmark="ccc", reps=200)
+    assert table["model"][0] == "dcc"
+
+
+def an_ewma_on_z_never_reverts(pair):
+    w = corr.walk_forward(pair, model="garch", dist="normal", corr="iewma", lam=0.94, split=_split(pair, 700), every=1000, horizons=[1, 20])
+    off = w.filter(pl.col("ticker_i") != pl.col("ticker_j")).sort("close_ts", "h")
+    one, twenty = off.filter(pl.col("h") == 1)["correlation"].to_numpy(), off.filter(pl.col("h") == 20)["correlation"].to_numpy()
+    assert np.allclose(one, twenty)  # a + b = 1: nothing to revert to
+    assert (w["a"] - 0.06).abs().max() < 1e-12 and (w["b"] - 0.94).abs().max() < 1e-12
+
+
+def the_hac_dm_on_white_noise_is_not_significant():
+    d = np.random.default_rng(4).normal(size=2000)
+    got = corr.dm_hac(d)
+    assert got["lags"] == int(4 * 20 ** (2 / 9)) and got["p_value"] > 0.01
