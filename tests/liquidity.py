@@ -338,3 +338,65 @@ def a_plan_hour_without_depth_is_refused():
     ts = _hours([0, 0])
     with pytest.raises(Refused, match="no depth for the plan hour"):
         liquidity.schedule_cost(pl.DataFrame({"ts": ts, "notional": [1.0, 1.0]}), pl.DataFrame({"ts": ts[:1], "depth": [1.0]}))
+
+
+# ── order-flow imbalance (measure-the-order-flow) ────────────────────────────
+
+
+def _book(rows, start="2026-09-28T07:00:00"):
+    """(seconds, bid_px, bid_sz, ask_px, ask_sz) as BTC quotes."""
+    t0 = utc(start)
+    return pl.DataFrame(
+        [{"venue": "hyperliquid", "ticker": "BTC", "ts": t0 + timedelta(seconds=s), "bid_px": bp, "bid_sz": bs, "ask_px": ap, "ask_sz": az} for s, bp, bs, ap, az in rows],
+        schema={"venue": pl.String, "ticker": pl.String, "ts": pl.Datetime("us", "UTC"), "bid_px": pl.Float64, "bid_sz": pl.Float64, "ask_px": pl.Float64, "ask_sz": pl.Float64},
+    )
+
+
+def the_order_flow_is_cont_kukanov_and_stoikovs():
+    b = _book([
+        (0, 100, 5, 101, 5),
+        (1, 100, 7, 101, 5),   # bid queue grows by 2: +2
+        (2, 100.5, 3, 101, 5),  # bid steps up: +3 (the new queue)
+        (3, 100.5, 3, 100.8, 4),  # ask steps down: −4 (the new queue)
+        (4, 100.5, 3, 100.8, 1),  # ask queue shrinks by 3: +3
+        (5, 100.2, 6, 100.8, 1),  # bid steps down: −3 (the old queue)
+    ])  # fmt: skip
+    out = liquidity.ofi(b, "10s")
+    assert out["ofi"].to_list() == [2 + 3 - 4 + 3 - 3]
+    assert out["events"].to_list() == [6]
+    assert out["depth"][0] == pytest.approx(statistics.mean([(5 + 5) / 2, (7 + 5) / 2, (3 + 5) / 2, (3 + 4) / 2, (3 + 1) / 2, (6 + 1) / 2]))
+
+
+def no_order_flow_across_a_crossed_book_or_a_gap():
+    b = _book([
+        (0, 100, 5, 101, 5),
+        (1, 101, 5, 101, 5),   # locked: dropped
+        (2, 100, 9, 101, 5),   # after the locked state: no term, not +4
+        (20, 100, 1, 101, 5),  # after a 18 s gap: no term, not −8
+    ])  # fmt: skip
+    out = liquidity.ofi(b, "10s", max_gap_us=5_000_000)
+    assert out["ofi"].to_list() == [0.0, 0.0]
+
+
+def the_mid_return_spans_consecutive_buckets_only():
+    b = _book([(0, 100, 1, 101, 1), (12, 101, 1, 102, 1), (45, 99, 1, 100, 1)])
+    out = liquidity.ofi(b, "10s")
+    assert out["return_bps"][1] == pytest.approx(1e4 * math.log(101.5 / 100.5))
+    assert out["return_bps"][0] is None and out["return_bps"][2] is None  # the bucket before 40 s held no update
+
+
+def the_impact_regression_recovers_its_slope():
+    rng = random.Random(9)
+    xs = [rng.gauss(0, 1) for _ in range(500)]
+    frame = pl.DataFrame({"ofi_norm": xs, "return_bps": [0.3 + 2.0 * x + rng.gauss(0, 0.5) for x in xs]})
+    fit = liquidity.impact(frame)
+    assert fit["beta"] == pytest.approx(2.0, abs=0.08)
+    assert fit["r2"] == pytest.approx(4 / 4.25, abs=0.02)  # var(βx)/var(y) = 4/(4 + 0.25)
+    assert fit["t"] > 30 and fit["n"] == 500
+
+
+def no_impact_from_too_few_buckets_or_a_flat_regressor():
+    with pytest.raises(Refused, match="under 100"):
+        liquidity.impact(pl.DataFrame({"ofi_norm": [1.0] * 50, "return_bps": [1.0] * 50}))
+    with pytest.raises(Refused, match="does not vary"):
+        liquidity.impact(pl.DataFrame({"ofi_norm": [1.0] * 200, "return_bps": [float(i) for i in range(200)]}))
