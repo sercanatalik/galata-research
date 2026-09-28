@@ -79,3 +79,43 @@ and HAR forecasts, already walked and cached in `notebooks/har_long.py`:
 ## Results
 
 *Appended after the run. Nothing above this line may change.*
+
+### Run of 2026-09-28 (`notebooks/har_long.py`, item 33 section)
+
+- **Validation, run first** (`tests/levels.py`). The fit recovers the
+  simulation's p = 0.0055 (true 0.01), σ_η = 1.51 (1.0) and σ_c = 0.500
+  (0.5), and the filtered level tracks the true one (ρ > 0.9).
+- **The run.** 487 s. Item 24's cached GARCH and HAR forecasts were
+  reused, and item 24's twelve verdicts reproduce unchanged.
+- **Deviations.** None.
+
+| # | BTC 1d | BTC 4h | ETH 1d | ETH 4h |
+|---|---|---|---|---|
+| R1 | **mixed** (1 of 3): RLS ÷ GARCH 1.057, 1.193, 0.961 | **contradicts**: 1.035, 1.141, 1.522 | **mixed** (2 of 3): 1.010, 0.988, 0.832 | **contradicts**: 1.039, 1.129, 1.486 |
+| R2 | **contradicts** | **contradicts** | **contradicts** | **contradicts** |
+
+**Against *What would count*: not in these forecasts.** R1 is consistent in
+no cell. Both predictions failed:
+- R1 was predicted consistent in four cells; it is consistent in none.
+- R2 was predicted consistent in two or more; HAR beats RLS at every
+  horizon in every cell.
+
+**Read.**
+- **One step ahead, RLS loses everywhere** (1.01–1.06× GARCH's loss). The
+  likely reason is that the base model's noise c_t is i.i.d., so it has no
+  short-run clustering; GARCH and HAR do. Later work (Xu and Perron 2014)
+  adds mean reversion and time-varying jump probabilities; the registered
+  base model had neither.
+- **At 4h and 42 bars, the flat forecasts lose to GARCH badly.** Seven days
+  ahead, GARCH's pull toward its mean wins:
+  - RLS 1.49–1.52×;
+  - EWMA 1.43–1.52×;
+  - BTC's HAR and HARQ 1.48–1.49×.
+
+  Only ETH's HAR is level with GARCH (1.001, HARQ 0.996).
+- **Only at 1d and long horizons does RLS beat GARCH:** 0.96 (BTC, 30
+  days), and 0.99 and 0.83 (ETH, 7 and 30 days). Even there HAR is better
+  (0.80 and 0.62 at 30 days).
+- **Item 32's level shifts are real in the spectrum, but a model of them
+  alone does not forecast better.** It lacks the short-run dynamics, and
+  HAR's weekly and monthly averages already track slow level changes.

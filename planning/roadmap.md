@@ -244,6 +244,11 @@ adopting one for future runs is the operator's call.
   (W 4.1–4.2 at 1h, 1.76–1.78 at 1d), and d̂ falls with the bandwidth in every cell (Perron and Qu 2010). The
   persistence of one is low-frequency contamination (level shifts or a trend), not memory.
 
+- [x] 33. **`random-level-shift-forecasts`**: register, then forecast with Lu and Perron's (2010) random level shift
+  model (`gr.models.levels`, validated on its own simulation first) against item 24's GARCH and HAR forecasts. Done:
+  **not in these forecasts**. RLS beats GARCH at every horizon in no cell and loses to HAR everywhere. It loses one
+  step ahead (no short-run clustering in the base model) and at 4h, 42 bars; it helps only at 1d and 30 days.
+
 ---
 
 ## What the record holds

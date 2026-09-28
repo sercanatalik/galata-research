@@ -253,5 +253,78 @@ def _(BARS, TICKERS, aligned_for, ev, mo, pl, scales, walked):
     mo.vstack([mo.md("### The scale c, fitted before the split"), scales, mo.md("### The twelve verdicts of item 27"), mo.ui.table(level_verdicts, selection=None, page_size=12), mo.md(_reading)])
     return (level_verdicts,)
 
+@app.cell
+def _(mo):
+    mo.md(r"""
+    ## A model built for level shifts (item 33)
+
+    Item 32 found the volatility's persistence is level shifts or a trend, not
+    long memory. Lu and Perron's (2010) random level shift model filters a
+    level that jumps now and then, and forecasts it flat. Registered in
+    `planning/preregistered/random-level-shift-forecasts.md` (`33c1443`)
+    before the model existed; validated on its own simulation first
+    (`tests/levels.py`).
+    - **Refits.** Every 30 bars at 1d and every 42 at 4h; the level is
+      filtered at every bar.
+    - **Scoring.** Against the same GARCH and HAR (RV as the record builds
+      it) forecasts as above.
+
+    | # | claim | rule |
+    |---|---|---|
+    | R1 | RLS beats GARCH at every horizon | as H1 |
+    | R2 | RLS beats HAR at every horizon | against min(HAR, HARQ) |
+    """)
+    return
+
+
+@app.cell
+def _(BARS, HELD, HORIZONS, SPLIT, TICKERS, bars, gr, mo, pl):
+    from galata_research.models import levels as _levels
+
+    _EVERY_RLS = {"1d": 30, "4h": 42}
+
+    def _rls():
+        parts = []
+        for t in TICKERS:
+            for i in BARS:
+                r = gr.timeseries.returns(bars[(t, i)], kind="log")
+                f = _levels.walk_forward(r, split=SPLIT, every=_EVERY_RLS[i], horizons=HORIZONS[i])
+                parts.append(f.with_columns(pl.lit(i).alias("interval"), pl.lit("rls").alias("model"), pl.lit("-").alias("rv")))
+        return pl.concat(parts)
+
+    with mo.persistent_cache(name=f"har-long-rls-{HELD}"):
+        rls_walked = _rls()
+    return (rls_walked,)
+
+
+@app.cell
+def _(BARS, TICKERS, aligned_for, ev, mo, pl, rls_walked, walked):
+    _both = pl.concat([walked, rls_walked], how="diagonal_relaxed")
+    _rows, _cards = [], []
+    for _t in TICKERS:
+        for _i in BARS:
+            _card = ev.scorecard(aligned_for(_t, _i, "A", frame=_both), benchmark="garch")
+            _cards.append(_card.with_columns(pl.lit(_t).alias("ticker"), pl.lit(_i).alias("bars")))
+            _q = _card.select("model", "h", "qlike")
+            _rls_q = _q.filter(pl.col("model") == "rls").select("h", pl.col("qlike").alias("rls"))
+            _vs = {
+                "R1": _q.filter(pl.col("model") == "garch").select("h", pl.col("qlike").alias("other")),
+                "R2": _q.filter(pl.col("model").is_in(["har", "harq"])).group_by("h").agg(pl.col("qlike").min().alias("other")),
+            }
+            _ratio = _card.filter(pl.col("model") == "rls").sort("h")
+            for _hyp, _other in _vs.items():
+                _j = _rls_q.join(_other, on="h").sort("h")
+                _wins = int((_j["rls"] < _j["other"]).sum())
+                _rows.append({"#": _hyp, "ticker": _t, "bars": _i,
+                              "verdict": "consistent" if _wins == _j.height else "contradicts" if _wins == 0 else "mixed",
+                              "measured": f"{_wins} of {_j.height} horizons" + ("; RLS ÷ GARCH " + ", ".join(f"h{h} {x:.3f}" for h, x in _ratio.select("h", "qlike_ratio").iter_rows()) if _hyp == "R1" else "")})  # fmt: skip
+    rls_verdicts = pl.DataFrame(_rows).sort("#", "ticker", "bars")
+    rls_cards = pl.concat(_cards)
+    _n = rls_verdicts.filter((pl.col("#") == "R1") & (pl.col("verdict") == "consistent")).height
+    _reading = "**Level shifts forecast better** (R1 consistent in three or more cells)." if _n >= 3 else "**Not in these forecasts** (R1 consistent in at most one cell)." if _n <= 1 else "**Neither**, by the registered reading."
+    mo.vstack([mo.md("### The eight verdicts of item 33"), mo.ui.table(rls_verdicts, selection=None, page_size=8), mo.md(_reading),
+               mo.md("Every model against GARCH, per cell (below 1: better):"), rls_cards.pivot(on="h", index=["ticker", "bars", "model"], values="qlike_ratio")])  # fmt: skip
+    return rls_cards, rls_verdicts
+
 if __name__ == "__main__":
     app.run()
