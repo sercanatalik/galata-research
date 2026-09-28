@@ -44,7 +44,7 @@ from ._arch import DISTS, SCALE, SIMULATED
 from .vol import garch as _garch
 
 MODELS = ("garch", "gjr", "egarch", "ewma")
-CORRS = ("dcc", "cdcc")
+CORRS = ("dcc", "cdcc", "ccc", "iewma")
 _POLYNOMIAL_TAILS = ("t", "skewt")
 _STARTS = ((0.02, 0.95), (0.05, 0.90))
 _SMAX = 0.9999  # a + b stays below one
@@ -152,7 +152,7 @@ def filter(z: np.ndarray, a: float, b: float, qbar: np.ndarray, *, corr: str = "
     """
     z = np.asarray(z, dtype=float)
     T, N = z.shape
-    if corr == "dcc":
+    if corr in ("dcc", "ccc", "iewma"):
         x = np.empty((T + 1, N, N))
         x[0] = qbar
         x[1:] = (1 - a - b) * qbar + a * np.einsum("ti,tj->tij", z, z)
@@ -214,6 +214,10 @@ def estimate(z: np.ndarray, *, corr: str = "dcc") -> dict:
     cDCC profiles its target: S̃(a, b) is recomputed at every trial (a, b).
     """
     z = np.asarray(z, dtype=float)
+    if corr == "ccc":
+        # Bollerslev's (1990) constant correlation: R = Q̄ normalised, nothing to estimate.
+        moment = z.T @ z / len(z)
+        return {"a": 0.0, "b": 0.0, "qbar": moment, "loglik": loglik(z, 0.0, 0.0, moment), "converged": True}
     best = None
     for a0, b0 in _STARTS:
         moment = z.T @ z / len(z)
@@ -379,6 +383,7 @@ def walk_forward(
     factors: pl.DataFrame | None = None,
     column: str = "return",
     lam: float = 0.94,
+    sample_window: int = 180,
     simulations: int = 1000,
     seed: int = 0,
     min_obs: int = 500,
@@ -399,12 +404,20 @@ def walk_forward(
     is `ewma_n_eff(b)` over the rows since the refit window began (DCC), or
     `ewma_n_eff(lam)` over the rows so far (EWMA).
 
+    `corr="iewma"` is RiskMetrics' EWMA applied to the same step 1's z, not to
+    the returns: a = 1 − `lam`, b = `lam`, nothing estimated in step 2, and R
+    never reverts. With the σ shared, it differs from DCC in R alone.
+    `corr="ccc"` is Bollerslev's (1990) constant correlation over the same
+    step 1: R = Q̄ normalised, a = b = 0, `n_eff` the window's rows.
+    `corr="sample"` is the equal-weight second moment of the last
+    `sample_window` joint returns, zero mean, nothing fitted, flat.
+
     With `factors` (`gr.timeseries.seasonal_factors`, fitted no later than
     `split`), each ticker's returns are divided by its cell's factor before
     anything is fitted, and each target bar's Σᵢⱼ is multiplied by fᵢ·fⱼ of
     its cell.
     """
-    ewma_path = corr == "ewma"
+    ewma_path = corr in ("ewma", "sample")
     if not ewma_path:
         _check(model, dist, corr)
     hs = sorted({int(h) for h in horizons})
@@ -431,7 +444,15 @@ def walk_forward(
     width = frame["close_ts"][0] - frame["ts"][0]
     origins = np.arange(first, frame.height)
 
-    if ewma_path:
+    if corr == "sample":
+        if first + 1 < sample_window:
+            raise Refused(f"the first origin has {first + 1} joint returns, under sample_window={sample_window}: it starts at {youngest}'s first return")
+        path = np.stack([y[t - sample_window + 1 : t + 1].T @ y[t - sample_window + 1 : t + 1] / sample_window for t in origins])
+        sig = np.repeat(path[:, None], H, axis=1)  # flat, as EWMA's
+        schedule = schedule.with_columns(pl.col("close_ts").alias("fitted_through"), pl.lit(False).alias("refit"))
+        ne = np.full(len(origins), float(sample_window))
+        a_col = b_col = np.full(len(origins), np.nan)
+    elif ewma_path:
         w = _warmup(lam, None)
         if first + 1 < w:
             raise Refused(f"the first origin has {first + 1} joint returns, under the warm-up {w} at lam={lam}: it starts at {youngest}'s first return")
@@ -458,7 +479,12 @@ def walk_forward(
                 fixed = m.fix(res.params, first_obs=lo, last_obs=stop)
                 z[:, k] = np.asarray(fixed.std_resid, dtype=float)[lo:stop]
                 d[:, :, k] = _arch.forecast(res, start=r, horizon=H, simulate=model in SIMULATED, simulations=simulations) / SCALE**2
-            est = estimate(z[: r + 1 - lo], corr=corr)
+            if corr == "iewma":
+                # EWMA on z (integrated DCC): a = 1 − λ, b = λ, so (1 − a − b)Q̄ vanishes and R never reverts.
+                zt = z[: r + 1 - lo]
+                est = {"a": 1 - lam, "b": lam, "qbar": zt.T @ zt / len(zt)}
+            else:
+                est = estimate(z[: r + 1 - lo], corr=corr)
             a, b, qbar = est["a"], est["b"], est["qbar"]
             _, rr = filter(z, a, b, qbar, corr=corr)
             rbar = _normalise(qbar)
@@ -467,7 +493,8 @@ def walk_forward(
             rh = rbar + decay[None, :, None, None] * (r1 - rbar)[:, None]
             sd = np.sqrt(d)
             sig.append(sd[..., :, None] * rh * sd[..., None, :])
-            ne.extend(ewma_n_eff(b, t - lo + 1) for t in range(r, stop))
+            # CCC's R̄ rests on the whole window, equally weighted.
+            ne.extend(float(r + 1 - lo) if corr == "ccc" else ewma_n_eff(b, t - lo + 1) for t in range(r, stop))
             a_col.extend([a] * (stop - r))
             b_col.extend([b] * (stop - r))
         sig = np.concatenate(sig)
@@ -508,3 +535,117 @@ def _target_factors(schedule: pl.DataFrame, factors: pl.DataFrame, ticker: str, 
     if one.height == 0:
         raise Refused(f"no factors for {ticker}")
     return np.sqrt(_target_factor2(schedule.with_columns(pl.lit(ticker).alias("ticker")), one, width, H))
+
+
+# ── scoring covariance forecasts ─────────────────────────────────────────────
+
+LOSSES = ("stein", "frobenius", "gmv")
+
+
+def _matrices(walked: pl.DataFrame, h: int) -> dict:
+    """`{close_ts: (tickers, Σ)}` of one walk at horizon h."""
+    rows = walked.filter(pl.col("h") == h)
+    tickers = sorted(set(rows["ticker_i"].to_list()) | set(rows["ticker_j"].to_list()))
+    index = {t: k for k, t in enumerate(tickers)}
+    out = {}
+    for (close,), group in rows.group_by("close_ts", maintain_order=True):
+        s = np.full((len(tickers), len(tickers)), np.nan)
+        for i, j, v in zip(group["ticker_i"], group["ticker_j"], group["covariance"]):
+            s[index[i], index[j]] = s[index[j], index[i]] = v
+        out[close] = (tickers, s)
+    return out
+
+
+def losses(sigma, r) -> dict:
+    """The three losses of one forecast Σ against the realised returns r of its bar, with r rᵀ as the proxy.
+
+    - `stein`: ln|Σ| + rᵀΣ⁻¹r, the multivariate QLIKE (Stein) loss, robust to a
+      noisy conditionally unbiased proxy (Patton and Sheppard 2009; Laurent,
+      Rombouts and Violante 2013);
+    - `frobenius`: ‖r rᵀ − Σ‖²_F, the multivariate MSE, also robust;
+    - `gmv`: (wᵀr)², the realised variance of the global minimum-variance
+      portfolio w = Σ⁻¹1 / 1ᵀΣ⁻¹1 (Engle and Colacito 2006).
+    """
+    s = (np.asarray(sigma, dtype=float) + np.asarray(sigma, dtype=float).T) / 2
+    r = np.asarray(r, dtype=float)
+    chol = np.linalg.cholesky(s)
+    z = np.linalg.solve(chol, r)
+    logdet = 2 * np.log(np.diag(chol)).sum()
+    ones = np.linalg.solve(chol.T, np.linalg.solve(chol, np.ones(len(r))))
+    w = ones / ones.sum()
+    return {"stein": float(logdet + z @ z), "frobenius": float(((np.outer(r, r) - s) ** 2).sum()), "gmv": float((w @ r) ** 2)}
+
+
+def score(forecasts: dict, returns: pl.LazyFrame | pl.DataFrame, *, h: int = 1, column: str = "return") -> pl.DataFrame:
+    """`close_ts, model, stein, frobenius, gmv`: each model's h-step Σ scored against the realised joint returns of its target bar.
+
+    Only origins every model forecast, whose target bar is in the joint sample,
+    are scored, so every model is judged on the same bars.
+    """
+    tickers, frame, _ = joint(returns, column=column)
+    width = frame["close_ts"][0] - frame["ts"][0]
+    realised = {ts: row for ts, row in zip(frame["ts"].to_list(), frame.select(tickers).rows())}
+    per = {name: _matrices(w, h) for name, w in forecasts.items()}
+    common = set.intersection(*(set(m) for m in per.values()))
+    rows = []
+    for close in sorted(common):
+        target = close + width * (h - 1)
+        if target not in realised:
+            continue
+        for name, mats in per.items():
+            names, s = mats[close]
+            if names != tickers:
+                raise Refused(f"{name} forecasts {names}; the returns hold {tickers}")
+            rows.append({"close_ts": close, "model": name, **losses(s, realised[target])})
+    if not rows:
+        raise Refused("no origin was forecast by every model with its target bar in the sample")
+    return pl.DataFrame(rows)
+
+
+def compare(scores: pl.DataFrame, *, loss: str, benchmark: str, size: float = 0.1, reps: int = 1000, seed: int = 0) -> pl.DataFrame:
+    """`model, mean_loss, dm, dm_p, mcs_p, included`: Diebold–Mariano against `benchmark` and the Model Confidence Set.
+
+    DM on d = loss − benchmark's (negative favours the model), its long-run
+    variance Newey–West (Bartlett) at ⌊4(T/100)^(2/9)⌋ lags, with the
+    Harvey–Leybourne–Newbold factor at h = 1, √((T − 1)/T), and a two-sided
+    p from t(T − 1). The MCS is Hansen, Lunde and Nason's (2011), range
+    statistic, stationary bootstrap with the block chosen as `evaluate`
+    chooses it, on the loss matrix of the scored bars.
+    """
+    from arch.bootstrap import MCS
+
+    from . import evaluate
+
+    if loss not in LOSSES:
+        raise Refused(f"loss={loss!r} is not one of {', '.join(LOSSES)}")
+    wide = scores.pivot(on="model", index="close_ts", values=loss).sort("close_ts").drop_nulls()
+    names = [c for c in wide.columns if c != "close_ts"]
+    if benchmark not in names:
+        raise Refused(f"benchmark={benchmark!r} is not among {', '.join(names)}")
+    x = wide.select(names).to_numpy()
+    test = MCS(x, size, reps=reps, block_size=evaluate._block(x), method="R", bootstrap="stationary", seed=seed)
+    test.compute()
+    pv = {names[int(i)]: float(v) for i, v in zip(test.pvalues.index, np.asarray(test.pvalues).ravel())}
+    included = {names[int(i)] for i in test.included}
+    rows = []
+    for k, name in enumerate(names):
+        d = dm_hac(x[:, k] - x[:, names.index(benchmark)]) if name != benchmark else {"statistic": None, "p_value": None}
+        rows.append({"model": name, "mean_loss": float(x[:, k].mean()), "dm": d.get("statistic"), "dm_p": d.get("p_value"), "mcs_p": pv[name], "included": name in included, "bars": x.shape[0]})
+    return pl.DataFrame(rows, infer_schema_length=None).sort("mean_loss")
+
+
+def dm_hac(d) -> dict:
+    """Diebold–Mariano at h = 1 with a Newey–West variance at ⌊4(T/100)^(2/9)⌋ lags and the HLN factor."""
+    from scipy import stats as sstats
+
+    from . import evaluate
+
+    d = np.asarray(d, dtype=float)
+    d = d[np.isfinite(d)]
+    n = d.size
+    if n < 3:
+        raise Refused(f"{n} loss differentials are too few for a Diebold–Mariano test")
+    lags = int(4 * (n / 100) ** (2 / 9))
+    v = evaluate._lrv(d, lags, "bartlett")
+    stat = d.mean() / np.sqrt(v / n) * np.sqrt((n - 1) / n)
+    return {"statistic": float(stat), "p_value": float(2 * sstats.t.sf(abs(stat), n - 1)), "n": n, "lags": lags}
