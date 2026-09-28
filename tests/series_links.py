@@ -78,3 +78,49 @@ def no_non_positive_value_is_accepted():
     f = pl.DataFrame({"ts": [utc("2026-01-05T00:00"), utc("2026-01-05T01:00")], "x": [1.0, 0.0], "y": [1.0, 1.0]})
     with pytest.raises(Refused, match="must be positive"):
         timeseries.log_elasticity(f, "y", "x")
+
+
+# ---- resample --------------------------------------------------------------------
+
+
+def _minutes(day: str, drop: int | None = None) -> pl.DataFrame:
+    t0 = utc(f"{day}T00:00")
+    rows = [
+        {"ticker": "BTC", "ts": t0 + timedelta(minutes=m), "close_ts": t0 + timedelta(minutes=m + 1),
+         "open": 100.0 + m, "high": 101.0 + m, "low": 99.0 + m, "close": 100.5 + m, "volume": 1.0}
+        for m in range(1440) if m != drop
+    ]  # fmt: skip
+    return pl.DataFrame(rows)
+
+
+def a_day_is_built_from_its_minutes():
+    got = timeseries.resample(_minutes("2026-01-01"), "1d")
+    assert got.height == 1
+    row = got.row(0, named=True)
+    assert (row["open"], row["high"], row["low"], row["close"]) == (100.0, 1540.0, 99.0, 1539.5)
+    assert (row["volume"], row["n"]) == (1440.0, 1440)
+    assert row["close_ts"] == utc("2026-01-02T00:00")
+
+
+def a_missing_minute_drops_only_its_day():
+    bars = pl.concat([_minutes("2026-01-01"), _minutes("2026-01-02", drop=700), _minutes("2026-01-03")])
+    got = timeseries.resample(bars, "1d")
+    assert [t.day for t in got["ts"]] == [1, 3]
+    assert timeseries.resample(bars, "4h").height == 17  # the 4h bucket holding minute 700 goes, the other five stay
+
+
+def a_width_that_does_not_divide_is_refused():
+    four = timeseries.resample(_minutes("2026-01-01"), "4h")
+    with pytest.raises(Refused, match="5m must be a coarser whole multiple"):
+        timeseries.resample(four, "5m")
+    mixed = pl.concat([_minutes("2026-01-01").head(5), timeseries.resample(_minutes("2026-01-02"), "5m").drop("n")], how="diagonal_relaxed")
+    with pytest.raises(Refused, match="1d must be a coarser whole multiple"):
+        timeseries.resample(mixed, "1d")
+    with pytest.raises(Refused, match="every='2h' is not one of"):
+        timeseries.resample(_minutes("2026-01-01"), "2h")
+
+
+def the_resampled_bars_feed_realized_from():
+    bars = pl.concat([_minutes("2026-01-01"), _minutes("2026-01-02")])
+    five = timeseries.resample(bars, "5m")
+    assert timeseries.realized_from(five, "1d")["rv"].drop_nulls().len() == 1  # day 2; day 1's first return has no prior close

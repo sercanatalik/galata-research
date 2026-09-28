@@ -287,6 +287,53 @@ def realized_from(fine: pl.LazyFrame | pl.DataFrame, interval: str) -> pl.DataFr
     )
 
 
+RESAMPLE = {"5m": 300_000_000, "1h": 3_600_000_000, "4h": 14_400_000_000, "1d": 86_400_000_000}
+
+
+def resample(bars: pl.LazyFrame | pl.DataFrame, every: str) -> pl.DataFrame:
+    """Whole bars of width `every` (5m, 1h, 4h or 1d) on the UTC grid, from finer bars of one width.
+
+    `ticker, ts, close_ts, open, high, low, close, [volume, trade_count,] n`:
+    the first open, the extreme high and low, the last close, volume and
+    trade count summed where the input has them, and `n` fine bars. A bucket
+    missing any fine bar is dropped, not shortened: a day without one of its
+    minutes is not a day.
+    """
+    if every not in RESAMPLE:
+        raise Refused(f"every={every!r} is not one of {', '.join(RESAMPLE)}")
+    utils.require(bars, _OHLC, "load fine bars with gr.market.candles or gr.reference.candles")
+    lf = utils.lazy(bars).sort("ticker", "ts")
+    widths = lf.select((pl.col("close_ts") - pl.col("ts")).dt.total_microseconds().unique()).collect().to_series().to_list()
+    coarse = RESAMPLE[every]
+    if len(widths) != 1 or widths[0] >= coarse or coarse % widths[0]:
+        raise Refused(f"the bars are {sorted(widths)} µs wide; {every} must be a coarser whole multiple of one width")
+    expected = coarse // widths[0]
+    names = lf.collect_schema().names()
+    summed = [pl.col(c).sum() for c in ("volume", "trade_count") if c in names]
+    return (
+        lf.group_by("ticker", pl.col("ts").dt.truncate(every).alias("_bucket"))
+        .agg(
+            pl.col("open").first(),
+            pl.col("high").max(),
+            pl.col("low").min(),
+            pl.col("close").last(),
+            *summed,
+            pl.len().cast(pl.Int64).alias("n"),
+        )
+        .filter(pl.col("n") == expected)
+        .select(
+            "ticker",
+            pl.col("_bucket").alias("ts"),
+            (pl.col("_bucket") + pl.duration(microseconds=coarse)).alias("close_ts"),
+            "open", "high", "low", "close",
+            *[c for c in ("volume", "trade_count") if c in names],
+            "n",
+        )  # fmt: skip
+        .sort("ticker", "ts")
+        .collect()
+    )
+
+
 def _warmup(lam: float) -> int:
     from math import ceil, log
 

@@ -104,3 +104,44 @@ reason. It is never re-run with other settings under this number.
 ## Results
 
 *Appended after the run. Nothing above this line may change.*
+
+### Run of 2026-09-28 (`notebooks/har_long.py`)
+
+- **Run.** All 32 walks completed; none skipped.
+  - Forecast origins at h = 1: 756 daily and 4,536 4h.
+  - `fitted_through ≤ close_ts` on every row.
+- **Deviations.** None in the procedure.
+- **A display correction, not a rule change.** The notebook's first
+  "measured" text divided Patton's QLIKE means, which are negative at these
+  scales, so its ratios read inverted. It now shows the scorecard's
+  textbook QLIKE ratio (below 1: better). The verdicts, which compare raw
+  QLIKE as `garch.py` does, did not change.
+
+| # | BTC 1d | BTC 4h | ETH 1d | ETH 4h |
+|---|---|---|---|---|
+| H1 | **consistent**: best HAR ÷ GARCH 0.987, 0.957, 0.804 | **mixed** (1 of 3): 0.991, 1.088, 1.482 | **consistent**: 0.967, 0.870, 0.621 | **consistent**: 0.968, 0.952, 0.996 |
+| H2 | **mixed** (1 of 3): 0.960, 1.046, 1.042 | **mixed** (1 of 3): 0.968, 1.079, 1.597 | **consistent**: 0.958, 0.891, 0.790 | **mixed** (2 of 3): 0.971, 0.985, 1.164 |
+| H3 | **yes** (uSPA p 0.016) | **no** (p 1.000) | **yes** (p 0.000) | **no** (p 0.152) |
+
+Ratios are at horizons 1, 7, 30 (1d) and 1, 6, 42 (4h).
+
+**Against *What would count*: mixed.** H1 is consistent in three cells and
+contradicts in none. Against the predictions:
+- **H1:** held in 3 of 4 cells.
+- **H2:** held in 1 of 4.
+- **H3:** held in 2 of 4. It is significant at 1d, not at 4h.
+
+**Read.**
+- **At 1d, HAR beats GARCH on both tickers, and HARQ significantly.** The
+  record's BTC verdict holds on six years of Binance bars. The gap
+  **widens** with the horizon (0.80 and 0.62 at 30 days), against the
+  registration's expectation that it would narrow.
+- **At 4h it does not travel.** On BTC, HAR loses beyond one bar (1.48 at 42
+  bars, 7 days). On ETH, HAR is lower at every horizon but not significantly.
+- **5-minute RV makes HAR worse here, not better** (H2 below H1 in three
+  cells). A diagnostic, *not registered*: over 2020-01 to 2024-08, mean
+  5-minute RV is 1.09–1.23× the mean squared return it is scored against,
+  while the record's coarser RV is 0.89–1.06×. HAR forecasts its own
+  measure's level, and QLIKE against r² charges that bias. This contradicts
+  Liu, Patton and Sheppard's (2015) ranking only if the proxy is taken as
+  truth; it says the proxy and the RV must be built at the same frequency.

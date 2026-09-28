@@ -143,9 +143,11 @@ Chosen by the operator on 2026-09-28:
   typed, with the registered labels kept apart from later runs. Done: `survival_table` generates it. Two claims
   hold wherever decided on all three tickers (better σ ≠ better P&L; feedback's Sharpe gain not significant).
   Whether anything beats GARCH, and GARCH's multi-horizon MCS membership, repeat BTC in 2 of 6 cells.
-- [ ] 24. **`har-vs-garch-long-history`**: *HAR beats GARCH* is decided in only two cells. Register it and test it
-  on years of BTC and ETH from `gr.reference`'s published archives. Blocked until the other session commits
-  `gr.reference`.
+- [x] 24. **`har-vs-garch-long-history`**: *HAR beats GARCH* is decided in only two cells. Register it and test it
+  on years of BTC and ETH from `gr.reference`'s published archives. Done: registered alone (`3e02cfb`), run in
+  `har_long.py` on Binance 1m klines 2020–2026. **Mixed**: HAR beats GARCH at 1d on BTC and ETH, HARQ
+  significantly (uSPA p 0.016, 0.000); at 4h not on BTC, and not significantly on ETH. 5-minute RV does worse
+  than the record's coarser RV, since it sits 9–23% above the squared-return proxy.
 
 Chosen by the operator on 2026-09-28, for galata-datawatch's market-data signals (its roadmap, Tier 16), which
 depend on it:
@@ -177,6 +179,17 @@ depend on it:
     That is a study to register and run on minimum-variance portfolio variance and a multivariate QLIKE
     (Engle and Colacito 2006; Laurent, Rombouts and Violante 2012), walked forward as `garch.py` was. Until
     then the choice is the operator's, declared.
+
+
+Chosen by the operator on 2026-09-28, after item 24:
+
+- [ ] 26. **`vol-study-long-history`**: register, then run all eleven claims `garch.py` decides on Binance
+  BTC and ETH, 1d and 4h, 2020–2026 from `gr.reference`, not only *HAR beats GARCH*.
+- [ ] 27. **`har-matched-proxy`**: register, then re-score item 24's H1 and H2 against a realized-variance proxy
+  built at the same frequency as each HAR input, to test whether 5-minute RV lost only through its level bias.
+- [ ] 28. **`keep-the-reference-current`**: one command that fetches what the forward claims and the studies need
+  up to yesterday, idempotently, and a schedule for it, so the seven forward liquidity claims fill in from
+  2026-09-29.
 
 ---
 

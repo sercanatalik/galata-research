@@ -422,6 +422,7 @@ trial, so N is the true N) back these notebooks:
 | `liquidity_costs.py` ⑱ | how does depth move with volatility? On BTC, doubling realized variance goes with ~8% less ±1% depth (elasticity −0.115), and the two are anti-correlated at every lag; on ETH, depth's level ignores volatility. Hour to hour, depth falls in the hour volatility rises, not hours before |
 | `liquidity_claims.py` | what survives of the liquidity study? Sixteen claims from the literature and vendors, each citation checked against its source, each verdict computed from the five study notebooks (`app.embed()`): 10 consistent, 2 contradicted, 1 mixed, 1 immaterial, 2 can't tell |
 | `liquidity_forward.py` | do the liquidity findings hold on data not yet seen? Seven claims registered in `planning/preregistered/liquidity-forward.md` (committed alone, `98b1e53`, 2026-09-28), scored only from 2026-09-29: all *not yet decidable* today. A dry run from 2026-06-01 (not a result) would support four and not two, jumps at 08:30 and depth forecasting among them |
+| `har_long.py` | does *HAR beats GARCH* hold on six years? Registered (`3e02cfb`), then run on Binance 1m klines, 2020–2026, out of sample from 2024-09: **at 1d, yes on BTC and ETH, and HARQ significantly** (uSPA p 0.016, 0.000), with the gap widening to 30 days (QLIKE ÷ GARCH 0.80, 0.62). **At 4h it does not travel**: BTC's HAR loses beyond one bar, and ETH's edge is not significant. HAR on 5-minute RV does worse, because that RV sits 9–23% above the squared return it is scored against |
 | `permuted_bars.py` | is there structure to find at all? The whole search re-run on 200 markets with the bars permuted: the real best (1.08) is **below** the permuted median (1.13), p = 0.59 |
 
 **Pre-registered forward claims.** `planning/preregistered/liquidity-forward.md`
@@ -754,7 +755,7 @@ uv run marimo check notebooks/*.py     # every notebook, as CI and tests/noteboo
 | OKX as a third venue | done: peaks at 14 UTC like the others; on BTC it sits between Binance and Bybit |
 | Seven forward liquidity claims, registered | registered 2026-09-28; scored from 2026-09-29 by `liquidity_forward.py` |
 | Liquidity items 10 and 11 (on the rebuilt tape; walked funding days) | blocked: the archive lost HL days after the rebuild; funding walk off in datawatch |
-| HAR vs GARCH on years of BTC and ETH, registered | next: `gr.reference` holds 1m candles from 2019-12-31 |
+| HAR vs GARCH on years of BTC and ETH, registered | done: mixed; holds at 1d on both (HARQ significant), not at 4h |
 
 ---
 
