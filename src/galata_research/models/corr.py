@@ -656,3 +656,56 @@ def dm_hac(d) -> dict:
     v = evaluate._lrv(d, lags, "bartlett")
     stat = d.mean() / np.sqrt(v / n) * np.sqrt((n - 1) / n)
     return {"statistic": float(stat), "p_value": float(2 * sstats.t.sf(abs(stat), n - 1)), "n": n, "lags": lags}
+
+
+# ── constancy (test-the-constant-correlation) ───────────────────────────────
+
+
+def constancy(z, rbar, *, lags: int = 5, robust: bool = True) -> dict:
+    """Engle and Sheppard's (2001, NBER WP 8554, §4) test that the correlation is constant at `rbar`.
+
+    `z` (T × N) are the margins' standardised returns and `rbar` the constant
+    correlation under test (a Q̄ is normalised first). Whitened by the symmetric
+    inverse square root, uₜ = R̄^(−½)zₜ, the off-diagonal products uᵢₜuⱼₜ have
+    mean zero and no dynamics under the null. They are stacked over the
+    N(N−1)/2 pairs into one regression on a constant and `lags` of themselves,
+    with the coefficients shared across pairs, and δ̂ (constant and lags) is
+    tested jointly: χ²(lags + 1). The constant catches a correlation that has
+    moved away from `rbar`, the lags one that moves with its past.
+
+    The paper's statistic is δ̂′X′Xδ̂/σ̂², homoskedastic. The products of
+    Student-t returns at ν ≈ 3 have no finite variance to speak of, so
+    `robust=True` (the default) uses White's heteroskedasticity-consistent
+    covariance instead: δ̂′(X′X)(X′Ω̂X)⁻¹(X′X)δ̂. The test cannot tell dynamic
+    correlation from a misspecified margin (the paper's footnote 8).
+    """
+    from scipy import stats as sstats
+
+    z = np.asarray(z, dtype=float)
+    if z.ndim != 2 or z.shape[1] < 2:
+        raise Refused(f"a constancy test needs two series or more; z has shape {z.shape}")
+    if lags < 1:
+        raise Refused(f"lags={lags}: at least one")
+    T, N = z.shape
+    if T <= lags + 2:
+        raise Refused(f"{T} returns are too few for {lags} lags")
+    r = _normalise(np.asarray(rbar, dtype=float))
+    w, v = np.linalg.eigh(r)
+    if w.min() <= 0:
+        raise Refused(f"rbar is not positive definite (smallest eigenvalue {w.min():.3g})")
+    u = z @ (v @ np.diag(w**-0.5) @ v.T)
+    i, j = np.triu_indices(N, k=1)
+    y = u[:, i] * u[:, j]  # T × pairs
+    rows = T - lags
+    regressand = y[lags:].T.reshape(-1)  # pair-major
+    columns = [np.ones(rows * len(i))] + [y[lags - k : T - k].T.reshape(-1) for k in range(1, lags + 1)]
+    x = np.column_stack(columns)
+    xtx = x.T @ x
+    delta = np.linalg.solve(xtx, x.T @ regressand)
+    e = regressand - x @ delta
+    if robust:
+        meat = (x * (e**2)[:, None]).T @ x
+        stat = float(delta @ xtx @ np.linalg.solve(meat, xtx @ delta))
+    else:
+        stat = float(delta @ xtx @ delta / (e @ e / (len(e) - x.shape[1])))
+    return {"statistic": stat, "p_value": float(sstats.chi2.sf(stat, lags + 1)), "lags": lags, "n": T, "robust": robust}
