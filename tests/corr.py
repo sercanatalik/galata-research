@@ -286,6 +286,26 @@ def the_correlation_reverts_to_its_long_run_level(pair):
     assert np.allclose(r40 - rbar, s**39 * (r1 - rbar), atol=1e-5)  # R̄ from the in-sample fit, z from the filter: ~2e-6 apart
 
 
+def the_correlation_target_is_what_the_forecast_reverts_to(pair):
+    w = corr.walk_forward(pair, model="garch", dist="normal", split=_split(pair, 800), every=1000, horizons=[1, 40])
+    f = corr.fit(pair.filter(pl.col("ts") <= pair["ts"][800]), model="garch", dist="normal")
+    d = np.sqrt(np.diag(f.qbar))
+    off = w.filter(pl.col("ticker_i") != pl.col("ticker_j")).sort("close_ts")
+    target = off.filter(pl.col("h") == 1)["correlation_target"].to_numpy()
+    r1 = off.filter(pl.col("h") == 1)["correlation"].to_numpy()
+    r40 = off.filter(pl.col("h") == 40)["correlation"].to_numpy()
+    assert np.allclose(target, (f.qbar / np.outer(d, d))[0, 1], atol=1e-5)  # the in-sample fit's Q̄, normalised
+    assert np.allclose(r40 - target, (f.a + f.b) ** 39 * (r1 - target), atol=1e-5)
+    own = w.filter(pl.col("ticker_i") == pl.col("ticker_j"))
+    assert np.allclose(own["correlation_target"].to_numpy(), 1.0)
+
+
+def no_target_where_nothing_reverts(pair):
+    for kind in ("ewma", "sample", "iewma"):
+        w = corr.walk_forward(pair, model="garch", dist="normal", corr=kind, sample_window=50, split=_split(pair, 599), every=1000, horizons=[1])
+        assert w["correlation_target"].is_null().all(), kind
+
+
 def every_pair_of_an_origin_shares_one_fit_span(pair):
     w = corr.walk_forward(pair, model="garch", dist="normal", split=_split(pair, 599), every=5, horizons=[1])
     per_origin = w.group_by("close_ts").agg(pl.col("fitted_through").n_unique().alias("spans"), pl.col("refit").first()).sort("close_ts")

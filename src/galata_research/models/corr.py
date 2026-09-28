@@ -50,7 +50,7 @@ _STARTS = ((0.02, 0.95), (0.05, 0.90))
 _SMAX = 0.9999  # a + b stays below one
 _OUT = (
     "ts", "close_ts", "h", "target_ts", "ticker_i", "ticker_j", "covariance", "cum_covariance", "correlation",
-    "fitted_through", "fit_from", "refit", "after_gap", "n_eff", "a", "b",
+    "correlation_target", "fitted_through", "fit_from", "refit", "after_gap", "n_eff", "a", "b",
 )
 
 
@@ -391,12 +391,15 @@ def walk_forward(
     """Σ forecasts from every origin at or after `split`, one row per (origin, h, pair i ≤ j), one refit schedule for all tickers.
 
     `ts, close_ts, h, target_ts, ticker_i, ticker_j, covariance,
-    cum_covariance, correlation, fitted_through, fit_from, refit, after_gap,
-    n_eff, a, b`, in squared return units per bar. At each refit, step 1 (per
+    cum_covariance, correlation, correlation_target, fitted_through, fit_from,
+    refit, after_gap, n_eff, a, b`, in squared return units per bar. At each refit, step 1 (per
     ticker, arch) and step 2 (a, b) are fitted on the refit's window only;
     origins until the next refit are filtered with them fixed. D at h is each
     ticker's own h-step variance, as `vol.walk_forward` forecasts it; R at h is
     R̄ + (a + b)^(h−1)(Rₜ₊₁ − R̄); `cum_covariance` sums Σ over bars 1…h.
+    `correlation_target` is that R̄, the correlation the fit reverts to: Q̄
+    normalised (DCC, CCC) or the profiled S̃ (cDCC). It is null where nothing
+    reverts (`ewma`, `sample`, `iewma`).
 
     `corr="ewma"` is RiskMetrics' covariance with `lam`: nothing is fitted
     (`refit` false, `fitted_through` the origin's close, `a` and `b` null), the
@@ -452,6 +455,7 @@ def walk_forward(
         schedule = schedule.with_columns(pl.col("close_ts").alias("fitted_through"), pl.lit(False).alias("refit"))
         ne = np.full(len(origins), float(sample_window))
         a_col = b_col = np.full(len(origins), np.nan)
+        tgt = np.full((len(origins), N, N), np.nan)
     elif ewma_path:
         w = _warmup(lam, None)
         if first + 1 < w:
@@ -461,12 +465,13 @@ def walk_forward(
         schedule = schedule.with_columns(pl.col("close_ts").alias("fitted_through"), pl.lit(False).alias("refit"))
         ne = np.array([ewma_n_eff(lam, t + 1) for t in origins])
         a_col = b_col = np.full(len(origins), np.nan)
+        tgt = np.full((len(origins), N, N), np.nan)
     else:
         refits = [first + i for i, r in enumerate(schedule["refit"].to_list()) if r]
         first_window = refits[0] + 1 if window == "expanding" else window
         if first_window < min_obs:
             raise Refused(f"the first refit's window holds {first_window} joint returns, under min_obs={min_obs}: the sample starts at {youngest}'s first return")
-        sig, ne, a_col, b_col = [], [], [], []
+        sig, ne, a_col, b_col, tgt = [], [], [], [], []
         ys = y * SCALE
         for n, r in enumerate(refits):
             stop = refits[n + 1] if n + 1 < len(refits) else frame.height
@@ -493,11 +498,12 @@ def walk_forward(
             rh = rbar + decay[None, :, None, None] * (r1 - rbar)[:, None]
             sd = np.sqrt(d)
             sig.append(sd[..., :, None] * rh * sd[..., None, :])
+            tgt.append(np.repeat((np.full((N, N), np.nan) if corr == "iewma" else rbar)[None], stop - r, axis=0))
             # CCC's R̄ rests on the whole window, equally weighted.
             ne.extend(float(r + 1 - lo) if corr == "ccc" else ewma_n_eff(b, t - lo + 1) for t in range(r, stop))
             a_col.extend([a] * (stop - r))
             b_col.extend([b] * (stop - r))
-        sig = np.concatenate(sig)
+        sig, tgt = np.concatenate(sig), np.concatenate(tgt)
         ne, a_col, b_col = np.asarray(ne), np.asarray(a_col), np.asarray(b_col)
 
     if factors is not None:
@@ -522,6 +528,7 @@ def walk_forward(
                     pl.Series("covariance", sig[:, h - 1, i, j]),
                     pl.Series("cum_covariance", cum[:, h - 1, i, j]),
                     pl.Series("correlation", rho[:, h - 1, i, j]),
+                    pl.Series("correlation_target", tgt[:, i, j], nan_to_null=True),
                 )
             )
     return pl.concat(rows).select(_OUT).sort("close_ts", "h", "ticker_i", "ticker_j")
