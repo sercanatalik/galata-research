@@ -200,6 +200,20 @@ Chosen by the operator on 2026-09-28, after item 24:
   `scripts/schedule_reference_update.sh`, installed as a launchd job at 09:00. `events` without a contact now keeps
   the 449 BLS events held instead of dropping them.
 
+
+Taken from item 26's follow-ups on 2026-09-28, the operator re-running the loop without other picks (HYPE on
+Binance was dropped: its archive starts 2025-05-30, later than the record's HYPE bars):
+
+- [x] 29. **`vol-study-long-history-1h`**: register, then replay `garch.py` at 1h on six years of Binance BTC and ETH
+  (about 58,000 bars each, against the record's 5,000), predicting each cell's record verdict. Done: **12 of 18**
+  repeat. *α+β≈1 at 1h is the daily cycle* fails on six years (deseasonalised persistence stays 1.0000), and
+  feedback's tracking gain goes. Over 1d, 4h and 1h only *t beats normal* and *feedback's Sharpe gain is not
+  significant* hold everywhere; the persistence and MCS claims are sample-specific.
+- [x] 30. **`mcs-by-split`**: register, then test whether *GARCH outside the multi-horizon MCS*, the one claim item
+  26 found sample-specific, turns on where the sample is split: fixed shares 0.5, 0.6, 0.7 and 0.8. Done: **it turns
+  on the split** (3 of 4 cells change verdict across shares); only ETH 1d is stable (GARCH outside at every share).
+  *Something beats GARCH* is stable at 1d on both tickers; 4h verdicts and the shortest window are the least steady.
+
 ---
 
 ## What the record holds

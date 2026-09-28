@@ -66,3 +66,54 @@ decided at 1d, 4h and 1h:
 ## Results
 
 *Appended after the run. Nothing above this line may change.*
+
+### Run of 2026-09-28 (`notebooks/vol_long.py`, 1h section)
+
+- **Samples.** Both tickers ran from 2020-01-01 to 2026-09-27, split at
+  2024-09-18 16:00 UTC.
+- **Deviations.** None.
+- **Run time.** 1,629 s.
+
+| claim | BTC 1h | ETH 1h |
+|---|---|---|
+| t beats normal | yes → yes (ΔBIC −14,196) | yes → yes (−11,711) |
+| no leverage effect | yes → yes (γ +0.008, se 0.005) | yes → yes (γ +0.013, se 0.004) |
+| α+β≈1 intraday is the daily cycle | **yes → no** (1.0000 → 0.9997) | **yes → no** (1.0000 → 1.0001) |
+| something beats GARCH(1,1) | no → no | yes → yes (outside at h = 24) |
+| better σ ≠ better P&L | yes → yes | yes → yes |
+| targeting does not cut drawdown per vol | no → no | **yes → no** (0.94 vs hold 1.05) |
+| GARCH outside the multi-horizon MCS | no → no (uMCS p 0.191) | **yes → no** (p 1.000) |
+| feedback tracks the target better | **yes → no** (3 of 4 models) | **yes → no** (2 of 4) |
+| feedback's Sharpe gain is not significant | yes → yes | yes → yes |
+
+**Headline: 12 of 18 repeat.**
+
+Every claim over 1d, 4h and 1h (items 26 and 29, by the registered rule):
+
+| claim | repeats / decided | reading |
+|---|---|---|
+| t beats normal | 6 / 6 | **holds on long history** |
+| feedback's Sharpe gain is not significant | 6 / 6 | **holds on long history** |
+| no leverage effect | 5 / 6 | mixed |
+| something beats GARCH(1,1) | 5 / 6 | mixed |
+| better σ ≠ better P&L | 5 / 6 | mixed |
+| targeting does not cut drawdown per vol | 5 / 6 | mixed |
+| feedback tracks the target better | 4 / 6 | mixed |
+| α+β≈1 intraday is the daily cycle | 2 / 4 | **sample-specific** |
+| GARCH outside the multi-horizon MCS | 3 / 6 | **sample-specific** |
+
+**Against the expectation.**
+- ***α+β≈1 at 1h is the daily cycle*: the expectation was wrong.** On six
+  years, deseasonalising leaves 1h persistence at 1.0000 on both tickers.
+  The record's 1h finding (1.0000 → 0.9895) came from seven months. On a long
+  sample, near-integrated 1h variance is not the daily cycle; breaks or long
+  memory remain candidates.
+- ***feedback tracks the target better* fails at 1h on both tickers.** It
+  held at BTC 1d, BTC 4h and ETH 4h (ETH 1d was *no* on the record too).
+  Its tracking gain, like its Sharpe gain, is not general.
+- **Two claims survive every bar and both tickers on six years:**
+  - Student-t beats normal;
+  - feedback targeting's Sharpe gain is not significant.
+
+  The replication's other everywhere-claim on the record, *better σ ≠
+  better P&L*, now fails once (ETH 1d).

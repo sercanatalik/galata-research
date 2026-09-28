@@ -128,5 +128,86 @@ def _(CELLS, NOT_BLIND, RECORD, mo, pl, replayed):
     return compared, headline
 
 
+@app.cell
+def _(mo):
+    mo.md(r"""
+    ## At 1h (item 29)
+
+    Registered in `planning/preregistered/vol-study-long-history-1h.md`
+    (`dfef488`), after the 1d and 4h run above: the same replay at 1h, where
+    the record holds only 2026-03 onward. `garch.py` walks no HAR at 1h, so
+    the two HAR claims are undecided on both sides.
+    """)
+    return
+
+
+@app.cell
+async def _(UNTIL, extra_claims, garch_app, gr, mo, pl, settings):
+    from types import SimpleNamespace as _Pin
+
+    import altair as _charts
+
+    _charts.data_transformers.disable_max_rows()  # as above: display only
+    CELLS_1H = [("BTC", "1h"), ("ETH", "1h")]
+
+    async def _replay_1h():
+        rows = []
+        for t, b in CELLS_1H:
+            defs = {**settings(t, b), "source": _Pin(value="binance 1m klines"), "until": _Pin(value=UNTIL)}
+            try:
+                d = (await garch_app.clone().embed(defs=defs)).defs
+                claims = d["verdicts"].to_dicts() + extra_claims(d, gr, pl)
+                span = (d["bars"]["ts"].min(), d["bars"]["close_ts"].max(), d["split"])
+            except Exception as why:  # a replay that cannot finish decides nothing: every claim is can't tell
+                claims = [{"claim": "the replay", "verdict": "can't tell", "on this record": f"garch.py failed: {type(why).__name__}: {str(why)[:80]}", "rule": "—"}]
+                span = (None, None, None)
+            rows += [{"ticker": t, "bars": b, "first": span[0], "last": span[1], "split": span[2], **c} for c in claims]
+        return pl.DataFrame(rows)
+
+    with mo.persistent_cache(name=f"vol-long-1h-{UNTIL}"):
+        replayed_1h = await _replay_1h()
+    return CELLS_1H, replayed_1h
+
+
+@app.cell
+def _(CELLS_1H, NOT_BLIND, compared, mo, pl, replayed_1h):
+    # The registration's 1h predictions: each ticker's 1h verdict on the record.
+    _RECORD_1H = {
+        "t beats normal": ("yes", "yes"), "no leverage effect": ("yes", "yes"), "α+β≈1 intraday is the daily cycle": ("yes", "yes"),
+        "HAR beats GARCH": ("—", "—"), "something beats GARCH(1,1)": ("no", "yes"), "better σ ≠ better P&L": ("yes", "yes"),
+        "targeting does not cut drawdown per vol": ("no", "yes"), "GARCH outside the multi-horizon MCS": ("no", "yes"),
+        "HARQ beats GARCH at every horizon": ("—", "—"), "feedback tracks the target better": ("yes", "yes"),
+        "feedback's Sharpe gain is not significant": ("yes", "yes"),
+    }  # fmt: skip
+    _holds = {"consistent": "yes", "yes": "yes", "contradicts": "no", "no": "no"}
+    _named = replayed_1h.with_columns(pl.col("claim").str.replace(r"at \d+h ", "intraday "))
+    _long = {(r["claim"], r["ticker"], r["bars"]): _holds.get(r["verdict"], "—") for r in _named.iter_rows(named=True)}
+    _rows = []
+    for _claim, _rec in _RECORD_1H.items():
+        for (_t, _b), _r in zip(CELLS_1H, _rec, strict=True):
+            _l = _long.get((_claim, _t, _b), "—")
+            _cmp = "can't tell" if "—" in (_l, _r) else "repeats" if _l == _r else "differs"
+            _rows.append({"claim": _claim, "ticker": _t, "bars": _b, "record": _r, "long history": _l, "result": _cmp, "counted": _claim not in NOT_BLIND})
+    compared_1h = pl.DataFrame(_rows)
+    _d = compared_1h.filter(pl.col("result") != "can't tell")
+    headline_1h = f"**{int((_d['result'] == 'repeats').sum())} of {_d.height}** of the record's decided 1h cells repeat on six years."
+    both = (
+        pl.concat([compared, compared_1h]).filter(pl.col("counted") & (pl.col("result") != "can't tell")).group_by("claim", maintain_order=True)
+        .agg((pl.col("result") == "repeats").sum().alias("repeats"), pl.len().alias("decided"))
+        .with_columns(
+            pl.when(pl.col("repeats") == pl.col("decided")).then(pl.lit("holds on long history"))
+            .when((pl.col("decided") - pl.col("repeats")) * 2 >= pl.col("decided")).then(pl.lit("sample-specific"))
+            .otherwise(pl.lit("mixed")).alias("reading")
+        )
+    )  # fmt: skip
+    _grid = compared_1h.with_columns(pl.concat_str("record", pl.lit(" → "), "long history").alias("cell"), pl.concat_str("ticker", pl.lit(" "), "bars").alias("where")).pivot(on="where", index="claim", values="cell")
+    mo.vstack([
+        _grid, mo.md(headline_1h), mo.md("Every claim over 1d, 4h and 1h together (items 26 and 29), by the registered rule:"), both,
+        replayed_1h.select("ticker", "bars", "first", "last", "split").unique().sort("ticker"),
+        replayed_1h.select("ticker", "bars", "claim", "verdict", "on this record", "rule"),
+    ])  # fmt: skip
+    return both, compared_1h, headline_1h
+
+
 if __name__ == "__main__":
     app.run()
