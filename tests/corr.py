@@ -412,3 +412,65 @@ def the_hac_dm_on_white_noise_is_not_significant():
     d = np.random.default_rng(4).normal(size=2000)
     got = corr.dm_hac(d)
     assert got["lags"] == int(4 * 20 ** (2 / 9)) and got["p_value"] > 0.01
+
+
+# ── constancy (test-the-constant-correlation) ───────────────────────────────
+
+_RBAR = np.array([[1.0, 0.6, 0.3], [0.6, 1.0, 0.2], [0.3, 0.2, 1.0]])
+
+
+def _constant(n, rng, r=_RBAR, nu=None):
+    e = rng.standard_normal((n, len(r)))
+    if nu:
+        e = e / np.sqrt(rng.chisquare(nu, (n, 1)) / nu) / np.sqrt(nu / (nu - 2))
+    return e @ np.linalg.cholesky(r).T
+
+
+def _dcc_z(n, a, b, rng):
+    q, out = _RBAR.copy(), np.empty((n, 3))
+    for t in range(n + 300):
+        d = np.sqrt(np.diag(q))
+        z = np.linalg.cholesky(q / np.outer(d, d)) @ rng.standard_normal(3)
+        if t >= 300:
+            out[t - 300] = z
+        q = (1 - a - b) * _RBAR + a * np.outer(z, z) + b * q
+    return out
+
+
+def a_constant_correlation_is_rarely_rejected():
+    rng = np.random.default_rng(3)
+    for nu in (None, 3):
+        p = [corr.constancy(z, np.corrcoef(z, rowvar=False))["p_value"] for z in (_constant(1500, rng, nu=nu) for _ in range(60))]
+        assert np.mean(np.array(p) < 0.05) <= 0.1, nu  # measured 2–3% over 300 draws at 5%
+
+
+def a_dynamic_correlation_is_found():
+    rng = np.random.default_rng(4)
+    p = [corr.constancy(z, np.corrcoef(z, rowvar=False))["p_value"] for z in (_dcc_z(1500, 0.02, 0.97, rng) for _ in range(20))]
+    assert np.mean(np.array(p) < 0.05) >= 0.5  # measured 0.77 over 100
+
+
+def a_correlation_that_moved_away_is_found():
+    rng = np.random.default_rng(5)
+    moved = _RBAR.copy()
+    moved[0, 1] = moved[1, 0] = 0.0
+    z = np.vstack([_constant(1320, rng), _constant(180, rng, moved)])
+    assert corr.constancy(z[-180:], np.corrcoef(z, rowvar=False))["p_value"] < 0.01
+    assert corr.constancy(z[:180], np.corrcoef(z, rowvar=False))["p_value"] > 0.01
+
+
+def the_statistic_has_lags_plus_one_degrees_of_freedom():
+    z = _constant(800, np.random.default_rng(6))
+    from scipy import stats
+
+    for robust in (True, False):
+        found = corr.constancy(z, _RBAR * 2, lags=3, robust=robust)  # a Q̄ is normalised first
+        assert found["p_value"] == pytest.approx(stats.chi2.sf(found["statistic"], 4))
+        assert (found["lags"], found["n"], found["robust"]) == (3, 800, robust)
+
+
+def no_constancy_test_on_one_series_or_too_few_returns():
+    with pytest.raises(Refused, match="two series"):
+        corr.constancy(np.zeros((100, 1)), np.eye(1))
+    with pytest.raises(Refused, match="too few"):
+        corr.constancy(np.zeros((6, 2)), np.eye(2), lags=5)
