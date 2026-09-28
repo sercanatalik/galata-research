@@ -227,6 +227,17 @@ Binance was dropped: its archive starts 2025-05-30, later than the record's HYPE
   on the split** (3 of 4 cells change verdict across shares); only ETH 1d is stable (GARCH outside at every share).
   *Something beats GARCH* is stable at 1d on both tickers; 4h verdicts and the shortest window are the least steady.
 
+
+Taken from items 29–30's follow-ups on 2026-09-28, the operator re-running the loop. A split-robust MCS rule was
+not taken: every split's result is already known, so a rule chosen now would be chosen with the answers in view;
+adopting one for future runs is the operator's call.
+
+- [x] 31. **`persistence-1h-breaks`**: register, then test whether 1h persistence of one on six years is neglected
+  variance breaks: GARCH-t between κ₂ breaks against 20 draws of random cuts of the same number. Done: **neither**
+  on both tickers. The breaks lower persistence more than random cuts (below 18 and 19 of 20 draws), but the
+  median between them stays above 0.99 (0.9934, 0.9929), and years-long segments still fit 1.0000. Long memory or
+  finer level shifts remain.
+
 ---
 
 ## What the record holds

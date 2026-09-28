@@ -69,3 +69,38 @@ can be decided.
 ## Results
 
 *Appended after the run. Nothing above this line may change.*
+
+### Run of 2026-09-28 (`notebooks/persistence_1h.py`)
+
+- **The run.** 59,063 deseasonalised 1h returns per ticker; 31 s.
+- **Deviations.** None.
+
+| | BTC | ETH |
+|---|---|---|
+| κ₂ breaks (≥ 720 bars apart) | 10 | 11 |
+| segments fitted (≥ 2,000 returns) | 7 of 11 | 8 of 12 |
+| full-sample α+β | 1.0000 | 1.0000 |
+| median α+β between breaks | 0.9934 | 0.9929 |
+| placebo medians, min / median / max | 0.9922 / 0.9978 / 1.0000 | 0.9928 / 0.9985 / 1.0000 |
+| break median below placebo | 18 of 20 | 19 of 20 |
+| **reading** | **neither** | **neither** |
+
+**Against the prediction: not supported on either ticker.** The median
+segment persistence at κ₂'s breaks stays above 0.99. Within segments α+β
+still reaches 1.0000:
+- BTC: 2020-01 to 2021-07, 2022-07 to 2023-04, 2023-04 to 2024-02;
+- ETH: three segments, the same years.
+
+**Read.**
+- **Breaks are real, but not the answer.** The breaks lower persistence
+  more than random cuts do: below 18 (BTC) and 19 (ETH) of 20 draws. They
+  do not bring it to ordinary levels.
+- **The drop is concentrated in 2024–2025.** Those segments are the lower
+  ones:
+  - BTC: 0.980 and 0.938;
+  - ETH: 0.985, 0.983 and 0.977.
+- **What remains is near-integrated variance inside years-long regimes.**
+  Neither the daily cycle (item 29) nor κ₂ breaks explain it. The candidates
+  left are long memory or smaller, more frequent level shifts than κ₂ at
+  30-day spacing can find (Mikosch and Stărică 2004), which this test does
+  not separate.
