@@ -16,9 +16,15 @@ dependencies = [
     "altair>=5",
 ]
 
+[project.scripts]
+# The one command that downloads: published archives into the reference store (settled point 8).
+galata-fetch = "galata_research.reference.fetch:main"
+
 [project.optional-dependencies]
 # Fitted models (gr.models): arch and scipy bring numpy; the core never imports them.
 models = ["arch>=8", "scipy>=1.8"]
+# Exchange sessions and closures (gr.calendar), maintained upstream, never typed in here.
+calendars = ["exchange_calendars>=4.13"]
 
 [dependency-groups]
 dev = [

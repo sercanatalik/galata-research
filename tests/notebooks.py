@@ -29,3 +29,22 @@ def the_check_catches_a_name_defined_twice(tmp_path):
     )
     run = _check(planted)
     assert run.returncode != 0 or "critical" in run.stdout
+
+
+LIMIT = 1500
+
+
+def _too_long(paths) -> list[str]:
+    return [f"{p.name}: {n} lines" for p in paths if (n := len(p.read_text().splitlines())) > LIMIT]
+
+
+def no_notebook_grows_past_fifteen_hundred_lines():
+    # One notebook per question: liquidity.py reached 2,290 lines and 18 sections before it was split.
+    long = _too_long(sorted(NOTEBOOKS.glob("*.py")))
+    assert not long, "notebooks past the limit: " + "; ".join(long)
+
+
+def the_size_guard_catches_a_notebook_that_grew(tmp_path):
+    grown = tmp_path / "grown.py"
+    grown.write_text("x = 1\n" * (LIMIT + 1))
+    assert _too_long([grown]) == [f"grown.py: {LIMIT + 1} lines"]

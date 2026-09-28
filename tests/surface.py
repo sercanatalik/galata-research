@@ -71,3 +71,44 @@ def no_notebook_calls_a_private_name():
         for line, name in _private_calls(path.read_text())
     ]
     assert not found, "private names in notebooks: " + ", ".join(found)
+
+
+def the_fetcher_is_not_imported_by_the_library():
+    import subprocess
+    import sys
+
+    probe = "import sys, galata_research as gr; gr.reference.root; print('galata_research.reference.fetch' in sys.modules)"
+    run = subprocess.run([sys.executable, "-c", probe], capture_output=True, text=True, check=True)
+    assert run.stdout.strip() == "False"
+
+
+def no_loader_opens_a_socket(tmp_path, monkeypatch):
+    import socket
+
+    from galata_research.reference import _manifest
+
+    store = tmp_path / "reference"
+    path = _manifest.day_path(store, "depth", "binance-um", "BTC", utc("2026-09-20T00:00").date())
+    path.parent.mkdir(parents=True)
+    ts = utc("2026-09-20T00:00:04")
+    pl.DataFrame({"venue": ["binance-um"], "ticker": "BTC", "symbol": "BTCUSDT", "ts": [ts], "band_pct": -0.2, "depth": 1.0, "notional": 1.0}).write_parquet(path)
+    _manifest.upsert(store, [{"kind": "depth", "venue": "binance-um", "ticker": "BTC", "date": ts.date(), "url": "u", "bytes": 1,
+                              "sha256": "s", "published_sha256": None, "fetched_at_recv": ts, "rows": 1, "status": "ok"}])  # fmt: skip
+    monkeypatch.setenv("GALATA_REFERENCE", str(store))
+
+    def refuse(*a, **k):
+        raise AssertionError("a loader opened a socket")
+
+    monkeypatch.setattr(socket, "socket", refuse)
+    monkeypatch.setattr(socket, "create_connection", refuse)
+    assert gr.reference.depth("BTC", "2026-09-20T00:00Z", "2026-09-21T00:00Z").collect().height == 1
+    assert gr.reference.coverage()["days_ok"].to_list() == [1]
+
+
+def the_fetch_command_lists_its_kinds():
+    import subprocess
+    import sys
+
+    run = subprocess.run([sys.executable, "-m", "galata_research.reference.fetch", "--help"], capture_output=True, text=True, check=False)
+    assert run.returncode == 0
+    assert "trades, depth, book, candles" in " ".join(run.stdout.split())
