@@ -264,6 +264,7 @@ Every loader returns a `pl.LazyFrame`, or a DuckDB relation with
 | `periods_per_year(interval)` | 525,600 · 8,760 · 2,190 · 365 | calendar time: the venue never closes |
 | `realized(bars, estimator, window)` | `n, sigma`: close-to-close, Parkinson, Garman–Klass, Rogers–Satchell, Yang–Zhang | one count for all five (a contiguous return, not in a gap); a figure only for a full window; no clamp |
 | `realized_from(fine, interval)` | RV, realized range, semivariances, quarticity per coarser bucket | null unless the bucket holds every fine return |
+| `resample(bars, every)` | whole 5m, 1h, 4h or 1d OHLC bars from finer ones, with `n` | a bucket missing any fine bar is dropped, not shortened |
 | `ewma_vol(bars, *, lam)`, `ewma_max` | RiskMetrics' EWMA σ; the larger of a fast and a slow one | σ at close t is the forecast for t+1; warm-up until the seed weighs < 1% |
 | `signature(bars_1m, minutes)` | mean daily RV per sampling interval | whole days only |
 | `variance_breaks(returns, *, statistic)`, `segments` | breaks in the unconditional variance (κ₂ or Inclán–Tiao) and the segments between | κ₂'s over-detection under persistent GARCH measured and stated (17–41% at a nominal 5%) |
@@ -282,6 +283,7 @@ Every loader returns a `pl.LazyFrame`, or a DuckDB relation with
 | `vol.table`, `vol.news_impact`, `vol.diagnose` | one row per fit; Engle–Ng's curve; Ljung–Box and ARCH-LM | ARCH-LM agrees with arch's to 1e-6 |
 | `vol.walk_forward(returns, *, model, split, window, every, horizons, factors)` | one row per (origin, h): `variance`, `cum_variance`, `target_ts`, `fitted_through` | fitted on each refit's window only, fixed between refits; EGARCH and APARCH simulated, seeded; EGARCH with a t or skew-t tail refused beyond one step; deseasonalised fits re-seasonalised |
 | `vol.har(measures, *, model, ...)`, `vol.carr(bars, ...)` | HAR, SHAR, HARQ on realized variance; CARR on the range | a training row only if its target is known at the refit; the insanity filter, marked `filtered` |
+| `corr.fit(returns, *, model, dist, corr)`, `corr.ewma(returns, *, lam)`, `corr.walk_forward(returns, *, model, corr, split, every, horizons, factors)` | two-step DCC or cDCC (a, b, Q̄, R per bar) over each ticker's `vol` model; RiskMetrics' covariance; Σ per (origin, h, pair i ≤ j) with `n_eff` | one fit, so the σ that scales Σ standardised the returns behind R; the joint sample (a bar missing for any ticker dropped for all); pinned to rmgarch's `dccfit` path and likelihood |
 | `evaluate.proxies`, `evaluate.align` | a proxy per bar; forecasts joined to it, point or over exactly h bars | a hole leaves a cumulative target blank; rows after a gap dropped |
 | `evaluate.scorecard`, `mcs`, `spa`, `dm`, `mz_gls`, `fluctuation`, `uspa`, `aspa`, `gw`, `mcs_horizons` | QLIKE and MSE per model × h; DM (HLN); the Model Confidence Set and SPA; MZ-GLS; Giacomini–Rossi; Quaedvlieg's uniform and average multi-horizon SPA and confidence set; Giacomini–White conditional test | every score on the same aligned rows; seeded bootstraps |
 | `evaluate.value_at_risk`, `var_backtest` | VaR/ES by filtered historical simulation; Kupiec, Christoffersen, DQ, FZ0 | each statistic checked by hand in the tests |
@@ -742,6 +744,7 @@ uv run marimo check notebooks/*.py     # every notebook, as CI and tests/noteboo
 | Phase 2: feedback-controlled targeting | done: hits the target; the Sharpe gain refuted by a registered test |
 | Phase 2: variance breaks | done: none under κ₂; persistence is not breaks |
 | Phase 2: multi-horizon confidence set | done: CARR, HARQ, HAR, GJR; GARCH and EWMA out |
+| Correlation from the volatility fit: DCC, cDCC and EWMA covariance, walked forward | done (item 25, `notebooks/correlation.py`): 4h, all six, a 0.006 and b 0.984 |
 | Replication on ETH and HYPE, registered | done: ETH 21/28, HYPE 12/28; every claim mixed |
 | EGARCH-t beyond one step | done: refused, since that variance does not exist; no BTC verdict moved |
 | The intermittent test failure | done: unseeded fixtures (arch ignores `np.random.seed`); seeded, tolerances derived |

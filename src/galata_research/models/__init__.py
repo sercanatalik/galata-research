@@ -2,6 +2,7 @@
 
     gr.models.vol.fit(returns, model="gjr", dist="t")   # a Fit, in polars and plain Python
     gr.models.evaluate.scorecard(aligned, benchmark="ewma")  # forecasts scored
+    gr.models.corr.walk_forward(returns, model="gjr", split=t)  # Σ from the same fit (DCC)
 
 Loaded on first use, so the core never needs numpy. pandas, which arch
 returns, stays inside `_arch` and never reaches a caller.
@@ -15,6 +16,6 @@ try:
 except ImportError as missing:
     raise Refused(f"gr.models needs the models extra ({missing.name} is missing): uv sync --extra models") from None
 
-from . import discovery, evaluate, intraday, vol
+from . import corr, discovery, evaluate, intraday, vol
 
-__all__ = ["discovery", "evaluate", "intraday", "vol"]
+__all__ = ["corr", "discovery", "evaluate", "intraday", "vol"]

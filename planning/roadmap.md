@@ -150,7 +150,12 @@ Chosen by the operator on 2026-09-28:
 Chosen by the operator on 2026-09-28, for galata-datawatch's market-data signals (its roadmap, Tier 16), which
 depend on it:
 
-- [ ] 25. **`add-dcc`**: correlation fitted from the same model as the volatility (D13).
+- [x] 25. **`add-dcc`**: correlation fitted from the same model as the volatility (D13). Done: `gr.models.corr`
+  (`fit`, `ewma`, `walk_forward`, `n_eff`), pinned to rmgarch 1.4.2's `dccfit` (its path and joint likelihood at
+  its own parameters; step 2 recovers its (a, b) to 1e-3 from its residuals). cDCC's target is profiled (Aielli's
+  Def. 3.3), not iterated. On the record at 4h: all six a 0.0055, b 0.9838 (half-life 42 bars); the main dex alone
+  a + b 0.9998 under DCC against 0.9955 under cDCC. A fit takes about a second, a walk of 80 refits 14 s.
+  `notebooks/correlation.py`. Step 1 takes the arch models only; `cgarch`, `betat`, `msgarch`, `rgarch` are refused.
   - **Two-step DCC**, with Aielli's (2013) cDCC as an option. Step 1 is each instrument's GARCH-family fit
     (`garch`, `gjr`, `cgarch`, `betat`, `ewma`) and its filtered σ. Step 2 is a and b by Gaussian QML on the
     standardised returns. Step 2's normal distribution is deliberate: a multivariate t would force one ν on
