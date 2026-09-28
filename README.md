@@ -127,6 +127,11 @@ The full framework architecture and roadmap are in the
 - **Every forecast states its fit.** Each out-of-sample row carries
   `fitted_through`, never past its origin; a planted shock and a double shift
   each fail a test.
+- **Other venues from their archives, never their APIs.** Binance, Bybit
+  and OKX's published daily files land in a reference store apart from the
+  record, each day with its URL, sha256 and status. Heavy kinds are fetched
+  on declared days only, and a file in a unit or format the parser does not
+  read is refused, not guessed.
 - **Hand-written models are checked, not trusted.** Component GARCH reduces to
   GARCH's recursion, Beta-t-EGARCH's response to an outlier is bounded, CARR's
   range constant is measured, and each recovers a simulation.
@@ -195,6 +200,15 @@ in [The volatility study](#the-volatility-study).
 
 ![GARCH, GARCH-t and variations](assets/screenshots/garch.png)
 
+**The liquidity study: what survives.** Sixteen claims from the literature
+and the data vendors, each citation checked against its source, each verdict
+computed from the five study notebooks' own results. Ten are consistent. Two
+are contradicted: jumps are not mostly negative, and ETH does not jump three
+times as often as BTC. One is mixed, one immaterial, and two cannot be tested
+here.
+
+![The liquidity study: what survives](assets/screenshots/liquidity_claims.png)
+
 ---
 
 ## Quick start
@@ -254,6 +268,8 @@ Every loader returns a `pl.LazyFrame`, or a DuckDB relation with
 | `signature(bars_1m, minutes)` | mean daily RV per sampling interval | whole days only |
 | `variance_breaks(returns, *, statistic)`, `segments` | breaks in the unconditional variance (κ₂ or Inclán–Tiao) and the segments between | κ₂'s over-detection under persistent GARCH measured and stated (17–41% at a nominal 5%) |
 | `seasonal_factors(returns, *, fit, by, stat)`, `deseasonalize` | a volatility factor per (weekday, hour) cell, with its `fit_end` | fitted on `fit` only; mean f² = 1; hour × weekday by default |
+| `extremes(bars, k, *, by, spacing)` | the k most extreme bars, spaced apart | picked by the data, never typed |
+| `log_elasticity(frame, y, x, *, seasonal)`, `lagged_correlation(frame, a, b, lags, *, seasonal)` | the elasticity of one hourly series to another; their correlation at each lag | the day's shape taken off both first; a positive lag means the first leads |
 | `walk_forward_origins(bars, split, *, window, every)` | one row per origin: `refit`, `fit_from`, `fitted_through` | `fitted_through ≤ close_ts`; rolling or expanding; fixed between refits |
 | `stationary_bootstrap_indices`, `optimal_block` | resampling indices; the Politis–White block | agrees with arch to 1e-6 |
 | `gr.utils.require`, `window`, `instant`, `lazy` | a refusal naming what is missing; micros | a naive time is refused |
@@ -273,6 +289,82 @@ Every loader returns a `pl.LazyFrame`, or a DuckDB relation with
 
 Install with `uv sync --extra models`. Without it `import galata_research`
 still works and `gr.models` is refused by name.
+
+### Costs: `gr.liquidity`
+
+| Call | Returns | The rule it owns |
+|---|---|---|
+| `quoted(frame)` | `mid`, `spread_bps` | tape quotes or Bybit's rebuilt book |
+| `effective(trades, quotes, *, tolerance, horizons)` | `effective_bps`, `realized_bps_<Δ>`, `impact_bps_<Δ>`, `known_ts_<Δ>` | the quote **strictly before** the trade's millisecond (98.7% of Hyperliquid trades share one with the book they changed); a realized spread is known at `ts + Δ` |
+| `from_bars(bars, estimator, every)` | Roll, Corwin–Schultz, Abdi–Ranaldo or EDGE per bucket, with `pairs` | contiguous pairs only, a bar in a gap counts for nothing; EDGE pinned to its authors' values |
+| `cost_of_size(depth, sizes)`, `book_points(book)` | the cost of a market order per side and size; Bybit's book as depth points | linear between bands from (0, 0), nothing extrapolated past the deepest band; overstates inside a wide first band |
+| `flow(trades, every)`, `kyle_lambda(flow, *, by)`, `amihud(flow, *, by)` | signed flow per bucket; λ in bps per $1M with se, t, R²; Amihud | the aggressor's side; a return only after a bucket that traded; λ read as an association |
+| `shocks(flows, *, share)`, `placebo(flows, shocks)`, `resilience(book, shocks, *, horizon)`, `resilience_curve(...)` | the largest one-second flows; quiet seconds as their placebo; each shock's depth dip and refill; the median depth curve | pre-shock depth known before the second's trades; read only against the placebo; medians, not means |
+| `allocate(total, weights)`, `schedule_cost(plan, depth, *, slices)` | an order split across hours; a plan's cost against each hour's depth | ⑩'s linear book, one-minute children; plans compared, levels not read |
+| `edge(open, high, low, close)`, `bars(trades, interval)` | the reference EDGE; OHLCV bars from trades | no bar for a minute with no trade |
+
+### Clocks and calendars: `gr.timeseries.local_clock`, `gr.calendar` (the `[calendars]` extra)
+
+| Call | Returns | The rule it owns |
+|---|---|---|
+| `timeseries.local_clock(frame, zone, prefix)` | `<prefix>_hour`, `_weekday`, `_date`, `_dst` | derived from `ts`, never stored; polars' pinned tz database |
+| `calendar.sessions(exchange, start, end)`, `closures(...)` | sessions with UTC open and close and `early_close`; the weekdays it did not open | from `exchange_calendars`, maintained upstream: no holiday file here |
+| `calendar.reopenings(exchange, start, end)` | each open after a closure over 24 h, with its length and kind | weekend, holiday or both; upstream's COMEX/NYMEX close an hour after Globex, stated |
+| `calendar.mark_sessions(frame, exchange)` | `<x>_open`, `<x>_closed_day` | the exchange's own zone, never an abbreviation |
+
+### Jumps: `gr.jumps`
+
+| Call | Returns | The rule it owns |
+|---|---|---|
+| `periodicity(returns, *, slot, by, fit)` | a factor per slot of the week or day | Boudt–Croux–Laurent WSD after a ShortH pass; one jump cannot move it |
+| `lee_mykland(returns, *, window, alpha, periodicity, rule)` | `sigma_local`, `L`, `threshold`, `jump` | the scale made only of earlier returns; K = ⌈√(252·n)⌉ (270 at 5m); Gumbel per day, or Benjamini–Hochberg |
+
+### Lead and lag: `gr.leadlag`
+
+| Call | Returns | The rule it owns |
+|---|---|---|
+| `hayashi_yoshida(x, y, lags)` | `lag_ms, hy, rho` | each series on its own clock, y's shifted by θ; the overlap sums telescoped, exact against the double sum |
+| `lead_lag(x, y, lags, *, every)` | `lead_ms, rho_lead, rho_0, llr` per bucket | positive lead, or LLR above 1, means x moves first; within ±50 ms is clock skew |
+
+### Reference data: `gr.reference` and `galata-fetch`
+
+The record holds one venue, 1h bars from 2026-03, and a week of top of book.
+To see years, depth, and other venues, research reads **published historical
+archives** too. `galata-fetch` downloads them into a reference store kept
+apart from the record: `var/reference/`, or `GALATA_REFERENCE`, or
+`reference_root` in `galata-research.toml`. It is the one command here that
+downloads, and settled point 8 says what it may do:
+- archives only, from `data.binance.vision`, `public.bybit.com`,
+  `quote-saver.bycsi.com` and `static.okx.com`;
+- never a venue's live API, and never my account.
+
+```sh
+galata-fetch depth   binance-um   BTC ETH --from 2023-01-01 --to 2026-09-26 --dry-run
+galata-fetch candles binance-um   BTC     --from 2019-12-31 --to 2026-09-26
+galata-fetch trades  bybit-linear BTC     --from 2023-01-01 --to 2026-09-26 --sample every:3
+galata-fetch book    bybit-linear BTC     --from 2023-01-18 --to 2026-09-26 --sample weekly:wed
+galata-fetch trades  okx-swap     BTC ETH --from 2023-01-02 --to 2026-09-26 --days 2026-09-26
+```
+
+| Call | Returns | The rule it owns |
+|---|---|---|
+| `gr.reference.depth(tickers, start, end, *, venues, as_of)` | Binance's cumulative depth per band, every 30 s | `band_pct` signed, bid negative; ±0.2% only in later files |
+| `gr.reference.trades(..., rpi=None)` | signed trades: Binance aggTrades, Bybit and OKX executions | Bybit time exact to 100 µs from its text; OKX sizes in BTC/ETH, not contracts; `rpi=False` drops Bybit's retail-price-improvement and OKX's Enhanced Liquidity Program fills |
+| `gr.reference.book(...)` | Bybit's book replayed, one row per second: top, depth within 2 and 10 bps, each side's reach | a band past the deepest level held is null, never a truncated sum |
+| `gr.reference.candles(...)` | Binance 1m bars | known at `close_ts`; `as_of` filters on it |
+| `gr.reference.events(start, end, *, sources)` | CPI, jobs and FOMC with their UTC release instants | fetched from bls.gov and federalreserve.gov by `galata-fetch events`; BLS only with `GALATA_CONTACT`, which is never stored |
+| `gr.reference.coverage()` | per series: `first, last, days_ok, days_absent, days_mismatch, days_missing` | absent (the archive lacked it) is not missing (never fetched) |
+
+The fetch has these rules:
+- **One manifest row per day**, holding the URL, sha256 and Binance's published checksum. It makes every day refetchable and checkable. The raw archive is not kept.
+- **Idempotent:** a day already held `ok` is skipped.
+- **Checked:** a checksum that disagrees is `mismatch`, and nothing is written.
+- **A changed refetch** is `mismatch`, and the old day is kept.
+- **Sized first:** `--dry-run` states the days and bytes and downloads nothing.
+- **Heavy kinds on declared days only.** A Bybit BTC book day is 93–167 MB zipped. `book`, Binance `trades` and OKX `trades` need `--days` or `--sample` (`weekly:<dow>`, or `every:<n>`, which turns through the week).
+- **OKX's day is Beijing's.** Its file for a date runs 16:00 to 16:00 UTC and is stored under that date; a named UTC day fetches that date's file and the next. Its archive is taken from 2021-11-01: October 2021 lists every trade twice, as a BUY and a SELL, and is refused.
+
+No frame has `recv_ts`: an archive has no receipt clock, and none is made up.
 
 ---
 
@@ -311,8 +403,30 @@ trial, so N is the true N) back these notebooks:
 | `whole_set.py` | does *anything* in the set beat its benchmark? White's Reality Check and Hansen's SPA over 70 trials: **no**, against buy-and-hold (p ≈ 0.7) or cash (p ≥ 0.07) |
 | `volatility.py` | what was the volatility? Five window estimators, two EWMA baselines, RV and realized range from finer bars, the signature plot, the calendar in hourly volatility, and the walk-forward schedule. On BTC the range estimators read **above** close-to-close, 7–12% at the median on 1d and 1h, as legacy's testnet week found |
 | `garch.py` | GARCH, GARCH-t and variations, in sample and walked forward, scored and traded: see [The volatility study](#the-volatility-study) |
-| `liquidity.py` | when is the market liquid? Hour-of-week depth, volume and trade count, per venue, since 2023, from the reference store and the tape. On BTC, Binance's ±1% depth is best at **10 UTC** and worst at 22 UTC (×1.12), while volume peaks at **14 UTC** (×1.7–2.1 the day's mean) and troughs at 4–5 UTC on Binance, Bybit and Hyperliquid alike. The day's shape barely moved from 2023 to 2026 (Spearman ρ 0.92–0.96 year on year) |
+| `liquidity.py` | when is the market liquid? Hour-of-week depth, volume and trade count, per venue, since 2023, from the reference store and the tape. On BTC, Binance's ±1% depth is best at **10 UTC** and worst at 22 UTC (×1.12), while volume peaks at **14 UTC** (×1.7–2.1 the day's mean) and troughs at 4–5 UTC on Binance, Bybit, OKX and Hyperliquid alike (OKX's BTC profile ρ 0.97 with Binance's). The day's shape barely moved from 2023 to 2026 (Spearman ρ 0.92–0.96 year on year) |
+| `liquidity_costs.py` ⑤ | what does trading cost, by the hour? Measured on Bybit's rebuilt book and the tape, and estimated from bars. The median quoted spread sits at one tick in every hour on BTC, ETH and HYPE, and even the time-weighted spread barely moves by hour (max ÷ min ≈ 1.07–1.1), too flat to calibrate a bar estimator against. Corwin–Schultz tracks it best (ρ 0.93 on the tape) at 2–3× the level; EDGE, Roll and Abdi–Ranaldo do not track it |
+| `liquidity_clock.py` ⑥ | whose clock does crypto keep? Since 2022, **New York's**: BTC's most volatile hour is 14 UTC in US summer time and 15 UTC in winter, the two regimes line up better on the New York clock than on UTC every year (not in 2020–21), and on NYSE-closed weekdays New York's 10:00–16:00 carries 9 points less of the day's variance (38% → 29%). Binance depth's day keeps UTC's shape |
+| `liquidity_clock.py` ⑦ | when does the price jump? Lee–Mykland on 5m returns after a robust periodicity: on BTC and ETH the busiest 5-minute slot is **08:30 New York**, US macro releases (3× the average slot), then **14:00**, FOMC. Jumps are half negative, not mostly, and carry 23% of the variance |
+| `liquidity_clock.py` ⑧ | what happens around a release? Against the same New York time on matched days, BTC's 5-minute |r| is **4.8× at an FOMC statement and 4.2× at CPI**, 2.2× at the jobs report, 2.0× at the NYSE open; more than a quarter of CPI and FOMC release bins hold a jump. Back under 1.5× within 15–25 minutes. Funding times and Deribit expiries show nothing |
+| `liquidity_venues.py` ⑨ | who moves first? Shifted Hayashi–Yoshida on trades: **Binance leads Bybit** in 94–96% of hours on BTC and ETH (LLR ≈ 1.4, 213 BTC and 195 ETH days since 2023), and on BTC **OKX sits between them**: Binance leads OKX in 76% of hours (LLR 1.10) while Bybit is ahead of OKX in only 10% (LLR 0.75), a lead that shortened from ~100 to ~50 ms and is steadiest at the US open. On the tape's two days, **Hyperliquid trails both by ~500 ms on BTC and ETH, but not on HYPE**, its home market |
+| `liquidity_costs.py` ⑩ | what does a size cost, by hour? Walking Binance's hourly median book: $1M of BTC costs ~0.3–0.4 bps, cheapest at 9–11 UTC and 15% dearer at 21–23 UTC; GOLD's is 60% dearer while COMEX is shut; HYPE's is flat. The bands overstate BTC's near-touch cost ~16× against Bybit's book, so the hours, not the levels, are the finding |
+| `liquidity_costs.py` ⑪ | what does the flow move? Kyle's λ on 1-minute signed flow: a net $1M moves BTC 0.58 bps on Binance and 0.86 on Bybit; on the 213 days OKX is held too, 0.61, 0.90 and 1.04 on OKX, whose BTC volume matches Bybit's; λ has fallen on all three since 2023; HYPE moves least on Hyperliquid, its home venue |
+| `liquidity_clock.py` ⑫ | what do the xyz perps do while their underlying sleeps? Weekend volume falls to 14–25% of open hours and |r| to 0.2–0.5×; the reopen hour moves 1.4× (gold, XYZ100) to 2.8× (oil). The weekend price is not undone at the reopen (slopes near 0); Binance gold's even continues. BTC and ETH also stir when CME reopens |
+| `liquidity_venues.py` ⑬ | whose price is the price? A daily VECM at 100 ms: Binance's share of BTC price discovery against Bybit fell from ILS 0.78 (2023) to 0.47 (2026), and its CS from 0.77 to 0.52: roughly shared now. Hyperliquid's shares are distorted by its block-time stamps, and are not read |
+| `liquidity_costs.py` ⑭ | how fast does the book refill? After a top-0.1% one-second flow on Bybit, the side it took keeps ~62% of its 2 bps depth; a third of the dent refills in 2–3 s and the rest is still missing after 60 s, on BTC, ETH and HYPE alike (quiet seconds: ~1.00) |
+| `liquidity_stress.py` ⑮ | what happens when it breaks? In the ten widest BTC hours since 2023, ±1% depth falls to about half its usual level, and in six of ten is not back within 48 h; in seven of ten the book was already thinner in the six hours before. On the day, λ rises up to 4× and Bybit's spread up to 2× |
+| `liquidity_stress.py` ⑯ | can the next hour's liquidity be forecast? Out of sample since 2025, a seasonal-plus-HAR decomposition beats persistence by 11–14% on BTC/ETH depth and 26–27% on volume (DM t ≈ −13 and −33); the average week alone is 23–37× worse than persistence on depth, whose level, not its week, is what moves |
+| `liquidity_stress.py` ⑰ | does it pay to work an order when the book is deep? For a BTC day order, out of sample over 526 days, even hindsight saves only 1.5% against TWAP (depth moves ~12% through the day); the average-week profile captures 3% of that, and an hour-ahead adaptive rule loses 0.8%. Timing within the day barely matters here |
+| `liquidity_costs.py` ⑱ | how does depth move with volatility? On BTC, doubling realized variance goes with ~8% less ±1% depth (elasticity −0.115), and the two are anti-correlated at every lag; on ETH, depth's level ignores volatility. Hour to hour, depth falls in the hour volatility rises, not hours before |
+| `liquidity_claims.py` | what survives of the liquidity study? Sixteen claims from the literature and vendors, each citation checked against its source, each verdict computed from the five study notebooks (`app.embed()`): 10 consistent, 2 contradicted, 1 mixed, 1 immaterial, 2 can't tell |
+| `liquidity_forward.py` | do the liquidity findings hold on data not yet seen? Seven claims registered in `planning/preregistered/liquidity-forward.md` (committed alone, `98b1e53`, 2026-09-28), scored only from 2026-09-29: all *not yet decidable* today. A dry run from 2026-06-01 (not a result) would support four and not two, jumps at 08:30 and depth forecasting among them |
 | `permuted_bars.py` | is there structure to find at all? The whole search re-run on 200 markets with the bars permuted: the real best (1.08) is **below** the permuted median (1.13), p = 0.59 |
+
+**Pre-registered forward claims.** `planning/preregistered/liquidity-forward.md`
+froze seven of the liquidity study's findings on 2026-09-28, committed alone
+before the data that tests them exists. `notebooks/liquidity_forward.py` scores
+them from 2026-09-29, once each sample is complete: fetch new days with
+`galata-fetch` to keep it current.
 
 **A pre-registered test.** `planning/preregistered/donchian-ensemble.md` froze
 the Donchian ensemble of Zarattini, Pagani and Barbon (SSRN 5209907) as four
@@ -533,11 +647,24 @@ show (Menkveld et al. 2024, *Nonstandard Errors*, *JF* 79(3):2339–2390).
     stats.py       Sharpe, moments, PSR, DSR, PBO, Reality Check, performance fee, drawdown
     backtest.py    positions to modelled returns, fees and funding
     studies.py     trial families, summaries, the shared-calendar matrix
+    liquidity.py   spreads, bar estimators, cost of size, flow, λ, resilience, schedules
+    jumps.py       Lee–Mykland with the Boudt–Croux–Laurent periodicity
+    leadlag.py     shifted Hayashi–Yoshida, LLR
+    calendar.py    the [calendars] extra: sessions, closures, reopenings
+    reference/     published archives, apart from the record
+      _instruments.py  what each archive lists, from when, in which units
+      _sources.py      each archive's layout and its parse; no network
+      _events.py       FOMC and BLS calendars
+      _manifest.py     one row per day: URL, sha256, status
+      fetch.py         galata-fetch, the one command that downloads
     models/        the [models] extra, loaded on first use
       _arch.py     the only place arch's pandas output is taken apart
       vol/         garch (fits), walk (forecasts), har, custom (cgarch, betat, carr), target
       evaluate.py  proxies, losses, DM, MZ-GLS, MCS, SPA, fluctuation, VaR/ES backtests
+      discovery.py VECM, information and component shares, ILS
+      intraday.py  seasonal-plus-HAR liquidity forecasts, scored against persistence
   notebooks/       marimo, one per question
+  scripts/         one-off store migrations
   tests/           fixture tapes written per test, plus claims about the real record
   planning/        features before they are changes; preregistered/ for studies; roadmap.md
   design/          the mechanism
@@ -619,7 +746,12 @@ uv run marimo check notebooks/*.py     # every notebook, as CI and tests/noteboo
 | EGARCH-t beyond one step | done: refused, since that variance does not exist; no BTC verdict moved |
 | The intermittent test failure | done: unseeded fixtures (arch ignores `np.random.seed`); seeded, tolerances derived |
 | What survives, per ticker and bar | done: generated by `replication.py`; two claims hold everywhere decided |
-| HAR vs GARCH on years of BTC and ETH, registered | next: waits on `gr.reference` being committed |
+| The intraday-liquidity study (`planning/intraday-liquidity.md`, items 1–21) | done: 18 of 21; the day's shape, costs, jumps, lead-lag, discovery, resilience, crashes, forecasts, schedules |
+| A reference store of published archives: Binance, Bybit, OKX, FOMC and BLS | done: `gr.reference`, `galata-fetch` |
+| OKX as a third venue | done: peaks at 14 UTC like the others; on BTC it sits between Binance and Bybit |
+| Seven forward liquidity claims, registered | registered 2026-09-28; scored from 2026-09-29 by `liquidity_forward.py` |
+| Liquidity items 10 and 11 (on the rebuilt tape; walked funding days) | blocked: the archive lost HL days after the rebuild; funding walk off in datawatch |
+| HAR vs GARCH on years of BTC and ETH, registered | next: `gr.reference` holds 1m candles from 2019-12-31 |
 
 ---
 

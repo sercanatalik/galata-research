@@ -6,6 +6,8 @@ rule `backtest.returns` has always applied. Annualisation is calendar time,
 because the venue never closes.
 """
 
+import math
+from collections.abc import Sequence
 from math import sqrt
 
 import polars as pl
@@ -641,3 +643,107 @@ def segments(returns: pl.LazyFrame | pl.DataFrame, breaks: pl.DataFrame) -> pl.D
         seg = frame.filter((pl.col("ts") >= start) & ((pl.col("ts") < end) if end is not None else pl.lit(True)))
         rows.append((start, seg["close_ts"][-1], seg.height, float(seg["return"].var())))
     return pl.DataFrame(rows, schema={"from": frame.schema["ts"], "to": frame.schema["close_ts"], "n": pl.Int64, "variance": pl.Float64}, orient="row")
+
+
+def local_clock(frame: pl.LazyFrame | pl.DataFrame, zone: str, prefix: str):
+    """The frame with `<prefix>_hour`, `_weekday` (1 = Monday), `_date` and `_dst` on the clock of `zone`.
+
+    Derived from `ts`, never stored in its place (settled point 3). polars
+    carries its own time-zone database, so the rules are pinned with polars.
+    `_dst` is true while the zone's daylight-saving offset is non-zero: New
+    York moves 13:30 → 12:30 UTC for its 09:30 on the second Sunday of March,
+    London on the last Sunday, so for two or three weeks each spring and
+    autumn the two are four hours apart, not five.
+    """
+    utils.require(frame, ("ts",), "a frame with a UTC `ts`")
+    try:
+        pl.Series([0], dtype=pl.Datetime("us", "UTC")).dt.convert_time_zone(zone)
+    except Exception:  # noqa: BLE001 -- polars raises its own error types for an unknown zone
+        raise Refused(f"zone={zone!r} is not an IANA time zone polars knows, e.g. America/New_York") from None
+    local = pl.col("ts").dt.convert_time_zone(zone)
+    return frame.with_columns(
+        local.dt.hour().alias(f"{prefix}_hour"),
+        local.dt.weekday().alias(f"{prefix}_weekday"),
+        local.dt.date().alias(f"{prefix}_date"),
+        (local.dt.dst_offset() != pl.duration()).alias(f"{prefix}_dst"),
+    )
+
+
+def extremes(bars: pl.LazyFrame | pl.DataFrame, k: int, *, by: str = "range", spacing: str = "3d") -> pl.DataFrame:
+    """The k most extreme bars per ticker, largest first, no two within `spacing` of each other.
+
+    `by="range"` scores ln(high/low); `by="return"` scores |ln(close/previous
+    close)| over contiguous bars. A bar in a gap is never chosen. Episodes
+    are picked by the data, never typed: the largest, then the largest not
+    within `spacing` of any already picked, and so on.
+    """
+    if by not in ("range", "return"):
+        raise Refused(f"by={by!r} is not one of range, return")
+    utils.require(bars, ("ticker", "ts", "close_ts", "high", "low", "close"), "load bars with gr.market.candles or gr.reference.candles")
+    lf = utils.lazy(bars).sort("ticker", "ts")
+    names = lf.collect_schema().names()
+    if by == "range":
+        score = (pl.col("high") / pl.col("low")).log()
+    else:
+        joined = pl.col("ts") == pl.col("close_ts").shift(1).over("ticker")
+        score = pl.when(joined).then((pl.col("close") / pl.col("close").shift(1).over("ticker")).log().abs())
+    frame = lf.with_columns(score.alias("score"))
+    if "in_gap" in names:
+        frame = frame.filter(~pl.col("in_gap").fill_null(False))
+    frame = frame.drop_nulls("score").sort(["ticker", "score", "ts"], descending=[False, True, False]).collect()
+    width = pl.select(pl.lit("2000-01-01").str.to_datetime().dt.offset_by(spacing) - pl.lit("2000-01-01").str.to_datetime()).item()
+    out = []
+    for (ticker,), g in frame.group_by("ticker", maintain_order=True):
+        picked: list = []
+        for row in g.iter_rows(named=True):
+            if all(abs(row["ts"] - p["ts"]) >= width for p in picked):
+                picked.append(row)
+                if len(picked) == k:
+                    break
+        out.extend(picked)
+    return pl.DataFrame(out, schema=frame.schema) if out else frame.head(0)
+
+
+def _log_adjusted(frame: pl.DataFrame, cols: Sequence[str], seasonal: bool) -> pl.DataFrame:
+    """Each column's log, less its hour-of-day mean and weekday effect when `seasonal`, on a complete hourly grid."""
+    bad = frame.filter(pl.any_horizontal([pl.col(c) <= 0 for c in cols]))
+    if bad.height:
+        raise Refused(f"{', '.join(cols)} must be positive: the elasticity is of logs")
+    grid = pl.DataFrame({"ts": pl.datetime_range(frame["ts"].min(), frame["ts"].max(), "1h", eager=True, time_zone="UTC")})
+    g = grid.join(frame.select("ts", *cols), on="ts", how="left").with_columns(
+        *[pl.col(c).log() for c in cols], pl.col("ts").dt.hour().alias("_h"), pl.col("ts").dt.weekday().alias("_d")
+    )
+    if seasonal:
+        g = g.with_columns(
+            *[(pl.col(c) - pl.col(c).mean().over("_h") - (pl.col(c).mean().over("_d") - pl.col(c).mean())).alias(c) for c in cols]
+        )
+    return g.drop("_h", "_d")
+
+
+def log_elasticity(frame: pl.LazyFrame | pl.DataFrame, y: str, x: str, *, seasonal: bool = True) -> dict:
+    """The OLS slope of log y on log x: `beta, se, t, r2, n`.
+
+    With `seasonal`, each log first loses its hour-of-day mean and weekday
+    effect, so the slope is about deviations from the day's shape, not the
+    shape two series share (volatility up at 14 UTC while depth dips). The
+    iid `t` ignores autocorrelation.
+    """
+    utils.require(frame, ("ts", y, x), "hourly rows with ts and both series")
+    g = _log_adjusted(utils.lazy(frame).collect(), [y, x], seasonal).drop_nulls([y, x])
+    n = g.height
+    if n < 3:
+        raise Refused(f"{n} hours with both series are too few")
+    vx, vy = g[x].var(), g[y].var()
+    c = g.select(pl.cov(x, y)).item()
+    beta = c / vx
+    r2 = c * c / (vx * vy)
+    se = math.sqrt((1 - r2) * vy * (n - 1) / (n - 2) / (vx * (n - 1)))
+    return {"beta": beta, "se": se, "t": beta / se if se else None, "r2": r2, "n": n}
+
+
+def lagged_correlation(frame: pl.LazyFrame | pl.DataFrame, a: str, b: str, lags: Sequence[int], *, seasonal: bool = True) -> pl.DataFrame:
+    """`lag, corr`: log a at t against log b at t + lag hours. A positive lag with the larger corr means a moves first."""
+    utils.require(frame, ("ts", a, b), "hourly rows with ts and both series")
+    g = _log_adjusted(utils.lazy(frame).collect(), [a, b], seasonal)
+    rows = [{"lag": lag, "corr": g.select(pl.corr(pl.col(a), pl.col(b).shift(-lag))).item()} for lag in lags]
+    return pl.DataFrame(rows, schema={"lag": pl.Int64, "corr": pl.Float64})
