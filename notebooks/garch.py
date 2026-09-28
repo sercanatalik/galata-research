@@ -82,8 +82,33 @@ def _(TICKERS, mo):
 
 
 @app.cell
-def _(EVER, deseason, gr, interval, pl, share, ticker):
-    bars = gr.market.candles([ticker.value], interval.value, *EVER).collect()
+def _(mo):
+    # The record by default. Binance's archived 1m klines (gr.reference), resampled to whole bars,
+    # give years the record lacks; `until` pins a run's end (blank: everything held).
+    source = mo.ui.dropdown(["record", "binance 1m klines"], value="record", label="data")
+    until = mo.ui.text(value="", label="until (UTC, blank: all)")
+    mo.hstack([source, until])
+    return source, until
+
+
+@app.cell
+def _(EVER, gr, mo, source, until):
+    @mo.cache
+    def _minutes(ticker_, end_):
+        return gr.reference.candles(ticker_, EVER[0], end_, venues="binance-um").collect()
+
+    def load(ticker_, interval_):
+        """One ticker's bars at one interval, from the chosen source."""
+        if source.value == "record":
+            return gr.market.candles([ticker_], interval_, *EVER).collect()
+        return gr.timeseries.resample(_minutes(ticker_, until.value or EVER[1]), interval_)
+
+    return (load,)
+
+
+@app.cell
+def _(EVER, deseason, gr, interval, load, pl, share, ticker):
+    bars = load(ticker.value, interval.value)
     returns = gr.timeseries.returns(bars, kind="log")
     first, last = bars["ts"].min(), bars["close_ts"].max()
     split = bars["close_ts"][int(bars.height * share.value) - 1]
@@ -230,13 +255,13 @@ def _(mo):
 
 
 @app.cell
-def _(EVER, column, estimation, gr, in_sample, interval, ticker, vol):
+def _(EVER, column, estimation, gr, in_sample, interval, load, ticker, vol):
     # MODELS includes the hand-written cgarch and betat; rgarch needs a daily realized measure, so it is fitted at 1d only.
     # rgarch needs a daily realized measure and msgarch takes ~40 s a fit, so both are fitted at 1d only.
     specs = [(m, "t") for m in vol.MODELS if m not in ("rgarch", "msgarch")] + [("garch", d) for d in ("normal", "skewt", "ged")] + [("gjr", "skewt")]
     measures = None
     if interval.value == "1d":
-        measures = gr.timeseries.realized_from(gr.market.candles([ticker.value], "4h", *EVER).collect(), "1d")
+        measures = gr.timeseries.realized_from(load(ticker.value, "4h"), "1d")
         specs += [("rgarch", "normal"), ("msgarch", "t")]
     fits = {}
     for model, dist in specs:
@@ -629,16 +654,16 @@ def _(interval, mo):
 
 
 @app.cell
-def _(EVER, gr, mo, pl, vol):
+def _(EVER, gr, load, mo, pl, vol):
     @mo.cache
     def walk(ticker_, interval_, split_iso, model_, every_, horizons_, deseason_):
         if model_ in ("har", "shar", "harq"):
             _fine = {"1d": "4h", "4h": "1h"}[interval_]
-            _measures = gr.timeseries.realized_from(gr.market.candles([ticker_], _fine, *EVER).collect(), interval_)
+            _measures = gr.timeseries.realized_from(load(ticker_, _fine), interval_)
             return vol.har(_measures, model=model_, split=split_iso, every=every_, horizons=horizons_).with_columns(pl.lit(model_).alias("model"))
-        _bars = gr.market.candles([ticker_], interval_, *EVER).collect()
+        _bars = load(ticker_, interval_)
         if model_ == "rgarch":
-            _m4 = gr.timeseries.realized_from(gr.market.candles([ticker_], "4h", *EVER).collect(), "1d")
+            _m4 = gr.timeseries.realized_from(load(ticker_, "4h"), "1d")
             return vol.walk_forward(
                 gr.timeseries.returns(_bars, kind="log"), model="rgarch", dist="normal", measures=_m4, split=split_iso, every=every_, horizons=horizons_, simulations=500, min_obs=250
             ).with_columns(pl.lit(model_).alias("model"))
@@ -715,7 +740,7 @@ def _(mo, walked):
 
 
 @app.cell
-def _(EVER, alt, bars, column, deseason, estimation, fan_length, gr, in_sample, interval, mo, origin, per_year, pl, returns, skipped, ticker, vol, walk_models, walked):
+def _(EVER, alt, bars, column, deseason, estimation, fan_length, gr, in_sample, interval, load, mo, origin, per_year, pl, returns, skipped, ticker, vol, walk_models, walked):
     _origins = walked["close_ts"].unique().sort()
     _o = _origins[origin.value]
     _fans, _levels = [], []
@@ -723,11 +748,11 @@ def _(EVER, alt, bars, column, deseason, estimation, fan_length, gr, in_sample, 
         if _m == "carr":
             _w = vol.carr(bars, split=_o, every=10**9, horizons=range(1, fan_length.value + 1), min_obs=250)
         elif _m == "rgarch":
-            _m4 = gr.timeseries.realized_from(gr.market.candles([ticker.value], "4h", *EVER).collect(), "1d")
+            _m4 = gr.timeseries.realized_from(load(ticker.value, "4h"), "1d")
             _w = vol.walk_forward(returns.select("ticker", "ts", "close_ts", "return"), model="rgarch", dist="normal", measures=_m4, split=_o, every=10**9, horizons=range(1, fan_length.value + 1), simulations=500, min_obs=250)
         elif _m in ("har", "shar", "harq"):
             _fine = {"1d": "4h", "4h": "1h"}[interval.value]
-            _meas = gr.timeseries.realized_from(gr.market.candles([ticker.value], _fine, *EVER).collect(), interval.value)
+            _meas = gr.timeseries.realized_from(load(ticker.value, _fine), interval.value)
             _w = vol.har(_meas, model=_m, split=_o, every=10**9, horizons=range(1, fan_length.value + 1))
         else:
             _w = vol.walk_forward(returns.select("ticker", "ts", "close_ts", "return"), model=_m, split=_o, every=10**9, horizons=range(1, fan_length.value + 1), simulations=500, min_obs=250)
@@ -774,11 +799,11 @@ def _(interval, mo):
 
 
 @app.cell
-def _(EVER, bars, gr, interval, proxy_kind, ticker, walked):
+def _(EVER, bars, gr, interval, load, proxy_kind, ticker, walked):
     ev = gr.models.evaluate
     if proxy_kind.value == "rv":
         _fine = {"1d": "4h", "4h": "1h"}[interval.value]
-        _proxy = ev.proxies(gr.timeseries.realized_from(gr.market.candles([ticker.value], _fine, *EVER).collect(), interval.value), "rv")
+        _proxy = ev.proxies(gr.timeseries.realized_from(load(ticker.value, _fine), interval.value), "rv")
     else:
         _proxy = ev.proxies(bars, proxy_kind.value)
     aligned = ev.align(walked, _proxy)
