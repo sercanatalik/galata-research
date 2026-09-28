@@ -367,7 +367,7 @@ The fetch has these rules:
 - **A changed refetch** is `mismatch`, and the old day is kept.
 - **Sized first:** `--dry-run` states the days and bytes and downloads nothing.
 - **Heavy kinds on declared days only.** A Bybit BTC book day is 93–167 MB zipped. `book`, Binance `trades` and OKX `trades` need `--days` or `--sample` (`weekly:<dow>`, or `every:<n>`, which turns through the week).
-- **Kept current by `galata-fetch update`.** It brings the forward claims' series (BTC depth and candles, ETH candles, BTC trades on both venues every ninth day) from each one's last `ok` day to yesterday, and asks again for days recorded `absent` because they were asked before publication. `scripts/schedule_reference_update.sh` runs it daily at 09:00 with launchd (`--uninstall` removes it). Without `GALATA_CONTACT` it keeps the BLS events already held.
+- **Kept current by `galata-fetch update`.** It brings the forward claims' series (BTC depth and candles, ETH candles, BTC trades on both venues every ninth day) from each one's last `ok` day to yesterday, and asks again for days recorded `absent` because they were asked before publication. galata-datawatch's cereyan lane runs it daily at 07:30 UTC as the flow `update-the-reference`, from `py/signals`' pinned environment, with the store named by `GALATA_REFERENCE`. Without `GALATA_CONTACT` it keeps the BLS events already held.
 - **OKX's day is Beijing's.** Its file for a date runs 16:00 to 16:00 UTC and is stored under that date; a named UTC day fetches that date's file and the next. Its archive is taken from 2021-11-01: October 2021 lists every trade twice, as a BUY and a SELL, and is refused.
 
 No frame has `recv_ts`: an archive has no receipt clock, and none is made up.
@@ -772,7 +772,7 @@ uv run marimo check notebooks/*.py     # every notebook, as CI and tests/noteboo
 | The MCS claim across sample splits, registered | done: turns on the split in 3 of 4 cells |
 | The whole volatility study on six years of BTC and ETH, registered | done: 29 of 34 verdicts repeat at 1d and 4h, 12 of 18 at 1h; two claims hold everywhere |
 | HAR on 5-minute RV with its level removed, registered | done: the level explained its loss; rescaled, it beats GARCH in 3 of 4 cells |
-| `galata-fetch update`, scheduled daily | done: launchd at 09:00; the forward claims' series stay current |
+| `galata-fetch update`, scheduled daily | done: galata-datawatch's lane flow `update-the-reference`, 07:30 UTC |
 
 ---
 

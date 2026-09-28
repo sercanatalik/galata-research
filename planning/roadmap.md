@@ -210,7 +210,8 @@ Chosen by the operator on 2026-09-28, after item 24:
 - [x] 28. **`keep-the-reference-current`**: one command that fetches what the forward claims and the studies need
   up to yesterday, idempotently, and a schedule for it, so the seven forward liquidity claims fill in from
   2026-09-29. Done: `galata-fetch update` (from each series' last `ok` day, re-asking days published late), and
-  `scripts/schedule_reference_update.sh`, installed as a launchd job at 09:00. `events` without a contact now keeps
+  a daily schedule, first a launchd job here, then (2026-09-28) galata-datawatch's lane flow `update-the-reference`
+  at 07:30 UTC. `events` without a contact now keeps
   the 449 BLS events held instead of dropping them.
 
 

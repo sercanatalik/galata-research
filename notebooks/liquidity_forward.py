@@ -34,8 +34,8 @@ def _(mo):
 
     `galata-fetch update` keeps the claims' data current: BTC depth and 1m
     candles daily, BTC trades on both venues every ninth day (F6), and the
-    event calendar. `scripts/schedule_reference_update.sh` runs it daily at
-    09:00 with launchd.
+    event calendar. galata-datawatch's lane runs it daily at 07:30 UTC (the
+    cereyan flow `update-the-reference`).
     """)
     return
 
