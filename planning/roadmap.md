@@ -57,6 +57,7 @@ Later work is listed under [Phase 2](#phase-2-follow-ups).
 | D10 | The backtest is **`gr.backtest.returns`**: a forecast made at close t is the position held through bar t+1, with **no extra shift**. | `returns()` already applies the one shift (`backtest.py:62`). |
 | D11 | The notebook carries **theory, literature and a reference list**. Library docstrings cite their paper, and a test reproduces a published figure where the paper gives one. | The house style, as in `stats.py` (DSR pinned to 0.9004). |
 | D12 | Explicitly in v1: **SHAR and HARQ** beside HAR-RV; **hour-of-week deseasonalization** before the 1h GARCH fit; **CARR**; a **signature-plot** diagnostic. | Operator's list, 2026-09-27. Each is cheap and supported by the literature (below). |
+| D13 | **Correlation comes from the volatility fit:** a two-step DCC over the declared GARCH-family model's standardised returns (Engle 2002), in `gr.models`. Fixed-λ EWMA is the unfitted fallback for σ and ρ together. **D8 is lifted for this model only.** | Operator, 2026-09-28, for galata-datawatch's market-data signals (its roadmap, Tier 16). A σ and a ρ from different fits make an inconsistent Σ. |
 
 ---
 
@@ -145,6 +146,32 @@ Chosen by the operator on 2026-09-28:
 - [ ] 24. **`har-vs-garch-long-history`**: *HAR beats GARCH* is decided in only two cells. Register it and test it
   on years of BTC and ETH from `gr.reference`'s published archives. Blocked until the other session commits
   `gr.reference`.
+
+Chosen by the operator on 2026-09-28, for galata-datawatch's market-data signals (its roadmap, Tier 16), which
+depend on it:
+
+- [ ] 25. **`add-dcc`**: correlation fitted from the same model as the volatility (D13).
+  - **Two-step DCC**, with Aielli's (2013) cDCC as an option. Step 1 is each instrument's GARCH-family fit
+    (`garch`, `gjr`, `cgarch`, `betat`, `ewma`) and its filtered σ. Step 2 is a and b by Gaussian QML on the
+    standardised returns. Step 2's normal distribution is deliberate: a multivariate t would force one ν on
+    BTC (ν≈3.2) and the rest, and the Gaussian quasi-likelihood stays consistent under heavier tails.
+  - **HAR, HARQ and CARR cannot be step 1.** They forecast bucket variance, not a σ per bar.
+  - **A multivariate walk-forward** with one refit schedule for every instrument, so `fitted_through`
+    belongs to the matrix. Filtering between refits uses fixed parameters. Intraday bars are deseasonalised
+    before step 1 (the 1h finding: the daily cycle otherwise inflates persistence, and would inflate b).
+  - **Σₜ₊ₕ = Dₜ₊ₕRₜ₊ₕDₜ₊ₕ**: D from each fit's own h-step forecast (EGARCH-t refused beyond one step, as
+    item 22 decided), and R reverting to R̄ at (a+b)ʰ.
+  - **The fixed-λ EWMA path**, σ and ρ from one λ, for samples below `min_obs`.
+  - **Floors and intervals on n_eff = (Σw)²/Σw².**
+  - **Spec scenarios:** a simulated DCC is recovered; a = 0 gives a constant R = R̄; every Rₜ is PSD with a
+    unit diagonal; no origin's R sees its future.
+  - **The joint sample starts at the youngest instrument's listing.** On today's tape that is CL,
+    2026-01-06: about 265 daily and 37 weekly returns. So 1d and 1w run the EWMA path until CL reaches
+    500 days.
+  - **Not yet decided by evidence:** whether DCC beats EWMA correlation or the sample ρ out of sample.
+    That is a study to register and run on minimum-variance portfolio variance and a multivariate QLIKE
+    (Engle and Colacito 2006; Laurent, Rombouts and Violante 2012), walked forward as `garch.py` was. Until
+    then the choice is the operator's, declared.
 
 ---
 
@@ -598,7 +625,7 @@ Each is its own change, once Phase 1 has said something.
 | Feedback-controlled vol targeting | Hits the target better than open-loop 1/σ̂ (Devanathan, Boyd et al. 2026, simulation only) | Medium |
 | FIGARCH or component GARCH with break dummies | Separates true long memory from breaks (Mensi et al. 2019) | Medium; needs break detection |
 | Multi-ticker small multiples of ⑨ | Does a win carry over from BTC to ETH and HYPE? | Run time × tickers |
-| Revisit legacy's exclusion of EWMA and GARCH from the risk derive step | `legacy/galata-legacy/design/tower/econometrics.md`: "a model that quietly reweights it is the opposite of a review that exists to make choices explicit" | A decision for the operator, informed by ⑪ and ⑩ |
+| Revisit legacy's exclusion of EWMA and GARCH from the risk derive step | `legacy/galata-legacy/design/tower/econometrics.md`: "a model that quietly reweights it is the opposite of a review that exists to make choices explicit" | **Decided 2026-09-28 by the operator:** included. The reweighting is declared per horizon and named on every row (item 25; galata-datawatch Tier 16) |
 
 ---
 
