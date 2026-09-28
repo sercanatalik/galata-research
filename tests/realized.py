@@ -245,3 +245,47 @@ def the_semivariances_add_up_and_the_quarticity_is_the_fourth_moment():
     assert got["rs_minus"] == pytest.approx(4e-4 + 1e-4)
     assert got["rs_plus"] + got["rs_minus"] == pytest.approx(got["rv"])
     assert got["rq"] == pytest.approx(60 / 3 * (1e-8 + 16e-8 + 81e-8 + 1e-8))
+
+
+# ── realized moments (measure-the-moments) ──────────────────────────────────
+
+
+def _day_returns(values, start="2026-09-27T00:00"):
+    from datetime import timedelta as _td
+
+    t0 = utc(start)
+    return pl.DataFrame(
+        {"ticker": "BTC", "ts": [t0 + _td(minutes=5 * i) for i in range(len(values))], "close_ts": [t0 + _td(minutes=5 * (i + 1)) for i in range(len(values))], "return": values},
+        schema={"ticker": pl.String, "ts": pl.Datetime("us", "UTC"), "close_ts": pl.Datetime("us", "UTC"), "return": pl.Float64},
+    )
+
+
+def the_realized_moments_are_amaya_et_als():
+    r = [0.01, -0.02, 0.03, None]
+    out = timeseries.realized_moments(_day_returns(r), min_n=3)
+    row = out.row(0, named=True)
+    rv = 0.01**2 + 0.02**2 + 0.03**2
+    assert row["n"] == 3  # the null is not a return
+    assert row["rv"] == pytest.approx(rv)
+    assert row["skew"] == pytest.approx(math.sqrt(3) * (0.01**3 - 0.02**3 + 0.03**3) / rv**1.5)
+    assert row["kurt"] == pytest.approx(3 * (0.01**4 + 0.02**4 + 0.03**4) / rv**2)
+
+
+def a_gaussian_day_has_no_skew_and_a_kurtosis_of_three():
+    import random as _random
+
+    rng = _random.Random(4)
+    out = timeseries.realized_moments(_day_returns([rng.gauss(0, 0.001) for _ in range(288 * 20)]))
+    assert out.height == 20 and set(out["n"]) == {288}
+    assert abs(out["skew"].mean()) < 0.15
+    assert out["kurt"].mean() == pytest.approx(3.0, abs=0.25)
+
+
+def a_short_day_keeps_its_count_and_no_moments():
+    out = timeseries.realized_moments(_day_returns([0.001] * 30))
+    assert out["n"].to_list() == [30] and out["skew"].to_list() == [None] and out["kurt"].to_list() == [None]
+
+
+def the_return_closing_at_midnight_is_the_days_last():
+    out = timeseries.realized_moments(_day_returns([0.001] * 288), min_n=1)
+    assert out.height == 1 and out["n"].to_list() == [288]

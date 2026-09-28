@@ -236,6 +236,38 @@ def realized(
     )
 
 
+def realized_moments(returns: pl.LazyFrame | pl.DataFrame, every: str = "1d", *, min_n: int = 50, column: str = "return") -> pl.DataFrame:
+    """`ticker, ts, n, rv, skew, kurt` per ticker and period: Amaya, Christoffersen, Jacobs and Vasquez's (2015) realized moments.
+
+    Over a period's N intraday log returns (`column`, by `close_ts`):
+    RV = Σr², skew = √N·Σr³/RV^{3/2}, kurt = N·Σr⁴/RV². They used 5-minute
+    returns: the third and fourth moments are far more sensitive to
+    microstructure noise than RV (Liu, Patton and Sheppard 2015).
+
+    **N is the returns actually there.** Both moments scale with N, so a
+    closed market's flat bars would inflate the kurtosis for nothing: null
+    returns (a bar after a hole, the reopening's) are dropped, and the count
+    is what remains. A period under `min_n` returns, or with no variance, has
+    null moments and keeps its `n`. `ts` is the period's start.
+    """
+    utils.require(returns, ("ticker", "close_ts", column), "make returns with gr.timeseries.returns")
+    r = pl.col(column)
+    out = (
+        utils.lazy(returns)
+        .drop_nulls(column)
+        .group_by("ticker", pl.col("close_ts").dt.offset_by("-1us").dt.truncate(every).alias("ts"))
+        .agg(pl.len().cast(pl.Int64).alias("n"), (r**2).sum().alias("rv"), (r**3).sum().alias("_s3"), (r**4).sum().alias("_s4"))
+        .with_columns(
+            pl.when((pl.col("n") >= min_n) & (pl.col("rv") > 0)).then(pl.col("n").cast(pl.Float64).sqrt() * pl.col("_s3") / pl.col("rv") ** 1.5).alias("skew"),
+            pl.when((pl.col("n") >= min_n) & (pl.col("rv") > 0)).then(pl.col("n") * pl.col("_s4") / pl.col("rv") ** 2).alias("kurt"),
+        )
+        .drop("_s3", "_s4")
+        .sort("ticker", "ts")
+        .collect()
+    )
+    return out
+
+
 def realized_from(fine: pl.LazyFrame | pl.DataFrame, interval: str) -> pl.DataFrame:
     """Per bucket of the coarser `interval`: realized variance and realized range from the fine bars inside it.
 
