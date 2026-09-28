@@ -474,3 +474,72 @@ def no_constancy_test_on_one_series_or_too_few_returns():
         corr.constancy(np.zeros((100, 1)), np.eye(1))
     with pytest.raises(Refused, match="too few"):
         corr.constancy(np.zeros((6, 2)), np.eye(2), lags=5)
+
+
+# ── monitoring (monitor-the-correlation) ────────────────────────────────────
+
+
+def _sup_brownian_cdf(x, terms=50):
+    """P(sup₀≤s≤1 |W(s)| ≤ x), exactly (Feller)."""
+    k = np.arange(terms)
+    return float(4 / np.pi * np.sum((-1) ** k / (2 * k + 1) * np.exp(-((2 * k + 1) ** 2) * np.pi**2 / (8 * x**2))))
+
+
+def _garch_pair(n, rng, rho):
+    """Wied and Galeano's size design: two Gaussian GARCH(1,1) series mixed to ρ(t)."""
+    h1 = h2 = 0.1
+    x1 = y1 = 0.0
+    out = np.empty((n, 2))
+    for t in range(n):
+        h1, h2 = 0.01 + 0.05 * x1**2 + 0.8 * h1, 0.01 + 0.1 * y1**2 + 0.75 * h2
+        r, e = rho(t), rng.standard_normal(2)
+        x1, y1 = np.sqrt(h1) * e[0], np.sqrt(h2) * (r * e[0] + np.sqrt(1 - r * r) * e[1])
+        out[t] = [x1, y1]
+    return out
+
+
+def the_monitors_critical_value_is_its_limits_quantile():
+    from scipy import optimize as sopt
+
+    # γ = 0 has a closed form: (T/(1+T))^½ times the 95% quantile of sup|W|.
+    exact = np.sqrt(0.5) * sopt.brentq(lambda x: _sup_brownian_cdf(x) - 0.95, 1.5, 4)
+    assert corr.monitor_critical(0.05, 1.0, 0.0) == pytest.approx(exact, rel=0.02)
+    # And the paper's Table 1 where there is none, within Monte Carlo and grid error.
+    assert corr.monitor_critical(0.05, 1.0, 0.25) == pytest.approx(1.9924, rel=0.03)
+    assert corr.monitor_critical(0.05, 4.0, 0.25) == pytest.approx(2.2467, rel=0.03)
+
+
+def the_monitors_scale_is_the_correlations_long_run_precision():
+    rng = np.random.default_rng(8)
+    x = rng.standard_normal((20_000, 2)) @ np.linalg.cholesky([[1, 0.5], [0.5, 1]]).T
+    # Gaussian i.i.d.: √r·ρ̂ has variance (1 − ρ²)², so D̂ ≈ 1/(1 − ρ²).
+    assert corr._wkd_scale(x[:, 0], x[:, 1]) == pytest.approx(1 / 0.75, rel=0.08)
+
+
+def a_constant_correlation_rarely_alarms_and_a_jump_is_found():
+    rng = np.random.default_rng(1)
+    m, T = 500, 1.0
+    null = [corr.monitor(_garch_pair(m + m, rng, lambda t: 0.5), m, T=T)["alarm"] for _ in range(100)]
+    assert np.mean(null) <= 0.12  # the paper: 5–9% at a nominal 5%, γ = 0.25
+    jump = [corr.monitor(_garch_pair(m + m, rng, lambda t: 0.5 if t < m + 25 else 0.75), m, T=T) for _ in range(30)]
+    assert np.mean([j["alarm"] for j in jump]) >= 0.8
+    found = next(j for j in jump if j["alarm"])
+    assert found["pair"] == ("0", "1") and found["ratio"] > 1 and 1 <= found["first"] <= m
+
+
+def the_monitor_names_the_pair_that_moved():
+    rng = np.random.default_rng(2)
+    z = rng.standard_normal((1_200, 3))
+    z[700:, 2] = 0.9 * z[700:, 0] + np.sqrt(1 - 0.81) * z[700:, 2]  # A|C jumps from 0 to 0.9 after the baseline
+    found = corr.monitor(z, 600, tickers=["A", "B", "C"])
+    assert found["alarm"] and found["pair"] == ("A", "C")
+    assert found["pairs"][("A", "B")] < 1 < found["pairs"][("A", "C")]
+    assert found["k"] == 600 and found["m"] == 600
+
+
+def no_monitor_from_a_short_baseline_or_without_returns_after_it():
+    z = np.random.default_rng(3).standard_normal((1_000, 2))
+    with pytest.raises(Refused, match="too short"):
+        corr.monitor(z, 300)
+    with pytest.raises(Refused, match="two or more"):
+        corr.monitor(z[:501], 500)

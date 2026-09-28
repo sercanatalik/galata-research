@@ -30,6 +30,7 @@ figure rests on, which is not the rows in its window.
 """
 
 from dataclasses import dataclass, field
+from functools import lru_cache
 from math import ceil, inf, log
 
 import numpy as np
@@ -709,3 +710,132 @@ def constancy(z, rbar, *, lags: int = 5, robust: bool = True) -> dict:
     else:
         stat = float(delta @ xtx @ delta / (e @ e / (len(e) - x.shape[1])))
     return {"statistic": stat, "p_value": float(sstats.chi2.sf(stat, lags + 1)), "lags": lags, "n": T, "robust": robust}
+
+
+# ── monitoring (monitor-the-correlation) ────────────────────────────────────
+
+
+@lru_cache(maxsize=64)
+def monitor_critical(alpha: float, T: float, gamma: float = 0.25, *, eps: float = 1e-10, paths: int = 20_000, points: int = 10_000, seed: int = 0) -> float:
+    """The critical value c of Wied and Galeano's (2013) monitor, by Monte Carlo of its limit (their Eqs. 4–7).
+
+    The (1 − `alpha`) quantile of (T/(1+T))^(½−γ) · sup₀≤s≤1 |W(s)| / max{s^γ, ε((T+1)/T)^γ},
+    W standard Brownian motion on `points` steps, `paths` paths, seeded. Their
+    Table 1 (α = 0.05) is reproduced within Monte Carlo error.
+    """
+    if not 0 <= gamma < 0.5:
+        raise Refused(f"gamma={gamma}: the monitor needs 0 ≤ γ < ½")
+    rng = np.random.default_rng(seed)
+    s = np.arange(1, points + 1) / points
+    floor = np.maximum(s**gamma, eps * ((T + 1) / T) ** gamma)
+    sups = []
+    for start in range(0, paths, 500):
+        w = np.cumsum(rng.standard_normal((min(500, paths - start), points)), axis=1) / np.sqrt(points)
+        sups.append(np.max(np.abs(w) / floor, axis=1))
+    return float((T / (1 + T)) ** (0.5 - gamma) * np.quantile(np.concatenate(sups), 1 - alpha))
+
+
+def _wkd_scale(x: np.ndarray, y: np.ndarray) -> float:
+    """D̂ of Wied, Krämer and Dehling (2012, App. A.1): 1 / the long-run s.d. of √r·ρ̂, by the delta method, Bartlett at ⌊log r⌋."""
+    r = len(x)
+    mx, my = x.mean(), y.mean()
+    sx2, sy2, sxy = (x * x).mean() - mx * mx, (y * y).mean() - my * my, (x * y).mean() - mx * my
+    sx, sy = np.sqrt(sx2), np.sqrt(sy2)
+    u = np.column_stack([x * x - (x * x).mean(), y * y - (y * y).mean(), x - mx, y - my, x * y - (x * y).mean()]) / np.sqrt(r)
+    d1 = u.T @ u
+    band = max(int(np.log(r)), 1)
+    for h in range(1, band):
+        g = u[h:].T @ u[:-h]
+        d1 += (1 - h / band) * (g + g.T)
+    D = lambda i, j: d1[i - 1, j - 1]  # noqa: E731  (the paper's 1-based subscripts)
+    e11 = D(1, 1) - 4 * mx * D(1, 3) + 4 * mx**2 * D(3, 3)
+    e12 = D(1, 2) - 2 * mx * D(2, 3) - 2 * my * D(1, 4) + 4 * mx * my * D(3, 4)
+    e22 = D(2, 2) - 4 * my * D(2, 4) + 4 * my**2 * D(4, 4)
+    e13 = -my * D(1, 3) + 2 * mx * my * D(3, 3) - mx * D(1, 4) + 2 * mx**2 * D(3, 4) + D(1, 5) - 2 * mx * D(3, 5)
+    e23 = -my * D(2, 3) + 2 * mx * my * D(4, 4) - mx * D(2, 4) + 2 * my**2 * D(3, 4) + D(2, 5) - 2 * my * D(4, 5)
+    e33 = my**2 * D(3, 3) + 2 * mx * my * D(3, 4) - 2 * my * D(3, 5) + mx**2 * D(4, 4) + D(5, 5) - 2 * mx * D(4, 5)
+    e = np.array([[e11, e12, e13], [e12, e22, e23], [e13, e23, e33]])
+    d3 = np.array([-0.5 * (sxy / sy) * sx**-3, -0.5 * (sxy / sx) * sy**-3, 1 / (sx * sy)])
+    var = float(d3 @ e @ d3)
+    if not var > 0:
+        raise Refused("the correlation's long-run variance over the baseline is not positive")
+    return var**-0.5
+
+
+def _pearson(x: np.ndarray, y: np.ndarray) -> float:
+    xc, yc = x - x.mean(), y - y.mean()
+    return float((xc * yc).sum() / np.sqrt((xc * xc).sum() * (yc * yc).sum()))
+
+
+def _running_pearson(x: np.ndarray, y: np.ndarray) -> np.ndarray:
+    """ρ̂ over the first k of `x, y`, for k = 1 … n (nan for k < 2)."""
+    n = np.arange(1, len(x) + 1)
+    sx, sy, sxx, syy, sxy = (np.cumsum(v) for v in (x, y, x * x, y * y, x * y))
+    with np.errstate(invalid="ignore", divide="ignore"):
+        cov = sxy / n - sx * sy / n**2
+        rho = cov / np.sqrt((sxx / n - (sx / n) ** 2) * (syy / n - (sy / n) ** 2))
+    rho[n < 2] = np.nan
+    return rho
+
+
+#: The shortest baseline monitored from. Measured (monitor-the-correlation): six
+#: series, 15 pairs at α/15, 300 null runs, T = 1.5, γ = 0.25: any false alarm
+#: in 13% of runs at m = 250 against 5.7% at m = 720. The Bonferroni tail is
+#: where the limit converges slowest.
+MONITOR_MIN_BASELINE = 500
+
+
+def monitor(z, m: int, *, T: float = 1.5, gamma: float = 0.25, alpha: float = 0.05, tickers=None) -> dict:
+    """Wied and Galeano's (2013) sequential monitor of every pair's correlation, Bonferroni over the pairs.
+
+    `z` (n × N): rows 1…m are the baseline, where the correlation is assumed
+    constant; rows m+1… are monitored, up to ⌊mT⌋ of them. For each pair,
+    Vₖ = D̂·(k/√m)·(ρ̂ₘ₊₁^{m+k} − ρ̂₁^m), with D̂ from the baseline alone
+    (`_wkd_scale`), alarms at the first k with |Vₖ| > c·w(k/m),
+    w(b) = (1+b)·max{(b/(1+b))^γ, ε}. With the N(N−1)/2 pairs each at
+    α/pairs, the chance of any false alarm over the monitoring period is at
+    most `alpha` (in the limit). The paper's own size study, Gaussian GARCH
+    at m ≥ 250, found 5–9% at a nominal 5% with γ = 0.25.
+
+    `ratio` is the largest |Vₖ|/(c·w(k/m)) so far over every pair: ≥ 1 is an
+    alarm. `first` is the k of the earliest alarm and `pair` its pair.
+    """
+    z = np.asarray(z, dtype=float)
+    if z.ndim != 2 or z.shape[1] < 2:
+        raise Refused(f"a monitor needs two series or more; z has shape {z.shape}")
+    n, N = z.shape
+    if m < MONITOR_MIN_BASELINE:
+        raise Refused(f"a baseline of {m} returns is too short to monitor from (under {MONITOR_MIN_BASELINE})")
+    k_max = min(n - m, int(m * T))
+    if k_max < 2:
+        raise Refused(f"{n - m} returns since the baseline: a monitor needs two or more")
+    names = list(tickers) if tickers is not None else [str(i) for i in range(N)]
+    pairs = [(i, j) for i in range(N) for j in range(i + 1, N)]
+    c = monitor_critical(alpha / len(pairs), T, gamma)
+    k = np.arange(1, k_max + 1)
+    b = k / m
+    w = (1 + b) * np.maximum((b / (1 + b)) ** gamma, 1e-10)
+    per_pair, first, first_pair = {}, None, None
+    for i, j in pairs:
+        x, y = z[:m, i], z[:m, j]
+        scale = _wkd_scale(x, y)
+        after = _running_pearson(z[m : m + k_max, i], z[m : m + k_max, j])
+        v = np.abs(scale * (k / np.sqrt(m)) * (after - _pearson(x, y))) / (c * w)
+        v = np.nan_to_num(v, nan=0.0)
+        per_pair[(names[i], names[j])] = float(v.max())
+        crossed = np.flatnonzero(v > 1)
+        if crossed.size and (first is None or crossed[0] + 1 < first):
+            first, first_pair = int(crossed[0] + 1), (names[i], names[j])
+    return {
+        "alarm": first is not None,
+        "first": first,
+        "pair": first_pair,
+        "ratio": max(per_pair.values()),
+        "pairs": per_pair,
+        "critical": c,
+        "m": m,
+        "k": k_max,
+        "alpha": alpha,
+        "gamma": gamma,
+        "T": T,
+    }
