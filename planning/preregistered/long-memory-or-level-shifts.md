@@ -91,3 +91,54 @@ persistence.
 ## Results
 
 *Appended after the run. Nothing above this line may change.*
+
+### Run of 2026-09-28 (`notebooks/long_memory.py`)
+
+- **Validation, run first** (`tests/memory.py`). All three checks pass:
+  - the local Whittle estimate recovers d = 0.304 against the true 0.3 (50
+    draws);
+  - Qu's test rejects true long memory in 3.5% of 200 fractional noises
+    (size ≤ 10% required);
+  - it rejects level shifts in 97% of 200 draws (power ≥ 50% required).
+- **Deviations.** None. FIGARCH's d, listed as context, was not computed:
+  the test answered without it.
+
+| cell | T | zeros dropped | m | d̂ (m = T^0.7) | W | verdict |
+|---|---|---|---|---|---|---|
+| BTC 1h | 59,049 | 14 | 2,187 | 0.357 | **4.22** | spurious |
+| BTC 1d | 2,460 | 0 | 237 | 0.225 | **1.76** | spurious |
+| ETH 1h | 59,007 | 56 | 2,186 | 0.358 | **4.11** | spurious |
+| ETH 1d | 2,459 | 1 | 237 | 0.239 | **1.78** | spurious |
+
+**Reading: level shifts.** All four cells reject true long memory at 5%,
+and at 1% (1.517) too. The prediction, long memory not rejected anywhere,
+failed in every cell.
+
+d̂ by bandwidth (context):
+
+| cell | m = T^0.5 | T^0.6 | T^0.7 | T^0.8 |
+|---|---|---|---|---|
+| BTC 1h | 0.52 | 0.43 | 0.36 | 0.24 |
+| BTC 1d | 0.44 | 0.35 | 0.23 | 0.14 |
+| ETH 1h | 0.52 | 0.44 | 0.36 | 0.23 |
+| ETH 1d | 0.40 | 0.31 | 0.24 | 0.16 |
+
+**Read.**
+- **The bandwidth pattern agrees.** d̂ falls steadily as more frequencies
+  enter, in every cell. This is the pattern Perron and Qu (2010) show level
+  shifts produce and long memory does not.
+- **The persistence is spurious long memory.** Items 29 and 31 left it
+  unexplained: not the daily cycle, not κ₂'s coarse breaks. It is low-
+  frequency contamination:
+  - level shifts smaller or more frequent than κ₂ found at 30-day spacing;
+  - or a smooth trend, which Qu's alternative also covers. A secular change
+    in the volatility level over 2020–2026 would be one; this run did not
+    measure it.
+- **This disagrees with the univariate result of the JRFM (2020) study** on
+  an earlier sample. It agrees with that study's multivariate test, which
+  found level shifts or trends.
+- **For the models (inferred, not tested here).** GARCH's α+β ≈ 1 on these
+  series likely measures the shifts, not memory, and a FIGARCH d would too.
+  A random-level-shift variance model (Lu and Perron 2010, *Journal of
+  Empirical Finance* 17(1), 138–156) is the natural next specification to
+  forecast with.

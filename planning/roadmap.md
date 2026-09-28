@@ -238,6 +238,12 @@ adopting one for future runs is the operator's call.
   median between them stays above 0.99 (0.9934, 0.9929), and years-long segments still fit 1.0000. Long memory or
   finer level shifts remain.
 
+- [x] 32. **`long-memory-or-level-shifts`**: register, then test whether the volatility's persistence is true long
+  memory or level shifts, with Qu's (2011) test (`gr.models.memory`, validated on simulations first) on log |r| of
+  Binance BTC and ETH, 1h and 1d, six years. Done: **level shifts**. All four cells reject true long memory at 1%
+  (W 4.1–4.2 at 1h, 1.76–1.78 at 1d), and d̂ falls with the bandwidth in every cell (Perron and Qu 2010). The
+  persistence of one is low-frequency contamination (level shifts or a trend), not memory.
+
 ---
 
 ## What the record holds
