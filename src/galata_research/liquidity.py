@@ -610,3 +610,90 @@ def schedule_cost(plan: pl.DataFrame, depth: pl.DataFrame, *, slices: int = 60) 
     dollars = (slices * child * (child / pl.col("depth") * 50) / 1e4).sum()
     out = j.select(dollars.alias("dollars"), pl.col("notional").sum().alias("total"), (child > pl.col("depth")).sum().alias("over")).row(0, named=True)
     return {"cost_bps": out["dollars"] / out["total"] * 1e4 if out["total"] else None, "over_depth": int(out["over"])}
+
+
+# ── order-flow imbalance (measure-the-order-flow) ────────────────────────────
+
+
+def ofi(quotes: pl.LazyFrame | pl.DataFrame, every: str = "10s", *, max_gap_us: int = 5_000_000) -> pl.DataFrame:
+    """Cont, Kukanov and Stoikov's (2014) order-flow imbalance per venue, ticker and bucket, from the best bid and ask.
+
+    Each quote update n contributes
+    eₙ = 1{Pbₙ ≥ Pbₙ₋₁}·qbₙ − 1{Pbₙ ≤ Pbₙ₋₁}·qbₙ₋₁ − 1{Paₙ ≤ Paₙ₋₁}·qaₙ + 1{Paₙ ≥ Paₙ₋₁}·qaₙ₋₁:
+    size arriving at the bid or leaving the ask pushes the price up. `ofi` is
+    their sum over the bucket (base units), `depth` the bucket's mean of
+    (qb + qa)/2 over its updates (their AD), and `return_bps` the log change
+    of the mid from the last update at or before the previous bucket's end to
+    the last at or before this one's: null when the previous bucket held no
+    update. **No term is computed across a crossed or locked state, or across
+    a gap longer than `max_gap_us`** (a reconnect, a stale feed): one spurious
+    term would dominate the bucket.
+    """
+    utils.require(quotes, ("venue", "ticker", "ts", "bid_px", "ask_px", "bid_sz", "ask_sz"), "load quotes with gr.market.quotes")
+    keys = ["venue", "ticker"]
+    gap = pl.duration(microseconds=max_gap_us)
+    lf = utils.lazy(quotes).sort(*keys, "ts")
+    valid = pl.col("ask_px") > pl.col("bid_px")
+    prev = lambda c: pl.col(c).shift(1).over(keys)  # noqa: E731
+    pb, pa, qb, qa = pl.col("bid_px"), pl.col("ask_px"), pl.col("bid_sz"), pl.col("ask_sz")
+    e = (
+        pl.when(pb >= prev("bid_px")).then(qb).otherwise(0.0)
+        - pl.when(pb <= prev("bid_px")).then(prev("bid_sz")).otherwise(0.0)
+        - pl.when(pa <= prev("ask_px")).then(qa).otherwise(0.0)
+        + pl.when(pa >= prev("ask_px")).then(prev("ask_sz")).otherwise(0.0)
+    )
+    joined = (pl.col("ts") - prev("ts") <= gap) & prev("_valid")
+    frame = lf.with_columns(valid.alias("_valid")).with_columns(
+        pl.when(pl.col("_valid") & joined).then(e).otherwise(0.0).alias("_e"),
+        ((pb + pa) / 2).alias("_mid"),
+    )
+    out = (
+        frame.filter(pl.col("_valid"))
+        .group_by(*keys, pl.col("ts").dt.truncate(every).alias("bucket"), maintain_order=True)
+        .agg(
+            pl.col("_e").sum().alias("ofi"),
+            ((qb + qa) / 2).mean().alias("depth"),
+            pl.col("_mid").last().alias("_last_mid"),
+            pl.len().cast(pl.UInt32).alias("events"),
+        )
+        .rename({"bucket": "ts"})
+        .sort(*keys, "ts")
+        .with_columns(
+            pl.when(pl.col("ts").dt.offset_by(f"-{every}") == pl.col("ts").shift(1).over(keys))
+            .then(1e4 * (pl.col("_last_mid") / pl.col("_last_mid").shift(1).over(keys)).log())
+            .alias("return_bps")
+        )
+        .drop("_last_mid")
+        .collect()
+    )
+    return out
+
+
+def impact(buckets: pl.DataFrame, x: str = "ofi_norm", y: str = "return_bps", *, winsor: float = 0.999, min_n: int = 100) -> dict:
+    """OLS of `y` on `x` with an intercept, as Cont, Kukanov and Stoikov fit ΔP on OFI: β, R², White t, n.
+
+    `x` is winsorised at its `winsor` and 1 − `winsor` quantiles first (heavy
+    tails). Rows with either side null are dropped. Under `min_n` rows, or
+    with no variation in `x`, it refuses. R² is contemporaneous explanatory
+    power, not a forecast: Cont, Cucuringu and Zhang find next-minute
+    out-of-sample R² of −0.37% for the same regressor.
+    """
+    frame = buckets.select(pl.col(x).cast(pl.Float64).alias("x"), pl.col(y).cast(pl.Float64).alias("y")).drop_nulls()
+    if frame.height < min_n:
+        raise Refused(f"{frame.height} buckets with both {x} and {y}, under {min_n}")
+    lo, hi = frame["x"].quantile(1 - winsor), frame["x"].quantile(winsor)
+    frame = frame.with_columns(pl.col("x").clip(lo, hi))
+    n = frame.height
+    mx, my = frame["x"].mean(), frame["y"].mean()
+    dx, dy = frame["x"] - mx, frame["y"] - my
+    sxx = float((dx * dx).sum())
+    if sxx == 0:
+        raise Refused(f"{x} does not vary over the {n} buckets")
+    beta = float((dx * dy).sum()) / sxx
+    alpha = my - beta * mx
+    resid = frame["y"] - alpha - beta * frame["x"]
+    syy = float((dy * dy).sum())
+    r2 = 1 - float((resid * resid).sum()) / syy if syy > 0 else float("nan")
+    # White's heteroskedasticity-consistent variance of the slope.
+    var = float((dx * dx * resid * resid).sum()) / sxx**2
+    return {"beta": beta, "alpha": float(alpha), "r2": r2, "t": beta / math.sqrt(var) if var > 0 else float("nan"), "n": n}
