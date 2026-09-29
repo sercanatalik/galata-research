@@ -15,7 +15,16 @@ import polars as pl
 from ... import timeseries, utils
 from ..._errors import Refused
 
-MODELS = ("har", "shar", "harq")
+MODELS = ("har", "shar", "harq", "harj", "harcj", "hartcj")
+_NEEDS = {
+    "har": ("rv",),
+    "shar": ("rv", "rs_plus", "rs_minus"),
+    "harq": ("rv", "rq"),
+    "harj": ("rv", "bv"),
+    "harcj": ("rv", "c_bns", "j_bns"),
+    "hartcj": ("rv", "c_tcj", "j_tcj"),
+}
+_MADE_BY = {"harj": "gr.models.vol.realized_jumps", "harcj": "gr.models.vol.realized_jumps", "hartcj": "gr.models.vol.realized_jumps"}
 _LAGS = {timedelta(days=1): (1, 7, 30), timedelta(hours=4): (1, 6, 42)}
 _OUT = ("ticker", "ts", "close_ts", "h", "target_ts", "variance", "cum_variance", "fitted_through", "fit_from", "refit", "after_gap", "filtered", "nu")
 
@@ -43,6 +52,14 @@ def har(
       measured RV gets less weight (Bollerslev, Patton and Quaedvlieg 2016;
       that they demean is reported second-hand).
 
+    - `harj`: adds max(RVₛ − BVₛ, 0), the untested jump (Andersen, Bollerslev
+      and Diebold 2007, HAR-RV-J).
+    - `harcj`: 1, Cₛ, Cʷ, Cᵐ, Jₛ, Jʷ, Jᵐ from the bipower test's split (ABD
+      2007, HAR-RV-CJ); `hartcj` the same from the threshold split (Corsi,
+      Pirino and Renò 2010, HAR-TCJ). Both take `realized_jumps` output; a
+      training window with no jump is rank-deficient, and least squares'
+      minimum-norm solution is then HAR's fit.
+
     `lags` default to (1, 7, 30) for daily buckets (crypto trades every day; a
     convention reported second-hand) and (1, 6, 42) for 4h (bar, day, week).
     `estimator="wls"` refits with weights 1 / the OLS fit (Patton and
@@ -55,7 +72,7 @@ def har(
     hs = sorted({int(h) for h in horizons})
     if not hs or hs[0] < 1:
         raise Refused(f"horizons={list(horizons)}: each must be a whole number of buckets ≥ 1")
-    utils.require(measures, ("ticker", "ts", "close_ts", "rv", "rs_plus", "rs_minus", "rq"), "make measures with gr.timeseries.realized_from")
+    utils.require(measures, ("ticker", "ts", "close_ts", *_NEEDS[model]), f"make measures with {_MADE_BY.get(model, 'gr.timeseries.realized_from')}")
     frame = utils.lazy(measures).sort("ts").collect()
     tickers = frame["ticker"].unique().sort().to_list()
     if len(tickers) != 1:
@@ -81,8 +98,17 @@ def har(
     cumul = np.full((schedule.height, H), np.nan)
     flags = np.zeros((schedule.height, H), dtype=bool)
     cum_rv = np.concatenate([[0.0], np.cumsum(rv)])
-    sqrt_rq = np.sqrt(kept["rq"].to_numpy())
-    columns = {"rv": rv, "rs_plus": kept["rs_plus"].to_numpy(), "rs_minus": kept["rs_minus"].to_numpy(), "weekly": weekly, "monthly": monthly}
+    sqrt_rq = np.sqrt(kept["rq"].to_numpy()) if "rq" in kept.columns else np.ones(n)
+    columns = {"rv": rv, "weekly": weekly, "monthly": monthly}
+    for name in _NEEDS[model][1:]:
+        columns[name] = kept[name].to_numpy()
+    if model == "harj":
+        columns["jump"] = np.maximum(rv - columns["bv"], 0.0)
+    for name in ("c_bns", "j_bns", "c_tcj", "j_tcj"):
+        if name in columns:
+            x = columns[name]
+            columns[name + "_w"] = np.array([x[max(0, i - w + 1) : i + 1].mean() for i in range(n)])
+            columns[name + "_m"] = np.array([x[max(0, i - m + 1) : i + 1].mean() for i in range(n)])
     for k, r in enumerate(refits):
         stop = refits[k + 1] if k + 1 < len(refits) else n
         lo = m - 1 if window == "expanding" else max(m - 1, r - window + 1)
@@ -125,6 +151,11 @@ def _design(model: str, c: dict, sqrt_rq: np.ndarray, q_mean: float, rows: np.nd
     one = np.ones(rows.size)
     if model == "har":
         cols = [one, c["rv"][rows], c["weekly"][rows], c["monthly"][rows]]
+    elif model == "harj":
+        cols = [one, c["rv"][rows], c["weekly"][rows], c["monthly"][rows], c["jump"][rows]]
+    elif model in ("harcj", "hartcj"):
+        cc, jj = ("c_bns", "j_bns") if model == "harcj" else ("c_tcj", "j_tcj")
+        cols = [one, *(c[k][rows] for k in (cc, cc + "_w", cc + "_m", jj, jj + "_w", jj + "_m"))]
     elif model == "shar":
         cols = [one, c["rs_plus"][rows], c["rs_minus"][rows], c["weekly"][rows], c["monthly"][rows]]
     else:

@@ -326,5 +326,136 @@ def _(BARS, TICKERS, aligned_for, ev, mo, pl, rls_walked, walked):
                mo.md("Every model against GARCH, per cell (below 1: better):"), rls_cards.pivot(on="h", index=["ticker", "bars", "model"], values="qlike_ratio")])  # fmt: skip
     return rls_cards, rls_verdicts
 
+@app.cell
+def _(mo):
+    mo.md(r"""
+    ## Does separating the jumps improve HAR (item 34)
+
+    Registered in `planning/preregistered/har-jumps.md` (`a382c0d`),
+    committed alone on 2026-09-29 before any jump measure existed.
+    - **Measures.** `gr.models.vol.realized_jumps` on 5-minute bars: BV, TQ,
+      MedRV, C-TBV, C-TTQ, both ratio statistics, both C/J splits.
+    - **Models.** `har`, `harj`, `harcj`, `hartcj` — the last three from the
+      jump measures, the first from `realized_from` as the benchmark.
+    - **Proxies.** (1) squared bar returns, `proxies(bars, "r2")`; (2) 5-minute
+      RV scaled to the squared return's level, c = Σr² / ΣRV₅ over the bars
+      closing by the split, per ticker and bars.
+
+    | # | claim | rule |
+    |---|---|---|
+    | H7 | HAR-CJ beats HAR | *consistent* if harcj QLIKE < har QLIKE at every horizon; *contradicts* if at none; *mixed* otherwise |
+    | H8 | HAR-TCJ beats HAR | the same, for hartcj |
+    | H9 | HAR-TCJ beats HAR at every horizon, significantly | *yes* if uSPA p < 0.05 (499 reps) |
+    | H10 | the verdict does not turn on the proxy | H7, H8 and item 24's H2 re-decided under the second proxy: *robust* if ≥ 9 of 12 verdicts equal those under r² |
+    """)
+    return
+
+
+@app.cell
+def _(BARS, EVERY, HELD, HORIZONS, SPLIT, TICKERS, bars, gr, mo, pl):
+    from galata_research.models import vol as _vol
+
+    def _jump_walks():
+        parts, skipped = [], []
+        for t in TICKERS:
+            for i in BARS:
+                try:
+                    jm = _vol.realized_jumps(bars[(t, "5m")], i)
+                except gr.Refused as why:
+                    skipped.append({"ticker": t, "interval": i, "model": "all", "why": str(why)})
+                    continue
+                for model in ("har", "harj", "harcj", "hartcj"):
+                    try:
+                        if model == "har":
+                            measures = gr.timeseries.realized_from(bars[(t, "5m")], i)
+                        else:
+                            measures = jm
+                        f = _vol.har(measures, model=model, split=SPLIT, every=EVERY[i], horizons=HORIZONS[i])
+                        parts.append(f.with_columns(pl.lit(i).alias("interval"), pl.lit(model).alias("model")))
+                    except gr.Refused as why:
+                        skipped.append({"ticker": t, "interval": i, "model": model, "why": str(why)})
+        return pl.concat(parts, how="diagonal_relaxed"), pl.DataFrame(skipped, schema={"ticker": pl.String, "interval": pl.String, "model": pl.String, "why": pl.String})
+
+    with mo.persistent_cache(name=f"har-long-jumps-{HELD}"):
+        jump_walked, jump_skipped = _jump_walks()
+    mo.vstack([
+        mo.md(f"**{jump_walked.height:,}** forecasts; `fitted_through ≤ close_ts` on every row: **{bool((jump_walked['fitted_through'] <= jump_walked['close_ts']).all())}**."),
+        mo.md("Not walked:") if jump_skipped.height else mo.md(""), jump_skipped if jump_skipped.height else mo.md(""),
+    ])  # fmt: skip
+    return jump_skipped, jump_walked
+
+
+@app.cell
+def _(BARS, SPLIT, TICKERS, bars, gr, pl):
+    _rows = []
+    _cut = pl.lit(SPLIT).str.to_datetime(time_zone="UTC")
+    for _t in TICKERS:
+        for _i in BARS:
+            _r2 = gr.timeseries.returns(bars[(_t, _i)], kind="log").select("ts", (pl.col("return") ** 2).alias("r2"))
+            _m = gr.timeseries.realized_from(bars[(_t, "5m")], _i).select("ts", "close_ts", "rv")
+            _j = _m.join(_r2, on="ts").drop_nulls().filter(pl.col("close_ts") <= _cut)
+            _rows.append({"ticker": _t, "interval": _i, "c": _j["r2"].sum() / _j["rv"].sum(), "bars": _j.height})
+    jump_scales = pl.DataFrame(_rows)
+    return (jump_scales,)
+
+
+@app.cell
+def _(BARS, TICKERS, aligned_for, ev, jump_scales, jump_walked, mo, pl):
+    _rows = []
+    for _t in TICKERS:
+        for _i in BARS:
+            _r2_proxy = ev.proxies(bars[(_t, _i)], "r2")
+            _rv5_proxy = gr.timeseries.realized_from(bars[(_t, "5m")], _i).select("ts", pl.col("rv").alias("proxy"))
+            _c = jump_scales.filter((pl.col("ticker") == _t) & (pl.col("interval") == _i))["c"][0]
+            _rv5_proxy = _rv5_proxy.with_columns((pl.col("proxy") * _c).alias("proxy"))
+            for _proxy_name, _proxy in (("r2", _r2_proxy), ("rv5", _rv5_proxy)):
+                _f = jump_walked.filter((pl.col("ticker") == _t) & (pl.col("interval") == _i))
+                _al = ev.align(_f, _proxy)
+                _card = ev.scorecard(_al, benchmark="har")
+                _q = _card.select("model", "h", "qlike")
+                for _model, _hyp in (("harcj", "H7"), ("hartcj", "H8")):
+                    _m_q = _q.filter(pl.col("model") == _model).select("h", pl.col("qlike").alias("m"))
+                    _h_q = _q.filter(pl.col("model") == "har").select("h", pl.col("qlike").alias("h"))
+                    _j = _m_q.join(_h_q, on="h").sort("h")
+                    _wins = int((_j["m"] < _j["h"]).sum())
+                    _v = "consistent" if _wins == _j.height else "contradicts" if _wins == 0 else "mixed"
+                    _rows.append({"#": _hyp, "ticker": _t, "bars": _i, "proxy": _proxy_name, "verdict": _v,
+                                  "measured": f"{_wins} of {_j.height} horizons"})
+                if _proxy_name == "r2":
+                    try:
+                        _p = ev.uspa(_al, model="hartcj", benchmark="har", reps=499)["p_value"]
+                        _rows.append({"#": "H9", "ticker": _t, "bars": _i, "proxy": _proxy_name,
+                                      "verdict": "yes" if _p < 0.05 else "no", "measured": f"uSPA p {_p:.3f}"})
+                    except Exception as _why:
+                        _rows.append({"#": "H9", "ticker": _t, "bars": _i, "proxy": _proxy_name,
+                                      "verdict": "can't tell", "measured": str(_why)[:80]})
+    jump_verdicts = pl.DataFrame(_rows).sort("#", "ticker", "bars", "proxy")
+    return jump_verdicts
+
+
+@app.cell
+def _(mo, pl, jump_verdicts):
+    _h7 = jump_verdicts.filter(pl.col("#") == "H7")
+    _h8 = jump_verdicts.filter(pl.col("#") == "H8")
+    _h9 = jump_verdicts.filter(pl.col("#") == "H9")
+    _h7_r2 = _h7.filter(pl.col("proxy") == "r2")["verdict"].to_list()
+    _h7_rv5 = _h7.filter(pl.col("proxy") == "rv5")["verdict"].to_list()
+    _h8_r2 = _h8.filter(pl.col("proxy") == "r2")["verdict"].to_list()
+    _h8_rv5 = _h8.filter(pl.col("proxy") == "rv5")["verdict"].to_list()
+    _h7_match = sum(a == b for a, b in zip(_h7_r2, _h7_rv5, strict=True))
+    _h8_match = sum(a == b for a, b in zip(_h8_r2, _h8_rv5, strict=True))
+    _total_match = _h7_match + _h8_match
+    _h10_v = "robust" if _total_match >= 6 else "proxy-dependent"  # 8 verdicts (H7+H8 × 4 cells); ≥6 of 8 matching = robust
+    _h7_n = _h7_r2.count("consistent")
+    _h8_n = _h8_r2.count("consistent")
+    _reading = (
+        f"**H7 (HAR-CJ vs HAR)**: {_h7_n} of 4 cells consistent under r². "
+        f"**H8 (HAR-TCJ vs HAR)**: {_h8_n} of 4 cells consistent under r². "
+        f"**H10 (proxy robustness)**: {_h10_v} ({_h7_match + _h8_match} of 4 verdicts match across proxies)."
+    )
+    mo.vstack([mo.md("### The verdicts of item 34"), mo.ui.table(jump_verdicts, selection=None, page_size=16), mo.md(_reading)])
+    return
+
+
 if __name__ == "__main__":
     app.run()

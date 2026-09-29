@@ -100,3 +100,56 @@ def the_weighted_estimator_runs_and_differs():
     ols, wls = vol.har(m, **kw), vol.har(m, estimator="wls", **kw)
     assert wls["variance"].null_count() == 0
     assert wls["variance"].to_list() != pytest.approx(ols["variance"].to_list(), rel=1e-9)
+
+
+def _jump_measures(c, j, width=DAY):
+    n = len(c)
+    c, j = np.asarray(c, dtype=float), np.asarray(j, dtype=float)
+    return pl.DataFrame(
+        {
+            "ticker": "BTC",
+            "ts": [T0 + i * width for i in range(n)],
+            "close_ts": [T0 + (i + 1) * width for i in range(n)],
+            "rv": c + j,
+            "bv": c,
+            "c_bns": c,
+            "j_bns": j,
+            "c_tcj": c,
+            "j_tcj": j,
+        }
+    )
+
+
+def no_jumps_leave_harcj_as_har():
+    rv = _har_process(800)
+    m = _jump_measures(rv, np.zeros(rv.size))
+    kw = dict(split=T0 + 600 * DAY, every=20, horizons=[1, 5])
+    har = vol.har(m, model="har", **kw)["variance"].to_list()
+    for model in ("harcj", "hartcj"):
+        assert vol.har(m, model=model, **kw)["variance"].to_list() == pytest.approx(har, rel=1e-9), model
+
+
+def a_harcj_process_is_recovered():
+    rng = np.random.default_rng(1)
+    c, j = [1.0] * 30, [0.0] * 30
+
+    def mean(x, k):
+        return np.mean(x[-k:])
+
+    def truth(c, j):
+        return 0.1 + 0.4 * c[-1] + 0.3 * mean(c, 7) + 0.1 * mean(c, 30) + 0.05 * j[-1] + 0.2 * mean(j, 30)
+
+    for _ in range(12000):
+        c.append(max(truth(c, j) + rng.normal(0, 0.05), 0.01))
+        j.append(rng.exponential(1.0) if rng.random() < 0.05 else 0.0)
+    c, j = np.array(c), np.array(j)
+    # RVₜ₊₁ = Cₜ₊₁ + Jₜ₊₁, and E[Jₜ₊₁] = 0.05: the jump's mean adds to the intercept
+    f = vol.har(_jump_measures(c, j), model="harcj", split=T0 + 11500 * DAY, every=10**6, horizons=[1])
+    first = c.size - f.height
+    expect = [truth(c[: i + 1], j[: i + 1]) + 0.05 for i in range(first, c.size)]
+    assert f["variance"].to_numpy() == pytest.approx(np.array(expect), rel=0.05)
+
+
+def a_jump_model_without_jump_columns_is_refused():
+    with pytest.raises(Refused, match="realized_jumps"):
+        vol.har(_measures(_har_process(400)), model="harcj", split=T0 + 300 * DAY)
