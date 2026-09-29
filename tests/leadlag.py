@@ -1,92 +1,51 @@
-"""gr.leadlag: the shifted Hayashi–Yoshida correlation, against its double sum and planted leads."""
+"""The shifted Hayashi–Yoshida lead-lag on prices simulated with a known lag."""
 
-import math
-import random
-from datetime import timedelta
-
-import polars as pl
+import numpy as np
 import pytest
-from conftest import utc
 
-from galata_research import Refused, leadlag
-
-T0 = utc("2026-09-25T00:00")
+from galata_research import Refused
+from galata_research.models import leadlag
 
 
-def _path(seconds=3600, step_ms=10, seed=1):
-    """A Brownian log-price path on a fine grid: (micros, log price)."""
-    rng = random.Random(seed)
-    p, out = math.log(100.0), []
-    for i in range(seconds * 1000 // step_ms):
-        p += rng.gauss(0, 1e-5)
-        out.append((i * step_ms * 1000, p))
-    return out
+def _pair(lag_s, n=4000, seed=1, rate_x=5.0, rate_y=2.0):
+    """X a random walk on a 1 ms clock over n seconds; Y follows it `lag_s` later, both seen at Poisson times of their own."""
+    rng = np.random.default_rng(seed)
+    clock = np.arange(0, n, 0.001)
+    walk = np.cumsum(rng.normal(0, 1e-4, clock.size))
+    tx = np.sort(rng.uniform(0, n, int(n * rate_x)))
+    ty = np.sort(rng.uniform(0, n, int(n * rate_y)))
+    px = 100 * np.exp(walk[np.searchsorted(clock, tx, "right") - 1])
+    # Y at time s shows X's path at s − lag, plus its own noise.
+    shifted = np.clip(ty - lag_s, 0, n - 0.001)
+    py = 50 * np.exp(walk[np.searchsorted(clock, shifted, "right") - 1] + rng.normal(0, 2e-5, ty.size))
+    return tx, px, ty, py
 
 
-def _sample(path, n, seed, delay_ms=0):
-    """n random observation times; the price seen is the path's value delay_ms earlier."""
-    rng = random.Random(seed)
-    times = sorted(rng.sample(range(delay_ms * 1000 + 1, path[-1][0]), n))
-    step = path[1][0]
-    rows = [(T0 + timedelta(microseconds=tm), math.exp(path[max(0, (tm - delay_ms * 1000) // step)][1])) for tm in times]
-    return pl.DataFrame(rows, schema={"ts": pl.Datetime("us", "UTC"), "price": pl.Float64}, orient="row")
+def a_known_lag_is_found():
+    tx, px, ty, py = _pair(2.0)
+    found = leadlag.estimate(tx, px, ty, py)
+    assert found["lag"] == 2.0 and found["llr"] > 1.5 and found["rho"] > found["rho0"]
+    assert not found["edge"]
 
 
-def _double_sum(x, y, lag_ms):
-    t, px = x["ts"].dt.epoch("us").to_list(), [math.log(v) for v in x["price"]]
-    s, py = y["ts"].dt.epoch("us").to_list(), [math.log(v) for v in y["price"]]
-    total = 0.0
-    for k in range(1, len(t)):
-        for j in range(1, len(s)):
-            a, b = s[j - 1] - lag_ms * 1000, s[j] - lag_ms * 1000
-            if t[k] > a and t[k - 1] < b:
-                total += (px[k] - px[k - 1]) * (py[j] - py[j - 1])
-    return total
+def the_leader_swapped_is_a_negative_lag():
+    tx, px, ty, py = _pair(2.0)
+    found = leadlag.estimate(ty, py, tx, px)
+    assert found["lag"] == -2.0 and found["llr"] < 1 / 1.5
 
 
-def the_telescoped_sum_equals_the_double_sum():
-    path = _path(seconds=60, step_ms=5)
-    x, y = _sample(path, 300, seed=2), _sample(path, 300, seed=3)
-    got = leadlag.hayashi_yoshida(x, y, [-50, 0, 50])
-    for lag, hy in zip(got["lag_ms"], got["hy"], strict=True):
-        assert hy == pytest.approx(_double_sum(x, y, int(lag)), abs=1e-12)
+def a_synchronous_pair_peaks_at_zero_whatever_their_activity():
+    # X is quoted 5x as often: a previous-tick grid would make it lead.
+    tx, px, ty, py = _pair(0.0, rate_x=10.0, rate_y=2.0)
+    found = leadlag.estimate(tx, px, ty, py)
+    assert found["lag"] == 0.0 and 0.8 < found["llr"] < 1.25
 
 
-def a_copy_with_a_delay_peaks_at_the_delay():
-    path = _path()
-    x, y = _sample(path, 20_000, seed=4), _sample(path, 20_000, seed=5, delay_ms=200)
-    got = leadlag.hayashi_yoshida(x, y)
-    assert got.sort("rho", descending=True)["lag_ms"][0] == 200
+def a_repeat_is_not_a_change():
+    t = [0.0, 1.0, 2.0, 3.0]
+    assert leadlag._ticks(t, [1.0, 1.0, 2.0, 2.0])[1].tolist() == [1.0, 2.0]
 
 
-def the_identical_series_correlate_fully():
-    x = _sample(_path(seconds=60), 500, seed=6)
-    assert leadlag.hayashi_yoshida(x, x, [0])["rho"][0] == pytest.approx(1.0)
-
-
-def a_series_of_one_tick_is_refused():
-    one = pl.DataFrame({"ts": [T0], "price": [100.0]})
-    with pytest.raises(Refused, match="1 distinct timestamp"):
-        leadlag.hayashi_yoshida(one, one, [0])
-
-
-def the_leader_is_x():
-    path = _path()
-    x, y = _sample(path, 20_000, seed=7), _sample(path, 20_000, seed=8, delay_ms=200)
-    got = leadlag.lead_lag(x, y).row(0, named=True)
-    assert got["lead_ms"] == 200 and got["llr"] > 1
-    back = leadlag.lead_lag(y, x).row(0, named=True)
-    assert back["lead_ms"] == -200 and back["llr"] < 1
-
-
-def every_bucket_finds_its_own_leader():
-    path = _path(seconds=7200)
-    x = _sample(path, 40_000, seed=9)
-    ahead = _sample(path, 40_000, seed=10, delay_ms=200)
-    first = ahead.filter(pl.col("ts") < T0 + timedelta(hours=1))
-    # In the second hour y leads: x is the path 200 ms later, so y sees it 200 ms earlier.
-    lagged_x = _sample(path, 40_000, seed=11, delay_ms=200).filter(pl.col("ts") >= T0 + timedelta(hours=1))
-    x2 = pl.concat([x.filter(pl.col("ts") < T0 + timedelta(hours=1)), lagged_x])
-    y2 = pl.concat([first, _sample(path, 40_000, seed=12).filter(pl.col("ts") >= T0 + timedelta(hours=1))])
-    got = leadlag.lead_lag(x2, y2, every="1h")
-    assert got["lead_ms"].to_list() == [200, -200]
+def no_lead_lag_from_too_few_changes():
+    with pytest.raises(Refused, match="under 300"):
+        leadlag.estimate(np.arange(10.0), np.arange(10.0) + 1, np.arange(10.0), np.arange(10.0) + 1)
