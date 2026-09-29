@@ -250,6 +250,25 @@ adopting one for future runs is the operator's call.
   **not in these forecasts**. RLS beats GARCH at every horizon in no cell and loses to HAR everywhere. It loses one
   step ahead (no short-run clustering in the base model) and at 4h, 42 bars; it helps only at 1d and 30 days.
 
+Taken from Phase 2's unbuilt rows (*HAR-CJ / HAR-RV-J with bipower variation*, *5m RV as the proxy*) on 2026-09-29,
+the loop's second item:
+
+- [ ] 34. **`separate-the-jumps`**: **paused 2026-09-29 by the operator, mid-apply.** Register, then test whether
+  splitting RV into its continuous part and significant jumps improves HAR (ABD 2007's HAR-RV-CJ on bipower; Corsi,
+  Pirino and Renò's 2010 HAR-TCJ on corrected threshold bipower), and whether the verdict turns on scoring against a
+  level-matched 5-minute RV proxy instead of r². Binance BTC and ETH, 1d and 4h from 5m returns, item 24's split.
+  - **Committed:** the registration alone, `planning/preregistered/har-jumps.md` (`a382c0d`, H7–H10), on branch
+    `separate-the-jumps` in this checkout. No result exists; nothing is merged to `main`.
+  - **Uncommitted on that branch:** `gr.models.vol.realized_jumps` (`models/vol/jumps.py`: BV, TQ, MedRV, C-TBV,
+    C-TTQ, `z_bns`, `z_ctz`, both C/J splits, whole buckets only) with `tests/realized_jumps.py` (10 pass; the
+    no-neighbour guard shown to fail under a whole-series filter), and `vol.har`'s `harj`, `harcj`, `hartcj` with
+    three tests in `tests/har.py` (11 pass). The full suite and `marimo check` have not been run.
+  - **Open change:** `openspec/changes/separate-the-jumps/` (proposal, design, spec delta, tasks; tasks 2.x and 3.x
+    are done but not ticked).
+  - **Remaining:** tick tasks 2–3 and commit the library; task 4, the item-34 section of `notebooks/har_long.py` and
+    the headless run, with the results appended to the registration; task 5, this entry's outcome, the Phase 2 rows,
+    the full suite; then merge to `main` and archive.
+
 ---
 
 ## What the record holds
