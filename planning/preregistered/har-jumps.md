@@ -115,3 +115,30 @@ nothing.
 ## Results
 
 *Appended after the run. Nothing above this line may change.*
+
+**Run:** 2026-09-30, separate-the-jumps (`bda8b9d`), 2,461 whole days
+(2020-01-01 to 2026-09-27), out of sample from 2024-09-01, 127,056 forecasts.
+
+| # | BTC 1d | BTC 4h | ETH 1d | ETH 4h |
+|---|--------|--------|--------|--------|
+| H7 | contradicts | contradicts | contradicts | contradicts |
+| H8 | mixed | contradicts | consistent | consistent |
+| H9 | no (p 1.000) | no (p 1.000) | no (p 0.086) | yes (p 0.000) |
+
+- **H7 (HAR-CJ beats HAR):** 0 of 4 cells consistent. The bipower split never
+  improves the forecast.
+- **H8 (HAR-TCJ beats HAR):** 2 of 4 cells consistent (ETH 1d and 4h); BTC
+  1d is mixed, BTC 4h contradicts. The threshold split helps on ETH but
+  not BTC.
+- **H9 (HAR-TCJ beats HAR significantly):** 1 of 4 cells (ETH 4h). The gain
+  is significant only there.
+- **H10 (proxy robustness):** robust — 7 of 8 verdicts match across the two
+  proxies.
+
+**Verdict by the registered "What would count" rule:**
+- *Jumps pay:* H8 consistent in at least 3 cells and H9 yes in at least one.
+  Not met (H8: 2; H9: 1).
+- *Jumps do not pay:* neither H7 nor H8 consistent in any cell. Not met
+  (H8: 2).
+- **Neither.** Separating jumps does not clearly improve HAR forecasts on
+  these instruments and this history.

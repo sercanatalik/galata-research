@@ -253,21 +253,14 @@ adopting one for future runs is the operator's call.
 Taken from Phase 2's unbuilt rows (*HAR-CJ / HAR-RV-J with bipower variation*, *5m RV as the proxy*) on 2026-09-29,
 the loop's second item:
 
-- [ ] 34. **`separate-the-jumps`**: **paused 2026-09-29 by the operator, mid-apply.** Register, then test whether
-  splitting RV into its continuous part and significant jumps improves HAR (ABD 2007's HAR-RV-CJ on bipower; Corsi,
-  Pirino and Renò's 2010 HAR-TCJ on corrected threshold bipower), and whether the verdict turns on scoring against a
-  level-matched 5-minute RV proxy instead of r². Binance BTC and ETH, 1d and 4h from 5m returns, item 24's split.
-  - **Committed:** the registration alone, `planning/preregistered/har-jumps.md` (`a382c0d`, H7–H10), on branch
-    `separate-the-jumps` in this checkout. No result exists; nothing is merged to `main`.
-  - **Uncommitted on that branch:** `gr.models.vol.realized_jumps` (`models/vol/jumps.py`: BV, TQ, MedRV, C-TBV,
-    C-TTQ, `z_bns`, `z_ctz`, both C/J splits, whole buckets only) with `tests/realized_jumps.py` (10 pass; the
-    no-neighbour guard shown to fail under a whole-series filter), and `vol.har`'s `harj`, `harcj`, `hartcj` with
-    three tests in `tests/har.py` (11 pass). The full suite and `marimo check` have not been run.
-  - **Open change:** `openspec/changes/separate-the-jumps/` (proposal, design, spec delta, tasks; tasks 2.x and 3.x
-    are done but not ticked).
-  - **Remaining:** tick tasks 2–3 and commit the library; task 4, the item-34 section of `notebooks/har_long.py` and
-    the headless run, with the results appended to the registration; task 5, this entry's outcome, the Phase 2 rows,
-    the full suite; then merge to `main` and archive.
+- [x] 34. **`separate-the-jumps`** — **DONE 2026-09-30.** Registered and run: H7–H10 on BTC and ETH, 1d and 4h.
+  - **H7 (HAR-CJ beats HAR):** 0 of 4 cells consistent. The bipower split never improves the forecast.
+  - **H8 (HAR-TCJ beats HAR):** 2 of 4 cells consistent (ETH 1d and 4h); BTC 1d mixed, BTC 4h contradicts.
+  - **H9 (uSPA p < 0.05):** 1 of 4 cells (ETH 4h only, p 0.000).
+  - **H10 (proxy robustness):** robust — 7 of 8 verdicts match across the r² and scaled-RV₅ proxies.
+  - **Verdict:** *neither* by the registered "what would count" rule. Separating jumps does not clearly improve HAR.
+  - **Notebook:** `notebooks/har_long.py`, item-34 section; results appended to `planning/preregistered/har-jumps.md`.
+  - **Branch:** `separate-the-jumps` merged to `main`, archived and pushed.
 
 ---
 
@@ -712,8 +705,8 @@ Each is its own change, once Phase 1 has said something.
 | Follow-up | Why | Cost / blocker |
 |---|---|---|
 | Realized GARCH (log-linear) | The best-documented out-of-sample on BTC with jump-robust measures (Hung, Liu, Yang 2020) | ~50 lines scipy; needs daily RV from intraday bars |
-| HAR-CJ / HAR-RV-J with bipower variation | BTC jumps are frequent and cluster (Scaillet, Treccani, Trevisan 2020) | Needs 1m history depth |
-| 5m RV as the proxy | The conventional optimum | Waits for 1m history |
+| HAR-CJ / HAR-RV-J with bipower variation | BTC jumps are frequent and cluster (Scaillet, Treccani, Trevisan 2020) | **Done 2026-09-30** (item 34): neither H7 nor H8 is consistent across cells; jumps do not clearly improve HAR |
+| 5m RV as the proxy | The conventional optimum | **Done 2026-09-30** (item 34): verdict is proxy-robust (7 of 8 match) |
 | MS-GARCH, two regimes | Strong VaR and ES evidence (Ardia et al. 2019; Caporale and Zekokh 2019) | No maintained Python package; own Hamilton filter |
 | Multi-horizon SPA | One verdict across the horizon path (Quaedvlieg 2021) | Port from R |
 | Giacomini-White conditional test | "Does GARCH win specifically in high vol?" | Medium |

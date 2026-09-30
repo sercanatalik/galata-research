@@ -371,7 +371,7 @@ def _(BARS, EVERY, HELD, HORIZONS, SPLIT, TICKERS, bars, gr, mo, pl):
                         else:
                             measures = jm
                         f = _vol.har(measures, model=model, split=SPLIT, every=EVERY[i], horizons=HORIZONS[i])
-                        parts.append(f.with_columns(pl.lit(i).alias("interval"), pl.lit(model).alias("model")))
+                        parts.append(f.with_columns(pl.lit(t).alias("ticker"), pl.lit(i).alias("interval"), pl.lit(model).alias("model")))
                     except gr.Refused as why:
                         skipped.append({"ticker": t, "interval": i, "model": model, "why": str(why)})
         return pl.concat(parts, how="diagonal_relaxed"), pl.DataFrame(skipped, schema={"ticker": pl.String, "interval": pl.String, "model": pl.String, "why": pl.String})
@@ -405,7 +405,7 @@ def _(BARS, TICKERS, aligned_for, ev, jump_scales, jump_walked, mo, pl):
     for _t in TICKERS:
         for _i in BARS:
             _r2_proxy = ev.proxies(bars[(_t, _i)], "r2")
-            _rv5_proxy = gr.timeseries.realized_from(bars[(_t, "5m")], _i).select("ts", pl.col("rv").alias("proxy"))
+            _rv5_proxy = gr.timeseries.realized_from(bars[(_t, "5m")], _i).select("ticker", "ts", pl.col("rv").alias("proxy"))
             _c = jump_scales.filter((pl.col("ticker") == _t) & (pl.col("interval") == _i))["c"][0]
             _rv5_proxy = _rv5_proxy.with_columns((pl.col("proxy") * _c).alias("proxy"))
             for _proxy_name, _proxy in (("r2", _r2_proxy), ("rv5", _rv5_proxy)):
@@ -415,9 +415,9 @@ def _(BARS, TICKERS, aligned_for, ev, jump_scales, jump_walked, mo, pl):
                 _q = _card.select("model", "h", "qlike")
                 for _model, _hyp in (("harcj", "H7"), ("hartcj", "H8")):
                     _m_q = _q.filter(pl.col("model") == _model).select("h", pl.col("qlike").alias("m"))
-                    _h_q = _q.filter(pl.col("model") == "har").select("h", pl.col("qlike").alias("h"))
+                    _h_q = _q.filter(pl.col("model") == "har").select("h", pl.col("qlike").alias("q"))
                     _j = _m_q.join(_h_q, on="h").sort("h")
-                    _wins = int((_j["m"] < _j["h"]).sum())
+                    _wins = int((_j["m"] < _j["q"]).sum())
                     _v = "consistent" if _wins == _j.height else "contradicts" if _wins == 0 else "mixed"
                     _rows.append({"#": _hyp, "ticker": _t, "bars": _i, "proxy": _proxy_name, "verdict": _v,
                                   "measured": f"{_wins} of {_j.height} horizons"})
@@ -451,7 +451,7 @@ def _(mo, pl, jump_verdicts):
     _reading = (
         f"**H7 (HAR-CJ vs HAR)**: {_h7_n} of 4 cells consistent under r². "
         f"**H8 (HAR-TCJ vs HAR)**: {_h8_n} of 4 cells consistent under r². "
-        f"**H10 (proxy robustness)**: {_h10_v} ({_h7_match + _h8_match} of 4 verdicts match across proxies)."
+        f"**H10 (proxy robustness)**: {_h10_v} ({_h7_match + _h8_match} of 8 verdicts match across proxies)."
     )
     mo.vstack([mo.md("### The verdicts of item 34"), mo.ui.table(jump_verdicts, selection=None, page_size=16), mo.md(_reading)])
     return
