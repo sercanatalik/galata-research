@@ -171,8 +171,13 @@ One OpenSpec change per item, as in [`roadmap`](./roadmap.md). Each item lands w
   record is still to do.** Two choices made after the registration, stated in the notebook: an overlay that never fired
   equals its base and is left out of that base's Reality Check (counted); and **scale-in is not built**, since these
   families emit position states, not repeated entry signals, so a ladder has nothing to trigger on.
-- [ ] 4. **`trade-the-funding`**: B1–B3 on settled funding and marks, through `join_recv`. This is the first family
+- [x] 4. **`trade-the-funding`**: B1–B3 on settled funding and marks, through `join_recv`. This is the first family
   the framework itself cannot run.
+  Built 2026-10-03, on **Binance's published archives, not the record**: the record's settled funding is days long,
+  and settled point 8 rules out a venue's API. `galata-fetch funding|premium binance-um` (`cdacf2c`), `gr.carry`
+  (`b46db00`), `notebooks/carry.py`. Registered alone first (`planning/preregistered/trade-the-funding.md`, `d82ee2b`):
+  H1 hedged carry (N = 26), H2 persistence, H3 the fade (N = 16). B3 (basis) is H1's hedged leg, the premium index;
+  Hyperliquid's own mark − oracle waits for the record to hold months of marks.
 - [ ] 5. **`trade-the-flow`**: B4–B6 on trades, quotes and the Bybit book. Costs come from `liquidity.effective`,
   not a flat fee.
 - [ ] 6. **`rank-the-universe`**: lifts D8 (operator's call). `gr.factors` adds cross-sectional `rank`, `top`, `zscore`,
