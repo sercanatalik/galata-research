@@ -14,13 +14,14 @@
     gr.models.vol.fit(returns, model="gjr", dist="t")       # the [models] extra, loaded on use
     gr.trades.summary(trial, bars, periods_per_year=365)   # win rate, profit factor, MAE/MFE
     gr.indicators.add(bars, rsi=gr.indicators.rsi(14))      # per contiguous stretch, never across a hole
+    gr.overlays.apply(bars, trial, stop=0.1, trailing=True)  # a stop filled inside the bar, never from its own close
 
 The library owns the record's semantics, not its I/O: dedupe, closure, the
 clock and the cast are applied once, here, so a notebook never reads a
 re-fetched bar twice or a bar's open as its close.
 """
 
-from . import account, backtest, indicators, jumps, leadlag, liquidity, market, reference, signals, stats, studies, timeseries, trades, utils
+from . import account, backtest, indicators, jumps, leadlag, liquidity, market, overlays, reference, signals, stats, studies, timeseries, trades, utils
 from ._errors import Refused
 from ._frontier import frontier
 from ._root import root
@@ -40,6 +41,7 @@ __all__ = [
     "market",
     "reference",
     "mask_gaps",
+    "overlays",
     "root",
     "signals",
     "stats",

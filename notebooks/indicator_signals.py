@@ -42,23 +42,12 @@ def _(mo):
 
 
 @app.cell
-def _(pl):
-    def shared_days(bars):
-        """Bars on the days every ticker has, since permuted markets move each day's bars together."""
-        b = bars.lazy().collect()
-        common = b.group_by("ts").agg(pl.col("ticker").n_unique().alias("_n")).filter(pl.col("_n") == b["ticker"].n_unique())
-        return b.filter(pl.col("ts").is_in(common["ts"].implode())).sort("ticker", "ts")
-
-    return (shared_days,)
-
-
-@app.cell
-def _(backtest, gr, pl, shared_days, studies):
+def _(backtest, gr, pl, studies):
     EVER = ("2020-01-01T00:00Z", "2100-01-01T00:00Z")
     TICKERS = ["BTC", "ETH"]
     PER_YEAR = gr.timeseries.periods_per_year("1d")
     N_BEFORE = 70  # trials run in this repository before this test (whole_set.py)
-    bars = shared_days(gr.market.candles(TICKERS, "1d", *EVER))
+    bars = studies.shared_days(gr.market.candles(TICKERS, "1d", *EVER))
     trials = studies.indicator_signals(bars)
     hold_bh = studies.trial(bars, pl.lit(1.0), "buy and hold", fee=backtest.TAKER_FEE)
     return N_BEFORE, PER_YEAR, TICKERS, bars, hold_bh, trials
@@ -180,7 +169,7 @@ def _(mo):
 
 
 @app.cell
-def _(PER_YEAR, TICKERS, binance_go, gr, mo, pl, shared_days, stats, studies):
+def _(PER_YEAR, TICKERS, binance_go, gr, mo, pl, stats, studies):
     mo.stop(not binance_go.value, mo.md("*The secondary sample runs behind the button. It cannot rescue a failure on the record.*"))
     # To the end of the last whole day held for every ticker.
     _end = (
@@ -190,7 +179,7 @@ def _(PER_YEAR, TICKERS, binance_go, gr, mo, pl, shared_days, stats, studies):
         .item()
     )
     _fine = gr.reference.candles(TICKERS, "2020-01-01T00:00Z", _end, venues="binance-um").collect()
-    binance = shared_days(pl.concat([gr.timeseries.resample(_fine.filter(pl.col("ticker") == t), "1d") for t in TICKERS]))
+    binance = studies.shared_days(pl.concat([gr.timeseries.resample(_fine.filter(pl.col("ticker") == t), "1d") for t in TICKERS]))
     b_trials = studies.indicator_signals(binance)
     b_hold = studies.trial(binance, pl.lit(1.0), "buy and hold")
     b_scores = studies.summary(b_trials, PER_YEAR)

@@ -63,6 +63,14 @@ def momentum(
     return pl.concat(frames)
 
 
+def shared_days(bars: pl.LazyFrame | pl.DataFrame) -> pl.DataFrame:
+    """The bars on the `ts` every ticker has, sorted: `permute_bars` moves each day's bars together, and needs one calendar."""
+    b = bars.lazy().collect()
+    tickers = b["ticker"].n_unique()
+    common = b.group_by("ts").agg(pl.col("ticker").n_unique().alias("_n")).filter(pl.col("_n") == tickers)
+    return b.filter(pl.col("ts").is_in(common["ts"].implode())).sort("ticker", "ts")
+
+
 def _side(side: str) -> None:
     if side not in SIDES:
         raise ValueError(f"side={side!r} is not one of {', '.join(SIDES)}")

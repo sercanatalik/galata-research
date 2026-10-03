@@ -351,6 +351,13 @@ still works and `gr.models` is refused by name.
 and `supertrend` are the trial families, and `indicator_signals` is the
 registered 50-rule search (`planning/preregistered/indicator-signals.md`).
 
+### Overlays: `gr.overlays`
+
+| Call | Returns | The rule it owns |
+|---|---|---|
+| `apply(bars, trial, *, stop, take, trailing, cooldown, fee=None)` | the trial re-run with a stop-loss (fixed or trailing) and a take-profit, plus `exit` and `exit_price` | filled inside the bar, at the level or at the open when it gaps through; levels from the entry close and earlier bars only; a bar touching both is stopped; flat for `cooldown` bars, then the base again; no level reproduces the trial exactly; the fee read from the trial's own costs |
+| `grid(bars, trial, *, stops, trailing, takes, cooldown)` | every overlay, each its own trial | the registered 12 by default; each counts toward N |
+
 ### Reference data: `gr.reference` and `galata-fetch`
 
 The record holds one venue, 1h bars from 2026-03, and a week of top of book.
@@ -425,6 +432,7 @@ trial, so N is the true N) back these notebooks:
 | `candles.py`, `ticks.py`, `gaps.py`, `clocks.py`, `account.py` | what the record holds, and how the loaders read it |
 | `moving_average.py`, `momentum.py` | a Sharpe landscape for two example families |
 | `indicator_signals.py` | do the standard indicators survive their search? The pre-registered test of five families (EMA, RSI, Bollinger, MACD, Supertrend), 50 rules × BTC, ETH, N = 100, against DSR, PBO, the Reality Check and permuted bars, with six years of Binance as a secondary. Registered (`020ef19`); **not yet run on the record** |
+| `overlays.py` | do stops help? The pre-registered test of 12 stop and take-profit overlays on buy-and-hold, an MA rule and the Donchian ensemble, BTC and ETH daily (N = 78): a Reality Check per base against the base itself, then DSR and PBO over all. Registered (`f96b81a`); **not yet run on the record** |
 | `trades.py` | what do the trials' trades look like? Sortino, Calmar, Ulcer and drawdown length per trial, win rate, profit factor and MAE/MFE per trade, the month-by-month table and a rolling Sharpe. Descriptions, not verdicts |
 | `deflated_sharpe.py` | does the best of 66 trials beat what luck would give? DSR 0.67 daily: **no** |
 | `overfitting.py` | does choosing on the past choose well? PBO 0.69 over 12,870 splits: **no** |

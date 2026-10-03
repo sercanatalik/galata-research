@@ -163,9 +163,14 @@ One OpenSpec change per item, as in [`roadmap`](./roadmap.md). Each item lands w
   `gr.studies`, and one notebook runs them through DSR, PBO and the permuted-bars test. Register first.
   Built 2026-10-03: `gr.indicators`, the five families in `gr.studies`, `notebooks/indicator_signals.py`. Registered alone
   first (`planning/preregistered/indicator-signals.md`, `020ef19`); **the run on the record is still to do**, where the record lives.
-- [ ] 3. **`overlay-the-positions`**: stop-loss (fixed, trailing), take-profit, cooldown, scale-in, as functions on a
+- [x] 3. **`overlay-the-positions`**: stop-loss (fixed, trailing), take-profit, cooldown, scale-in, as functions on a
   position series. Stops trigger on the bar's high or low, never on the close that decided the position.
   Every overlay variant counts as a trial.
+  Built 2026-10-03: `gr.overlays` (`apply`, `grid`), `studies.shared_days`, `notebooks/overlays.py`. Registered alone first
+  (`planning/preregistered/overlay-the-positions.md`, `f96b81a`): 12 overlays on three bases, N = 78. **The run on the
+  record is still to do.** Two choices made after the registration, stated in the notebook: an overlay that never fired
+  equals its base and is left out of that base's Reality Check (counted); and **scale-in is not built**, since these
+  families emit position states, not repeated entry signals, so a ladder has nothing to trigger on.
 - [ ] 4. **`trade-the-funding`**: B1–B3 on settled funding and marks, through `join_recv`. This is the first family
   the framework itself cannot run.
 - [ ] 5. **`trade-the-flow`**: B4–B6 on trades, quotes and the Bybit book. Costs come from `liquidity.effective`,
