@@ -100,3 +100,75 @@ and PBO < 0.5.
 
 Anything short of a hypothesis's criteria is reported as **not supported**.
 No rule is tuned, dropped or re-run with other parameters under this name.
+
+---
+
+## Result — run once, 2026-10-03, `notebooks/carry.py`
+
+*Appended after the run. Nothing above this line was changed.* Code at
+`b46db00`. Data fetched the same day into a fresh reference store with
+`galata-fetch funding|premium|candles binance-um BTC ETH --from 2020-01-01
+--to 2026-09-30`: every file `ok` against Binance's published checksum,
+except **31 ETH premium days that Binance never published** (2021-01-18 to
+01-24, 2021-02-02 to 02-20, and 2021-05-31, 06-02, 06-04, 06-27, 06-28). They are holes, as
+registered. The span ran 2020-01-01 to 2026-09-29: **2,456 BTC days and 2,425
+ETH days** with both a whole premium day and whole funding. (2026-09-30 is not
+one, because its closing settlement is in October's file, which is not yet published.)
+
+### H2, persistence: **supported**
+
+| ticker | consecutive days | ρ (lag one) | Fisher z | p |
+|---|---|---|---|---|
+| BTC | 2,449 | 0.851 | 62.3 | < 1e-300 |
+| ETH | 2,412 | 0.821 | 56.9 | < 1e-300 |
+
+### H1, hedged carry: **supported**
+
+| criterion | value | met |
+|---|---|---|
+| DSR of the best, N = 26 | 1.000 | yes |
+| Reality Check p against cash | 0.002 | yes |
+| PBO, 16 blocks, 2,151 shared days | 0.00 | yes |
+
+The best trial is **`always` on BTC: short the perp, long the index, every
+day.** Its annualised net Sharpe is 9.18, and it earned +118.6% on notional
+over the span, almost all of it funding. Of the 26 trials, 24 have an annualised Sharpe above 2.6. **No rule beat
+`always`** on BTC, and on ETH only `carry 30 0 short_only` did (8.62 against
+8.45). Timing the carry on funding's recent sign or level added nothing over
+holding it. The two-sided daily rule (`carry 1 0 both`) was the worst, at 0.56
+and 0.46: flipping on one day's sign pays both legs' fees for noise.
+
+### H3, the fade: **not supported**
+
+| criterion | value | met |
+|---|---|---|
+| DSR of the best, N = 16 | 0.616 | no |
+| Reality Check p against buy-and-hold | 0.934 | no |
+| PBO, 16 blocks | 0.13 | yes |
+
+The best is `fade 90 1.5 long_flat` on BTC, at an annualised Sharpe of 0.86
+against buy-and-hold's 0.72 (both with funding charged). It is long-only and
+flat after extreme funding, so it is mostly buy-and-hold. Every `long_short`
+fade on ETH lost money.
+
+### Described, not tested: the carry by year (`always`)
+
+| year | BTC Sharpe | BTC funding earned | ETH Sharpe | ETH funding earned |
+|---|---|---|---|---|
+| 2020 | 9.6 | 16.7% | 12.0 | 26.6% |
+| 2021 | 13.9 | 30.6% | 13.3 | 27.8% |
+| 2022 | 7.2 | 4.1% | 0.9 | 0.9% |
+| 2023 | 13.9 | 7.8% | 13.5 | 8.2% |
+| 2024 | 15.8 | 11.9% | 17.2 | 13.0% |
+| 2025 | 14.6 | 5.1% | 9.9 | 4.9% |
+| 2026 (to 09-29) | 7.5 | 2.2% | 4.5 | 1.4% |
+
+The income has compressed. It was 17–31% a year in 2020–2021 and is 1–2% so
+far in 2026, and ETH's carry nearly vanished in 2022. The basis leg moved the
+position by less than 0.3% in any year. **What H1 supports is that funding was
+persistently paid to shorts over 2020–2026, and the evidence is strong. It
+does not support a carry that pays today.** The stated simplifications stand,
+and every one of them flatters: no borrow (unused by `always`), no margin or
+capital on the spot leg, no exchange or liquidation risk, and the index
+standing in for a spot fill. At 2026's rate the income is near Binance's two
+legs' round-trip fee of 0.30%.
