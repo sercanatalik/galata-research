@@ -170,5 +170,6 @@ persistently paid to shorts over 2020–2026, and the evidence is strong. It
 does not support a carry that pays today.** The stated simplifications stand,
 and every one of them flatters: no borrow (unused by `always`), no margin or
 capital on the spot leg, no exchange or liquidation risk, and the index
-standing in for a spot fill. At 2026's rate the income is near Binance's two
-legs' round-trip fee of 0.30%.
+standing in for a spot fill. At 2026's pace, about 3% a year on BTC and 2% on
+ETH, the income is a tenth of 2020–2021's, and that is before the costs left
+out above.

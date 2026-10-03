@@ -178,6 +178,8 @@ One OpenSpec change per item, as in [`roadmap`](./roadmap.md). Each item lands w
   (`b46db00`), `notebooks/carry.py`. Registered alone first (`planning/preregistered/trade-the-funding.md`, `d82ee2b`):
   H1 hedged carry (N = 26), H2 persistence, H3 the fade (N = 16). B3 (basis) is H1's hedged leg, the premium index;
   Hyperliquid's own mark − oracle waits for the record to hold months of marks.
+  **Run once, 2026-10-03** (`42bd9de`): H1 supported, H2 supported, H3 not supported. The carry was real and is
+  compressing (2026: ~2–3% a year); timing it on funding added nothing over holding it.
 - [ ] 5. **`trade-the-flow`**: B4–B6 on trades, quotes and the Bybit book. Costs come from `liquidity.effective`,
   not a flat fee.
 - [ ] 6. **`rank-the-universe`**: lifts D8 (operator's call). `gr.factors` adds cross-sectional `rank`, `top`, `zscore`,
