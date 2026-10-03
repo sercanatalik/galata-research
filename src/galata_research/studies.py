@@ -1,7 +1,9 @@
 """Trial families that hand back every trial, so N is the true N.
 
 A family is a parameter grid run over the same bars: moving-average
-crossovers and time-series momentum. Each trial's modelled net returns are
+crossovers, time-series momentum, and the indicator families of
+`planning/preregistered/indicator-signals.md` (EMA, RSI, Bollinger, MACD,
+Supertrend). Each trial's modelled net returns are
 kept, and `summary` scores them one row per `(trial, ticker)`, including the
 trials too short to score, because the Deflated Sharpe Ratio needs the count
 of everything that was tried.
@@ -12,6 +14,7 @@ from collections.abc import Iterable
 import polars as pl
 
 from . import backtest
+from . import indicators as ind
 
 MIN_RETURNS = 30
 SIDES = ("long_flat", "long_short")
@@ -58,6 +61,127 @@ def momentum(
         position = (pl.col("close") / pl.col("close").shift(lookback) - 1).sign()
         frames.append(trial(bars, position, f"mom {lookback}", fee=fee))
     return pl.concat(frames)
+
+
+def _side(side: str) -> None:
+    if side not in SIDES:
+        raise ValueError(f"side={side!r} is not one of {', '.join(SIDES)}")
+
+
+def _indicator_trial(bars, position: pl.Expr, side: str, name: str, fee: float) -> pl.DataFrame:
+    """A trial whose position is computed per contiguous stretch (`gr.indicators.add`); `long_flat` is flat for short."""
+    _side(side)
+    if side == "long_flat":
+        position = position.clip(lower_bound=0)
+    framed = ind.add(bars, _position=position)
+    return trial(framed, pl.col("_position"), f"{name} {side}", fee=fee)
+
+
+def ema_crossover(
+    bars: pl.LazyFrame | pl.DataFrame,
+    fasts: Iterable[int] = (5, 10, 20),
+    slows: Iterable[int] = (50, 100, 200),
+    *,
+    sides: Iterable[str] = SIDES,
+    fee: float = backtest.TAKER_FEE,
+) -> pl.DataFrame:
+    """Every `fast < slow`, per side: the sign of the fast EMA less the slow one."""
+    return pl.concat(
+        [
+            _indicator_trial(bars, (ind.ema(f) - ind.ema(s)).sign(), side, f"ema {f}/{s}", fee)
+            for side in sides
+            for f in fasts
+            for s in slows
+            if f < s
+        ]
+    )
+
+
+def rsi_reversion(
+    bars: pl.LazyFrame | pl.DataFrame,
+    periods: Iterable[int] = (7, 14),
+    bands: Iterable[tuple[float, float]] = ((30, 70), (20, 80)),
+    *,
+    sides: Iterable[str] = SIDES,
+    fee: float = backtest.TAKER_FEE,
+) -> pl.DataFrame:
+    """Long from RSI below `lo` until above `hi`; short from above `hi` until below `lo` (flat in `long_flat`)."""
+    frames = []
+    for side in sides:
+        for n in periods:
+            for lo, hi in bands:
+                r = ind.rsi(n)
+                position = ind.hold(r < lo, r > hi, r > hi, r < lo)
+                frames.append(_indicator_trial(bars, position, side, f"rsi {n} {lo:g}/{hi:g}", fee))
+    return pl.concat(frames)
+
+
+def bollinger_reversion(
+    bars: pl.LazyFrame | pl.DataFrame,
+    windows: Iterable[int] = (20, 50),
+    widths: Iterable[float] = (1.5, 2.0, 2.5),
+    *,
+    sides: Iterable[str] = SIDES,
+    fee: float = backtest.TAKER_FEE,
+) -> pl.DataFrame:
+    """Long from below the lower band (z < −k) until the mean (z ≥ 0); short from above the upper until the mean."""
+    frames = []
+    for side in sides:
+        for n in windows:
+            for k in widths:
+                z = ind.zscore(n)
+                position = ind.hold(z < -k, z >= 0, z > k, z <= 0)
+                frames.append(_indicator_trial(bars, position, side, f"bb {n} {k:g}", fee))
+    return pl.concat(frames)
+
+
+def macd_cross(
+    bars: pl.LazyFrame | pl.DataFrame,
+    params: Iterable[tuple[int, int, int]] = ((12, 26, 9), (8, 17, 9)),
+    *,
+    sides: Iterable[str] = SIDES,
+    fee: float = backtest.TAKER_FEE,
+) -> pl.DataFrame:
+    """The sign of the MACD line less its signal line."""
+    return pl.concat(
+        [
+            _indicator_trial(bars, (ind.macd(f, s) - ind.macd_signal(f, s, g)).sign(), side, f"macd {f}/{s}/{g}", fee)
+            for side in sides
+            for f, s, g in params
+        ]
+    )
+
+
+def supertrend(
+    bars: pl.LazyFrame | pl.DataFrame,
+    periods: Iterable[int] = (10, 20),
+    multipliers: Iterable[float] = (2.0, 3.0),
+    *,
+    sides: Iterable[str] = SIDES,
+    fee: float = backtest.TAKER_FEE,
+) -> pl.DataFrame:
+    """The Supertrend's direction on ATR(n) bands `multiplier` wide. Needs `high` and `low`."""
+    return pl.concat(
+        [
+            _indicator_trial(bars, ind.supertrend(n, m), side, f"supertrend {n} {m:g}", fee)
+            for side in sides
+            for n in periods
+            for m in multipliers
+        ]
+    )
+
+
+def indicator_signals(bars: pl.LazyFrame | pl.DataFrame, *, fee: float = backtest.TAKER_FEE) -> pl.DataFrame:
+    """The 50 rules registered in `planning/preregistered/indicator-signals.md`, every one, at their frozen grids."""
+    return pl.concat(
+        [
+            ema_crossover(bars, fee=fee),
+            rsi_reversion(bars, fee=fee),
+            bollinger_reversion(bars, fee=fee),
+            macd_cross(bars, fee=fee),
+            supertrend(bars, fee=fee),
+        ]
+    )
 
 
 DONCHIAN_LOOKBACKS = (5, 10, 20, 30, 60, 90, 150, 250, 360)

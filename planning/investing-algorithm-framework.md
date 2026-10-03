@@ -158,9 +158,11 @@ One OpenSpec change per item, as in [`roadmap`](./roadmap.md). Each item lands w
   No new data, no new trials: the cheapest gain.
   Done 2026-10-03: `gr.trades` (`table`, `summary`), the `gr.stats` additions, and `notebooks/trades.py`. `studies.trial`
   now carries `close_ts` and `cost`, which a trade needs.
-- [ ] 2. **`indicator-signals`**: `gr.indicators` (EMA, RSI, MACD, Bollinger, ATR, Supertrend, stochastic, z-score)
+- [x] 2. **`indicator-signals`**: `gr.indicators` (EMA, RSI, MACD, Bollinger, ATR, Supertrend, stochastic, z-score)
   as polars expressions over `ticker`. Each value is null for a window that spans a hole. Families A1–A5 go in
   `gr.studies`, and one notebook runs them through DSR, PBO and the permuted-bars test. Register first.
+  Built 2026-10-03: `gr.indicators`, the five families in `gr.studies`, `notebooks/indicator_signals.py`. Registered alone
+  first (`planning/preregistered/indicator-signals.md`, `020ef19`); **the run on the record is still to do**, where the record lives.
 - [ ] 3. **`overlay-the-positions`**: stop-loss (fixed, trailing), take-profit, cooldown, scale-in, as functions on a
   position series. Stops trigger on the bar's high or low, never on the close that decided the position.
   Every overlay variant counts as a trial.

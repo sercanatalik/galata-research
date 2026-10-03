@@ -339,6 +339,18 @@ still works and `gr.models` is refused by name.
 | `stats.sortino`, `cagr`, `calmar`, `omega`, `ulcer_index`, `drawdown_duration` | one figure per series | Sortino's downside deviation over all N periods (Red Rock's 4.417 pinned) |
 | `stats.rolling_sharpe(trial, window)`, `period_returns(trial, every)`, `describe(trial, periods_per_year)` | a Sharpe per full window; compounded returns per calendar period with `full`; one row of the above per trial | a window or a month cut by a hole is null or not `full`, never shortened |
 
+### Indicators: `gr.indicators`
+
+| Call | Returns | The rule it owns |
+|---|---|---|
+| `add(bars, **named)` | the bars sorted, plus one column per indicator | each expression evaluated per `(ticker, contiguous stretch)`: none spans a hole, and each warms up again after one |
+| `sma`, `ema`, `rsi`, `macd`, `macd_signal`, `zscore`, `bollinger`, `true_range`, `atr`, `stochastic`, `supertrend` | `pl.Expr` over one contiguous series | null before a full window; EMA seeded with its first n values' mean, RSI and ATR Wilder-smoothed (RSI converges to StockCharts' table); every value known at its bar's close, a truncation test for each |
+| `hold(enter_long, exit_long, enter_short, exit_short)` | a position held between events | an exit closes only the side held; an entry wins, so an opposite entry flips; null until the conditions exist |
+
+`gr.studies.ema_crossover`, `rsi_reversion`, `bollinger_reversion`, `macd_cross`
+and `supertrend` are the trial families, and `indicator_signals` is the
+registered 50-rule search (`planning/preregistered/indicator-signals.md`).
+
 ### Reference data: `gr.reference` and `galata-fetch`
 
 The record holds one venue, 1h bars from 2026-03, and a week of top of book.
@@ -412,6 +424,7 @@ trial, so N is the true N) back these notebooks:
 |---|---|
 | `candles.py`, `ticks.py`, `gaps.py`, `clocks.py`, `account.py` | what the record holds, and how the loaders read it |
 | `moving_average.py`, `momentum.py` | a Sharpe landscape for two example families |
+| `indicator_signals.py` | do the standard indicators survive their search? The pre-registered test of five families (EMA, RSI, Bollinger, MACD, Supertrend), 50 rules × BTC, ETH, N = 100, against DSR, PBO, the Reality Check and permuted bars, with six years of Binance as a secondary. Registered (`020ef19`); **not yet run on the record** |
 | `trades.py` | what do the trials' trades look like? Sortino, Calmar, Ulcer and drawdown length per trial, win rate, profit factor and MAE/MFE per trade, the month-by-month table and a rolling Sharpe. Descriptions, not verdicts |
 | `deflated_sharpe.py` | does the best of 66 trials beat what luck would give? DSR 0.67 daily: **no** |
 | `overfitting.py` | does choosing on the past choose well? PBO 0.69 over 12,870 splits: **no** |
