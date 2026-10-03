@@ -358,6 +358,15 @@ registered 50-rule search (`planning/preregistered/indicator-signals.md`).
 | `apply(bars, trial, *, stop, take, trailing, cooldown, fee=None)` | the trial re-run with a stop-loss (fixed or trailing) and a take-profit, plus `exit` and `exit_price` | filled inside the bar, at the level or at the open when it gaps through; levels from the entry close and earlier bars only; a bar touching both is stopped; flat for `cooldown` bars, then the base again; no level reproduces the trial exactly; the fee read from the trial's own costs |
 | `grid(bars, trial, *, stops, trailing, takes, cooldown)` | every overlay, each its own trial | the registered 12 by default; each counts toward N |
 
+### Funding as a trade: `gr.carry`
+
+| Call | Returns | The rule it owns |
+|---|---|---|
+| `daily(premium, settled)` | `ticker, ts, close_ts, premium, funding` per whole UTC day | the premium only with all 1,440 minutes; the funding only when settlements cover the day (midnight's closes the day before); a day missing either is a hole |
+| `returns(day, position, *, fee)`, `trial(...)` | a position hedged against the index: the basis move, the funding paid, both legs' fees | s × ΔP/(1 + P) − s × F − 0.15% × \|Δs\|; the position decided at a close reads that day's funding (settled at the close) and is held from the next day |
+| `rules(day)`, `fades(bars, day, settled)` | the registered 13 carry rules; the 8 unhedged fades of extreme funding, funding charged hour by hour | windows per contiguous stretch; every rule a trial |
+| `persistence(day)` | daily funding's lag-one autocorrelation, Fisher z, one-sided p | consecutive days only |
+
 ### Reference data: `gr.reference` and `galata-fetch`
 
 The record holds one venue, 1h bars from 2026-03, and a week of top of book.
@@ -385,6 +394,8 @@ galata-fetch update  --dry-run    # each declared series from its last day to ye
 | `gr.reference.trades(..., rpi=None)` | signed trades: Binance aggTrades, Bybit and OKX executions | Bybit time exact to 100 µs from its text; OKX sizes in BTC/ETH, not contracts; `rpi=False` drops Bybit's retail-price-improvement and OKX's Enhanced Liquidity Program fills |
 | `gr.reference.book(...)` | Bybit's book replayed, one row per second: top, depth within 2 and 10 bps, each side's reach | a band past the deepest level held is null, never a truncated sum |
 | `gr.reference.candles(...)` | Binance 1m bars | known at `close_ts`; `as_of` filters on it |
+| `gr.reference.funding(...)`, `funding_hours(settled)` | Binance's settled funding, `rate` and `interval_hours`; as hourly rows for `backtest.returns(funding=)` | published a month at a time (no daily file), held under the month's first day; the rate on its settlement hour and 0 on the hours before it, so a missing settlement leaves its bars uncharged |
+| `gr.reference.premium(...)` | Binance's 1m premium index: the perp's premium over its index | known at `close_ts`; the input to Binance's funding |
 | `gr.reference.events(start, end, *, sources)` | CPI, jobs and FOMC with their UTC release instants | fetched from bls.gov and federalreserve.gov by `galata-fetch events`; BLS only with `GALATA_CONTACT`, which is never stored |
 | `gr.reference.coverage()` | per series: `first, last, days_ok, days_absent, days_mismatch, days_missing` | absent (the archive lacked it) is not missing (never fetched) |
 
@@ -433,6 +444,7 @@ trial, so N is the true N) back these notebooks:
 | `moving_average.py`, `momentum.py` | a Sharpe landscape for two example families |
 | `indicator_signals.py` | do the standard indicators survive their search? The pre-registered test of five families (EMA, RSI, Bollinger, MACD, Supertrend), 50 rules × BTC, ETH, N = 100, against DSR, PBO, the Reality Check and permuted bars, with six years of Binance as a secondary. Registered (`020ef19`); **not yet run on the record** |
 | `overlays.py` | do stops help? The pre-registered test of 12 stop and take-profit overlays on buy-and-hold, an MA rule and the Donchian ensemble, BTC and ETH daily (N = 78): a Reality Check per base against the base itself, then DSR and PBO over all. Registered (`f96b81a`); **not yet run on the record** |
+| `carry.py` | does funding pay? The pre-registered test (`d82ee2b`) on Binance 2020–2026: 13 hedged carry rules (N = 26) against DSR, the Reality Check against cash and PBO; whether daily funding persists; and 8 unhedged fades of extreme funding (N = 16) |
 | `trades.py` | what do the trials' trades look like? Sortino, Calmar, Ulcer and drawdown length per trial, win rate, profit factor and MAE/MFE per trade, the month-by-month table and a rolling Sharpe. Descriptions, not verdicts |
 | `deflated_sharpe.py` | does the best of 66 trials beat what luck would give? DSR 0.67 daily: **no** |
 | `overfitting.py` | does choosing on the past choose well? PBO 0.69 over 12,870 splits: **no** |

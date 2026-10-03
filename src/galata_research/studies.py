@@ -484,10 +484,11 @@ def excess(frame: pl.DataFrame, benchmark: str) -> pl.DataFrame:
     return grid.select("ts", *[(pl.col(c) - pl.col(f"{benchmark} | {c.rsplit(' | ', 1)[1]}")).alias(c) for c in columns])
 
 
-def trial(bars, position: pl.Expr, name: str, *, fee: float = backtest.TAKER_FEE) -> pl.DataFrame:
+def trial(bars, position: pl.Expr, name: str, *, fee: float = backtest.TAKER_FEE, funding=None) -> pl.DataFrame:
     """One named trial: `backtest.returns` of `position`, as `trial, ticker, ts, close_ts, position, bar_return, gross, cost, net`.
 
     `close_ts` and `cost` are what `gr.trades` needs to date each trade and charge it its own turnover.
+    `funding`, when given, is charged as `backtest.returns` charges it, and `net` is after it.
     """
-    r = backtest.returns(bars, position, fee=fee)
+    r = backtest.returns(bars, position, fee=fee, funding=funding)
     return r.select(pl.lit(name).alias("trial"), "ticker", "ts", "close_ts", "position", "bar_return", "gross", "cost", "net")
