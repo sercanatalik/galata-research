@@ -367,6 +367,15 @@ registered 50-rule search (`planning/preregistered/indicator-signals.md`).
 | `rules(day)`, `fades(bars, day, settled)` | the registered 13 carry rules; the 8 unhedged fades of extreme funding, funding charged hour by hour | windows per contiguous stretch; every rule a trial |
 | `persistence(day)` | daily funding's lag-one autocorrelation, Fisher z, one-sided p | consecutive days only |
 
+### Order flow as a signal: `gr.flow`
+
+| Call | Returns | The rule it owns |
+|---|---|---|
+| `seconds(book, leader)` | per second: Bybit's touch, sizes, mid, size-weighted mid, `day`, the leader's last price | crossed or locked seconds dropped; the leader's price is its last trade at or before the second, missing past `stale` |
+| `slope(frame, x, y)`, `diebold_mariano(frame, d, lags)` | an OLS slope or a mean loss differential, Newey–West t | lags never reach across a day: each day's book is its own replay |
+| `taker(grid, signals, horizon)`, `score(trades)` | each signal bought at the ask or sold at the bid and closed at the touch, net of the fee both ways; per rule, the t over the days' mean returns | the decision second's own touch (flattering, stated); no trade closes on another day; Student's t on days − 1, the tail computed here and pinned to the tables |
+| `ofi_frame`, `ofi_rules`, `microprice_frame`, `lead_frame`, `lead_rules` | the registered H1–H3 rows and rules | an OFI bucket decided at its last second; its z from the previous buckets only |
+
 ### Reference data: `gr.reference` and `galata-fetch`
 
 The record holds one venue, 1h bars from 2026-03, and a week of top of book.
@@ -445,6 +454,7 @@ trial, so N is the true N) back these notebooks:
 | `indicator_signals.py` | do the standard indicators survive their search? The pre-registered test of five families (EMA, RSI, Bollinger, MACD, Supertrend), 50 rules × BTC, ETH, N = 100, against DSR, PBO, the Reality Check and permuted bars, with six years of Binance as a secondary. Registered (`020ef19`); **not yet run on the record** |
 | `overlays.py` | do stops help? The pre-registered test of 12 stop and take-profit overlays on buy-and-hold, an MA rule and the Donchian ensemble, BTC and ETH daily (N = 78): a Reality Check per base against the base itself, then DSR and PBO over all. Registered (`f96b81a`); **not yet run on the record** |
 | `carry.py` | does funding pay? Pre-registered (`d82ee2b`), run once on Binance 2020–2026. **Hedged carry: supported** (best of 26: `always` short the perp, long the index, Sharpe 9.2 per unit notional, DSR 1.00, Reality Check p 0.002, PBO 0.00), but no timing rule beat holding it, and its income fell from 17–31% a year in 2020–21 to about 2–3% in 2026. **Funding persists** (lag-one ρ 0.85 BTC, 0.82 ETH). **The unhedged fade: not supported** (DSR 0.62, Reality Check p 0.93) |
+| `flow.py` | does order flow pay a taker? Pre-registered (`5c4e7c2`) on Bybit's per-second book and Binance's trades, 12 days, 2025-10 to 2026-09: OFI predicting the next 10 s, the micro-price against the mid, and Binance's last second against Bybit's next, each statistically and as taker rules after 0.055% each way |
 | `trades.py` | what do the trials' trades look like? Sortino, Calmar, Ulcer and drawdown length per trial, win rate, profit factor and MAE/MFE per trade, the month-by-month table and a rolling Sharpe. Descriptions, not verdicts |
 | `deflated_sharpe.py` | does the best of 66 trials beat what luck would give? DSR 0.67 daily: **no** |
 | `overfitting.py` | does choosing on the past choose well? PBO 0.69 over 12,870 splits: **no** |
