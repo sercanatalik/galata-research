@@ -3,6 +3,8 @@
 MEASURED 2026-09-27, the first file each archive holds:
 
     binance-um    bookDepth   BTCUSDT, ETHUSDT 2023-01-01   HYPEUSDT 2025-05-30   XAUUSDT 2025-12-11
+                  fundingRate (monthly files only) BTCUSDT, ETHUSDT 2020-01   HYPEUSDT 2025-06
+                  premiumIndexKlines 1m   BTCUSDT 2020-01-01   HYPEUSDT by 2025-06-01
                   aggTrades   BTCUSDT, ETHUSDT 2019-12-31   HYPEUSDT 2025-05-30   XAUUSDT 2025-12-11
                   klines 1m   BTCUSDT, ETHUSDT 2019-12-31   HYPEUSDT 2025-05-30   XAUUSDT 2025-12-11
     bybit-linear  trading     BTCUSDT 2020-03-25   ETHUSDT 2020-10-21   HYPEUSDT 2024-12-05   XAUUSDT 2026-03-09
@@ -26,7 +28,9 @@ from datetime import date, timedelta
 from .._errors import Refused
 
 VENUES = ("binance-um", "bybit-linear", "okx-swap")
-KINDS = ("trades", "depth", "book", "candles")
+KINDS = ("trades", "depth", "book", "candles", "funding", "premium")
+# Kinds archived one file per month, held under the month's first day.
+MONTHLY = frozenset({"funding"})
 
 
 @dataclass(frozen=True)
@@ -54,6 +58,8 @@ ARCHIVE_FROM: dict[tuple[str, str], date] = {
     ("binance-um", "depth"): date(2023, 1, 1),
     ("binance-um", "trades"): date(2019, 12, 31),
     ("binance-um", "candles"): date(2019, 12, 31),
+    ("binance-um", "funding"): date(2020, 1, 1),
+    ("binance-um", "premium"): date(2020, 1, 1),
     ("bybit-linear", "trades"): date(2020, 3, 25),
     ("bybit-linear", "book"): date(2023, 1, 18),
     ("okx-swap", "trades"): date(2021, 11, 1),

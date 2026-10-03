@@ -4,6 +4,8 @@
     gr.reference.trades(["HYPE"], start, end, rpi=False)            # signed trades, no RPI fills
     gr.reference.book(["BTC"], start, end)                          # Bybit's top and near depth, per second
     gr.reference.candles(["ETH"], start, end, as_of=t)              # Binance 1m, known at close_ts
+    gr.reference.funding(["BTC"], start, end)                       # Binance's settled funding, each with its interval
+    gr.reference.premium(["BTC"], start, end)                       # Binance's 1m premium index: the perp over its index
     gr.reference.coverage()                                         # which days each series holds
 
 The rules are the record's where the meaning is the same: `ts` is the
@@ -24,7 +26,7 @@ import polars as pl
 from .. import _scan, utils
 from .._errors import Refused
 from . import _manifest, _sources
-from ._instruments import DAY_ENDS_EARLY, INSTRUMENTS, KINDS, VENUES
+from ._instruments import DAY_ENDS_EARLY, INSTRUMENTS, KINDS, MONTHLY, VENUES
 from ._root import root
 
 __all__ = [
@@ -35,6 +37,9 @@ __all__ = [
     "candles",
     "coverage",
     "depth",
+    "funding",
+    "funding_hours",
+    "premium",
     "root",
     "trades",
 ]
@@ -149,6 +154,57 @@ def coverage() -> pl.DataFrame:
     )
 
 
+def funding(tickers, start, end, *, venues=None, as_of=None, engine: str = "polars"):
+    """Binance's settled funding with `ts` in `[start, end)`: `rate` per settlement and its `interval_hours`.
+
+    A long pays `rate` × notional at `ts` when it is positive, a short
+    receives it. Known at `ts`: the settlement is the rate that was charged.
+    The archive publishes a month only once it has ended, so the current
+    month is absent until then.
+    """
+    return _finish(_load("funding", tickers, start, end, venues, as_of), "funding", engine)
+
+
+def premium(tickers, start, end, *, venues=None, as_of=None, engine: str = "polars"):
+    """Binance's premium index in 1m bars, known at `close_ts`: (the perp's impact price − its index) / its index.
+
+    It is what Binance's funding rate is computed from, and the basis a
+    position long the perp and short the index bears.
+    """
+    return _finish(_load("premium", tickers, start, end, venues, as_of), "premium", engine)
+
+
+def funding_hours(settled: pl.LazyFrame | pl.DataFrame) -> pl.DataFrame:
+    """Settlements as one row per hour, `ticker, ts, rate`, for `gr.backtest.returns(funding=...)`.
+
+    Each settlement covers the `interval_hours` up to it: its hour carries
+    the rate, and the hours before it within the interval carry 0, since
+    nothing settles then. A bar is charged by `backtest.returns` only when
+    every hour it spans is present, so a missing settlement still leaves the
+    bars over its interval uncharged, never charged a partial sum. A
+    settlement stamped a few milliseconds past its hour is that hour's.
+    """
+    utils.require(settled, ("ticker", "ts", "rate", "interval_hours"), "load funding with gr.reference.funding")
+    hour = pl.col("ts").dt.truncate("1h")
+    return (
+        utils.lazy(settled)
+        .select(
+            "ticker",
+            pl.datetime_ranges(
+                hour - pl.duration(hours=pl.col("interval_hours") - 1), hour, interval="1h", closed="both"
+            ).alias("ts"),
+            pl.col("rate"),
+            hour.alias("_settles"),
+        )
+        .explode("ts", empty_as_null=True)
+        # When the interval changes, a window can reach back over an earlier settlement: its hour keeps its rate.
+        .group_by("ticker", "ts")
+        .agg(pl.col("rate").filter(pl.col("ts") == pl.col("_settles")).first().fill_null(0.0))
+        .sort("ticker", "ts")
+        .collect()
+    )
+
+
 def _names(asked, held: list[str], what: str) -> list[str]:
     if asked is None:
         return held
@@ -173,6 +229,9 @@ def _load(kind, tickers, start, end, venues, as_of) -> pl.LazyFrame | None:
     wanted = _names(tickers, sorted(m["ticker"].unique()), kind)
 
     first, last = _scan._day(lo), _scan._day(hi - 1)
+    if kind in MONTHLY:
+        # A month's file is held under its first day.
+        first = first.replace(day=1)
     # A venue whose archive day ends early (OKX's, at 16:00 UTC) holds the end of `last` in the next file.
     early = pl.col("venue").is_in(list(DAY_ENDS_EARLY))
     until = pl.when(early).then(pl.lit(last + timedelta(days=1))).otherwise(pl.lit(last))
@@ -189,7 +248,7 @@ def _load(kind, tickers, start, end, venues, as_of) -> pl.LazyFrame | None:
     lf = pl.scan_parquet(files, hive_partitioning=False).filter((pl.col("ts") >= at(lo)) & (pl.col("ts") < at(hi)))
     if bound is not None:
         # A bar is known at its close, a snapshot or an execution at its time.
-        known = "close_ts" if kind == "candles" else "ts"
+        known = "close_ts" if kind in ("candles", "premium") else "ts"
         lf = lf.filter(pl.col(known) <= at(bound))
     return lf
 

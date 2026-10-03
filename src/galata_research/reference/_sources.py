@@ -7,6 +7,12 @@ MEASURED 2026-09-27 on the files themselves:
 - Binance `bookDepth.timestamp` is `YYYY-MM-DD HH:MM:SS` with no zone, and
   writes `-5` as well as `-5.00`. The file for a day holds that UTC day.
 - Binance `transact_time` and kline times are epoch milliseconds.
+- Binance `fundingRate` is published per month only (no daily file):
+  `calc_time, funding_interval_hours, last_funding_rate`, the time in epoch
+  milliseconds at the settlement, 93 rows for BTCUSDT in January 2024.
+- Binance `premiumIndexKlines` are 1m klines of the premium index (the perp's
+  premium over its index, the input to funding) in the klines' columns,
+  with volume and count zero or meaningless.
 - Bybit trade `timestamp` is epoch seconds as text with up to 4 decimals
   (`1790380800.0232`); 2020 files run newest first, 2026 files oldest first;
   `RPI` appears only in later files.
@@ -68,16 +74,28 @@ CANDLES = {
     **{c: pl.Float64 for c in ["open", "high", "low", "close", "volume"]},
     "trade_count": pl.UInt32,
 }  # fmt: skip
-SCHEMAS = {"trades": TRADES, "depth": DEPTH, "book": BOOK, "candles": CANDLES}
+FUNDING = {
+    "venue": pl.String, "ticker": pl.String, "symbol": pl.String, "ts": UTC_US,
+    "rate": pl.Float64, "interval_hours": pl.Int32,
+}  # fmt: skip
+PREMIUM = {
+    "venue": pl.String, "ticker": pl.String, "symbol": pl.String, "interval": pl.String,
+    "ts": UTC_US, "close_ts": UTC_US,
+    **{c: pl.Float64 for c in ["open", "high", "low", "close"]},
+}  # fmt: skip
+SCHEMAS = {"trades": TRADES, "depth": DEPTH, "book": BOOK, "candles": CANDLES, "funding": FUNDING, "premium": PREMIUM}
 
 _BINANCE = "https://data.binance.vision/data/futures/um/daily"
-_BINANCE_KIND = {"depth": "bookDepth", "trades": "aggTrades", "candles": "klines"}
+_BINANCE_MONTHLY = "https://data.binance.vision/data/futures/um/monthly"
+_BINANCE_KIND = {"depth": "bookDepth", "trades": "aggTrades", "candles": "klines", "funding": "fundingRate", "premium": "premiumIndexKlines"}
 _BINANCE_COLUMNS = {
     "bookDepth": ["timestamp", "percentage", "depth", "notional"],
     "aggTrades": ["agg_trade_id", "price", "quantity", "first_trade_id", "last_trade_id", "transact_time", "is_buyer_maker"],
     "klines": ["open_time", "open", "high", "low", "close", "volume", "close_time", "quote_volume", "count",
                "taker_buy_volume", "taker_buy_quote_volume", "ignore"],
+    "fundingRate": ["calc_time", "funding_interval_hours", "last_funding_rate"],
 }  # fmt: skip
+_BINANCE_COLUMNS["premiumIndexKlines"] = _BINANCE_COLUMNS["klines"]
 
 
 def url(kind: str, venue: str, ticker: str, day: date) -> str:
@@ -86,8 +104,10 @@ def url(kind: str, venue: str, ticker: str, day: date) -> str:
     d = day.isoformat()
     if venue == "binance-um":
         name = _BINANCE_KIND[kind]
-        if kind == "candles":
-            return f"{_BINANCE}/klines/{symbol}/1m/{symbol}-1m-{d}.zip"
+        if kind in ("candles", "premium"):
+            return f"{_BINANCE}/{name}/{symbol}/1m/{symbol}-1m-{d}.zip"
+        if kind == "funding":
+            return f"{_BINANCE_MONTHLY}/{name}/{symbol}/{symbol}-{name}-{day:%Y-%m}.zip"
         return f"{_BINANCE}/{name}/{symbol}/{symbol}-{name}-{d}.zip"
     if venue == "okx-swap":
         return f"https://static.okx.com/cdn/okex/traderecords/trades/daily/{day:%Y%m%d}/{symbol}-trades-{d}.zip"
@@ -192,14 +212,29 @@ def _binance(kind: str, text: bytes, name: str, day: date) -> pl.DataFrame:
             pl.col("agg_trade_id").alias("trade_id"),
             pl.lit(None, pl.Boolean).alias("rpi"),
         ).sort("ts", maintain_order=True)
+    if kind == "funding":
+        frame = raw.with_columns(_epoch("calc_time", 1000))
+        _check_years(frame, "calc_time", name)
+        frame = frame.select(
+            pl.col("calc_time").cast(UTC_US).alias("ts"),
+            pl.col("last_funding_rate").cast(pl.Float64).alias("rate"),
+            pl.col("funding_interval_hours").cast(pl.Int32).alias("interval_hours"),
+        ).sort("ts", maintain_order=True)
+        lo = datetime(day.year, day.month, 1, tzinfo=UTC)
+        hi = datetime(day.year + day.month // 12, day.month % 12 + 1, 1, tzinfo=UTC)
+        outside = frame.filter((pl.col("ts") < lo) | (pl.col("ts") >= hi))
+        if outside.height:
+            raise Refused(f"{name}: {outside.height} settlement(s) fall outside {day:%Y-%m}, first at {outside['ts'][0]}")
+        return frame
     frame = raw.with_columns(_epoch("open_time", 1000))
     _check_years(frame, "open_time", name)
+    columns = ["open", "high", "low", "close"] + ([] if kind == "premium" else ["volume"])
     return frame.select(
         pl.lit("1m").alias("interval"),
         pl.col("open_time").cast(UTC_US).alias("ts"),
         (pl.col("open_time") + _MINUTE_US).cast(UTC_US).alias("close_ts"),
-        *[pl.col(c).cast(pl.Float64) for c in ["open", "high", "low", "close", "volume"]],
-        pl.col("count").cast(pl.UInt32).alias("trade_count"),
+        *[pl.col(c).cast(pl.Float64) for c in columns],
+        *([] if kind == "premium" else [pl.col("count").cast(pl.UInt32).alias("trade_count")]),
     ).sort("ts", maintain_order=True)
 
 

@@ -677,3 +677,99 @@ def an_update_dry_run_downloads_nothing(store, archive, monkeypatch):
 def the_update_keeps_the_forward_claims_series():
     assert {(k, v, t) for k, v, t, _ in fetch.UPDATES} >= {("depth", "binance-um", "BTC"), ("candles", "binance-um", "BTC"),
                                                             ("trades", "binance-um", "BTC"), ("trades", "bybit-linear", "BTC")}  # fmt: skip
+
+
+# ---- funding and the premium --------------------------------------------------------
+
+MONTHLY = "https://data.binance.vision/data/futures/um/monthly"
+
+
+def _funding_url(month: str, symbol: str = "BTCUSDT") -> str:
+    return f"{MONTHLY}/fundingRate/{symbol}/{symbol}-fundingRate-{month}.zip"
+
+
+def _funding_file(month: str, rows: list[str]) -> bytes:
+    return _zip(f"BTCUSDT-fundingRate-{month}.csv", "calc_time,funding_interval_hours,last_funding_rate\n" + "\n".join(rows) + "\n")
+
+
+JAN = ["1704067200000,8,0.00037409", "1704096000003,8,0.00027213", "1704124800000,8,-0.0001"]  # 2024-01-01 00, 08, 16 UTC
+FEB = ["1706745600000,8,0.0002"]  # 2024-02-01 00 UTC
+
+
+def the_funding_is_fetched_a_month_at_a_time(store, archive):
+    archive.publish(_funding_url("2024-01"), _funding_file("2024-01", JAN))
+    archive.publish(_funding_url("2024-02"), _funding_file("2024-02", FEB))
+    code, _ = _run("funding", "binance-um", "BTC", "--from", "2024-01-20", "--to", "2024-02-03")
+    assert code == 0
+    m = _manifest.read(store)
+    assert m["date"].to_list() == [date(2024, 1, 1), date(2024, 2, 1)]
+    assert set(m["status"]) == {"ok"}
+
+
+def a_month_is_read_from_a_window_inside_it(store, archive):
+    # Guard: the file is held under the month's first day, which a window from the 1st at 08:00 does not reach.
+    archive.publish(_funding_url("2024-01"), _funding_file("2024-01", JAN))
+    _run("funding", "binance-um", "BTC", "--from", "2024-01-01", "--to", "2024-01-31")
+    got = gr.reference.funding("BTC", "2024-01-01T08:00Z", "2024-02-01T00:00Z").collect()
+    assert got["rate"].to_list() == [0.00027213, -0.0001]
+    assert got["interval_hours"].to_list() == [8, 8]
+    assert got["ts"][0] == utc("2024-01-01T08:00:00.003")
+
+
+def a_settlement_outside_its_month_is_refused():
+    with pytest.raises(Refused, match="outside 2024-02"):
+        _sources.parse("funding", "binance-um", "BTC", date(2024, 2, 1), _funding_file("2024-02", JAN), "x.zip")
+
+
+def every_settlement_covers_the_hours_up_to_it():
+    settled = pl.DataFrame(
+        {
+            "ticker": "BTC",
+            "ts": [utc("2024-01-01T00:00"), utc("2024-01-01T08:00:00.003")],
+            "rate": [0.0003, 0.0002],
+            "interval_hours": [8, 8],
+        }
+    )
+    got = gr.reference.funding_hours(settled)
+    assert got.height == 16
+    assert got["ts"][0] == utc("2023-12-31T17:00") and got["ts"][-1] == utc("2024-01-01T08:00")
+    assert got.filter(pl.col("rate") != 0)["ts"].to_list() == [utc("2024-01-01T00:00"), utc("2024-01-01T08:00")]
+
+
+def a_shorter_interval_keeps_the_earlier_settlement():
+    # Guard: an 8h window reaching back over a 4h settlement must not zero its rate.
+    settled = pl.DataFrame(
+        {"ticker": "BTC", "ts": [utc("2024-01-01T04:00"), utc("2024-01-01T08:00")], "rate": [0.0001, 0.0002], "interval_hours": [4, 8]}
+    )
+    got = gr.reference.funding_hours(settled)
+    assert got.filter(pl.col("ts") == utc("2024-01-01T04:00"))["rate"].to_list() == [0.0001]
+    assert got["rate"].sum() == pytest.approx(0.0003)
+
+
+def the_settled_funding_charges_a_daily_bar_through_the_backtest():
+    from galata_research import backtest
+
+    day = utc("2024-01-01T00:00")
+    bars = pl.DataFrame({"ticker": "BTC", "ts": [day, day + (day - utc("2023-12-31T00:00"))], "close": [100.0, 100.0]}).with_columns(
+        (pl.col("ts") + pl.duration(days=1)).alias("close_ts")
+    )
+    # Settlements at 08 and 16 on the 2nd and 00 on the 3rd: the second bar's three.
+    settled = pl.DataFrame(
+        {
+            "ticker": "BTC",
+            "ts": [utc("2024-01-02T08:00"), utc("2024-01-02T16:00"), utc("2024-01-03T00:00")],
+            "rate": [0.0001, 0.0002, 0.0003],
+            "interval_hours": [8, 8, 8],
+        }
+    )
+    got = backtest.returns(bars, pl.lit(1.0), fee=0.0, funding=gr.reference.funding_hours(settled))
+    assert got["funding"].to_list() == [None, pytest.approx(0.0006)]
+
+
+def a_premium_kline_is_read():
+    got = _parse("premium", "binance-um", _zip("BTCUSDT-1m-2024-01-01.csv", (
+        "open_time,open,high,low,close,volume,close_time,quote_volume,count,taker_buy_volume,taker_buy_quote_volume,ignore\n"
+        "1704067200000,0.00075030,0.00090957,0.00059476,0.00089825,0,1704067259999,0,12,0,0,0\n"
+    )), day="2024-01-01")  # fmt: skip
+    assert got.columns == list(_sources.PREMIUM)
+    assert got["close"][0] == 0.00089825 and got["close_ts"][0] == utc("2024-01-01T00:01")

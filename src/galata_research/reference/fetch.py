@@ -138,9 +138,15 @@ def plan(
     that hold it.
     """
     start = _instruments.first_day(venue, kind, ticker)
+    if kind in _instruments.MONTHLY:
+        # One file a month, held under its first day: every month the range touches.
+        start = start.replace(day=1)
+        first = first.replace(day=1)
     if first < start:
         say(f"{ticker} {kind} on {venue} is archived from {start}; {(start - first).days} earlier day(s) not requested")
     days = days_between(max(first, start), last)
+    if kind in _instruments.MONTHLY:
+        return sorted({d.replace(day=1) for d in days})
     chosen = declared(days, listed, sample)
     if chosen is None:
         if (venue, kind) in HEAVY and days:
@@ -391,7 +397,7 @@ def _parser() -> argparse.ArgumentParser:
         "`galata-fetch events` fetches the FOMC and BLS calendars instead (BLS needs GALATA_CONTACT); "
         "`galata-fetch update [--dry-run]` brings the declared series up to yesterday.",
     )
-    p.add_argument("kind", choices=_instruments.KINDS, help="trades, depth, book, candles")
+    p.add_argument("kind", choices=_instruments.KINDS, help=", ".join(_instruments.KINDS))
     p.add_argument("venue", choices=_instruments.VENUES)
     p.add_argument("tickers", nargs="+", metavar="TICKER")
     p.add_argument(
