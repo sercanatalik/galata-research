@@ -12,13 +12,14 @@
     gr.timeseries.returns(bars, kind="log")                 # null across a hole
     gr.timeseries.periods_per_year("1h")                    # 8760
     gr.models.vol.fit(returns, model="gjr", dist="t")       # the [models] extra, loaded on use
+    gr.trades.summary(trial, bars, periods_per_year=365)   # win rate, profit factor, MAE/MFE
 
 The library owns the record's semantics, not its I/O: dedupe, closure, the
 clock and the cast are applied once, here, so a notebook never reads a
 re-fetched bar twice or a bar's open as its close.
 """
 
-from . import account, backtest, jumps, leadlag, liquidity, market, reference, signals, stats, studies, timeseries, utils
+from . import account, backtest, jumps, leadlag, liquidity, market, reference, signals, stats, studies, timeseries, trades, utils
 from ._errors import Refused
 from ._frontier import frontier
 from ._root import root
@@ -42,6 +43,7 @@ __all__ = [
     "stats",
     "studies",
     "timeseries",
+    "trades",
     "utils",
     "models",
     "calendar",

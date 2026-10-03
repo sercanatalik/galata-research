@@ -92,3 +92,103 @@ def a_constant_uplift_is_its_fee_at_low_risk_aversion():
 def a_fall_and_a_partial_recovery():
     assert stats.max_drawdown([0.10, -0.20, 0.05]) == pytest.approx(0.2)
     assert stats.max_drawdown([0.01, 0.02]) == 0.0
+
+
+# Rollinger and Hoffman (Red Rock Capital), "Sortino: a 'sharper' ratio", the worked example.
+RED_ROCK = [0.17, 0.15, 0.23, -0.05, 0.12, 0.09, 0.13, -0.04]
+
+
+def the_red_rock_example_gives_a_sortino_of_4_417():
+    assert stats.sortino(RED_ROCK) == pytest.approx(4.417, abs=5e-4)
+
+
+def the_downside_deviation_divides_by_every_period_not_only_the_losers():
+    # Guard: over the two losers alone it would be √(41/2)% and the ratio 2.21.
+    assert stats.sortino(RED_ROCK) > 4
+
+
+def a_series_that_never_loses_has_no_sortino():
+    assert stats.sortino([0.01, 0.02, 0.0]) is None
+
+
+def the_omega_is_gains_over_losses_about_the_threshold():
+    assert stats.omega([0.02, -0.01, 0.03, -0.02]) == pytest.approx(0.05 / 0.03)
+    assert stats.omega([0.02, -0.01, 0.03, -0.02], threshold=0.01) == pytest.approx(0.03 / 0.05)
+    assert stats.omega([0.01, 0.02]) is None
+
+
+def the_cagr_compounds_to_a_year():
+    assert stats.cagr([0.1, 0.1], periods_per_year=1) == pytest.approx(0.1)
+    assert stats.cagr([0.1, 0.1], periods_per_year=2) == pytest.approx(0.21)
+    assert stats.cagr([-1.0, 0.5], periods_per_year=2) == -1.0
+
+
+def the_calmar_is_cagr_over_the_worst_drawdown():
+    # 1.1, 0.55, 1.1: growth 10% over a year of three periods, a 50% drawdown.
+    assert stats.calmar([0.1, -0.5, 1.0], periods_per_year=3) == pytest.approx(0.2)
+    assert stats.calmar([0.1, 0.2], periods_per_year=2) is None
+
+
+def the_ulcer_index_squares_each_periods_drawdown():
+    # Drawdowns 0, 50%, 0.
+    assert stats.ulcer_index([0.1, -0.5, 1.0]) == pytest.approx((0.25 / 3) ** 0.5)
+    assert stats.ulcer_index([]) is None
+
+
+def a_drawdown_lasts_until_a_new_peak():
+    # Values 1.1, 0.99, 1.0395, 1.14345 (a new peak), 0.91476.
+    assert stats.drawdown_duration([0.1, -0.1, 0.05, 0.1, -0.2]) == 2
+    # A drawdown never recovered counts to the end.
+    assert stats.drawdown_duration([0.1, -0.1, 0.05, 0.01]) == 3
+    assert stats.drawdown_duration([0.01, 0.02]) == 0
+
+
+def _frame(nets, *, start="2026-01-01T00:00", step_days=1, trial="t", ticker="BTC"):
+    from datetime import datetime, timedelta, timezone
+
+    t0 = datetime.fromisoformat(start).replace(tzinfo=timezone.utc)
+    step = timedelta(days=step_days)
+    return pl.DataFrame(
+        {
+            "trial": trial,
+            "ticker": ticker,
+            "ts": [t0 + i * step for i in range(len(nets))],
+            "close_ts": [t0 + (i + 1) * step for i in range(len(nets))],
+            "net": pl.Series(nets, dtype=pl.Float64),
+        }
+    )
+
+
+def a_rolling_sharpe_needs_a_full_window():
+    got = stats.rolling_sharpe(_frame([0.01, 0.03, None, 0.02, 0.04, 0.0]), 2)["sharpe"].to_list()
+    # A window holding the hole is null, never a window of one.
+    assert got[:4] == [None, pytest.approx(0.02 / 0.0002**0.5), None, None]
+    assert got[4] == pytest.approx(0.03 / 0.0002**0.5)
+
+
+def a_window_with_no_variance_has_no_rolling_sharpe():
+    assert stats.rolling_sharpe(_frame([0.01, 0.01, 0.01]), 2)["sharpe"].to_list() == [None, None, None]
+
+
+def a_bar_belongs_to_the_month_it_opens_in():
+    # Daily bars opening Jan 30, 31, Feb 1, 2: the bar closing at midnight on Feb 1 is January's.
+    got = stats.period_returns(_frame([0.1, 0.1, 0.5, None], start="2026-01-30T00:00"))
+    assert got["return"].to_list() == [pytest.approx(0.21), pytest.approx(0.5)]
+    assert got["n"].to_list() == [2, 1]
+    assert got["bars"].to_list() == [31, 28]
+    assert got["full"].to_list() == [False, False]
+
+
+def a_whole_month_is_full():
+    got = stats.period_returns(_frame([0.0] * 28, start="2026-02-01T00:00"))
+    assert got["full"].to_list() == [True]
+
+
+def every_trial_and_ticker_is_described_once_one_row_per_trial_and_ticker():
+    frame = pl.concat([_frame(RED_ROCK, trial="a"), _frame([0.01, -0.02, 0.03], trial="b")])
+    got = stats.describe(frame, periods_per_year=1)
+    assert got["trial"].to_list() == ["a", "b"]
+    row = got.row(0, named=True)
+    assert row["sortino"] == pytest.approx(4.417, abs=5e-4)
+    assert row["periods"] == 8
+    assert row["max_drawdown"] == pytest.approx(stats.max_drawdown(RED_ROCK))

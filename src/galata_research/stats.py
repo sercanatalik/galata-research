@@ -14,6 +14,7 @@ from statistics import NormalDist
 
 import polars as pl
 
+from . import utils
 from ._errors import Refused
 from .timeseries import optimal_block, stationary_bootstrap_indices
 
@@ -316,3 +317,153 @@ def max_drawdown(returns) -> float:
         peak = max(peak, value)
         worst = max(worst, 1 - value / peak)
     return worst
+
+
+# What a return series looked like, beyond its Sharpe. Each is a description of
+# one series, not a verdict: whether it survives selection is DSR's and PBO's
+# question, asked of every trial. Nulls (a hole, a warm-up) are dropped, as
+# for `sharpe` and `max_drawdown`.
+
+
+def sortino(returns, target: float = 0.0) -> float | None:
+    """Mean excess over `target` per unit of target downside deviation, per period. Null when undefined.
+
+    Sortino and Price (1994). The downside deviation is √(Σ min(r − target, 0)² / N)
+    over **all** N periods, not only the losing ones (Rollinger and Hoffman,
+    "Sortino: a 'sharper' ratio", Red Rock Capital, whose worked example gives
+    4.417). Annualise with `annualize`, as for Sharpe.
+    """
+    r = _series(returns).to_list()
+    if len(r) < 2:
+        return None
+    excess = [x - target for x in r]
+    downside = sqrt(sum(min(x, 0.0) ** 2 for x in excess) / len(excess))
+    return None if not downside else sum(excess) / len(excess) / downside
+
+
+def cagr(returns, periods_per_year: float) -> float | None:
+    """∏(1 + r) compounded to a year: growth^(periods_per_year / N) − 1. −1 when the series is wiped out."""
+    r = _series(returns).to_list()
+    if not r:
+        return None
+    growth = 1.0
+    for x in r:
+        growth *= 1 + x
+    return -1.0 if growth <= 0 else growth ** (periods_per_year / len(r)) - 1
+
+
+def calmar(returns, periods_per_year: float) -> float | None:
+    """CAGR over the maximum drawdown, over the whole series (Young 1991). Null when it never falls."""
+    worst = max_drawdown(returns)
+    growth = cagr(returns, periods_per_year)
+    return None if not worst or growth is None else growth / worst
+
+
+def omega(returns, threshold: float = 0.0) -> float | None:
+    """Σ max(r − L, 0) over Σ max(L − r, 0): Keating and Shadwick's (2002) Omega at L, per period. Null with no loss."""
+    r = _series(returns).to_list()
+    up = sum(max(x - threshold, 0.0) for x in r)
+    down = sum(max(threshold - x, 0.0) for x in r)
+    return None if not down else up / down
+
+
+def _drawdowns(returns) -> list[float]:
+    """1 − value / peak after each period, the path starting at 1."""
+    value, peak, out = 1.0, 1.0, []
+    for x in _series(returns).to_list():
+        value *= 1 + x
+        peak = max(peak, value)
+        out.append(1 - value / peak)
+    return out
+
+
+def ulcer_index(returns) -> float | None:
+    """√(mean of squared drawdowns), as a fraction: Martin and McCann's (1989) Ulcer Index. Depth and length together."""
+    dd = _drawdowns(returns)
+    return None if not dd else sqrt(sum(d * d for d in dd) / len(dd))
+
+
+def drawdown_duration(returns) -> int:
+    """The most consecutive periods spent below a previous peak; 0 if it never falls. An unrecovered drawdown counts to the end."""
+    longest = current = 0
+    for d in _drawdowns(returns):
+        current = current + 1 if d > 0 else 0
+        longest = max(longest, current)
+    return longest
+
+
+def rolling_sharpe(frame: pl.DataFrame, window: int, *, column: str = "net") -> pl.DataFrame:
+    """Per `(trial, ticker)`, the per-period Sharpe of the last `window` rows of `column`, on `ts`.
+
+    A figure only for a full window: one holding a hole or a warm-up (a null
+    return) is null, never a shorter window. A window with no variance is
+    null. Annualise with `annualize`.
+    """
+    if window < 2:
+        raise Refused(f"window={window}: a Sharpe needs at least 2 returns")
+    utils.require(frame, ("trial", "ticker", "ts", column), "pass a trial frame from gr.studies")
+    keys = ("trial", "ticker")
+    sr = pl.col(column).rolling_mean(window, min_samples=window) / pl.col(column).rolling_std(window, min_samples=window)
+    return (
+        frame.sort(*keys, "ts")
+        .select(*keys, "ts", sr.over(keys).alias("sharpe"))
+        .with_columns(pl.when(pl.col("sharpe").is_finite()).then(pl.col("sharpe")).alias("sharpe"))
+    )
+
+
+def period_returns(frame: pl.DataFrame, every: str = "1mo", *, column: str = "net") -> pl.DataFrame:
+    """Per `(trial, ticker)` and calendar period: `period, n, bars, full, return`, compounded from `column`.
+
+    A bar belongs to the period its open (`ts`) falls in, so the bar that
+    closes at midnight on the 1st is the previous month's. `bars` is how many
+    bars the period holds; `n` is how many carry a return. `full` is false
+    for a period cut by the sample's ends or by a hole, so a partial month is
+    never read as a whole one.
+    """
+    utils.require(frame, ("trial", "ticker", "ts", "close_ts", column), "pass a trial frame from gr.studies")
+    keys = ("trial", "ticker")
+    period = pl.col("ts").dt.truncate(every)
+    span = (period.dt.offset_by(every) - period).dt.total_microseconds()
+    step = (pl.col("close_ts") - pl.col("ts")).dt.total_microseconds()
+    return (
+        frame.with_columns(period.alias("period"), (span // step).alias("_bars"))
+        .group_by(*keys, "period", maintain_order=True)
+        .agg(
+            pl.col(column).count().alias("n"),
+            pl.col("_bars").first().alias("bars"),
+            ((pl.col(column).drop_nulls() + 1).product() - 1).alias("return"),
+        )
+        .with_columns((pl.col("n") == pl.col("bars")).alias("full"))
+        .sort(*keys, "period")
+    )
+
+
+def describe(frame: pl.DataFrame, periods_per_year: float, *, column: str = "net") -> pl.DataFrame:
+    """One row per `(trial, ticker)`: CAGR, Sharpe, Sortino, Calmar, Omega, max drawdown, Ulcer, drawdown duration.
+
+    Sharpe and Sortino annualised by √periods_per_year; `drawdown_periods` in
+    bars. A description of each trial, beside `studies.summary`, which feeds
+    the Deflated Sharpe Ratio.
+    """
+    utils.require(frame, ("trial", "ticker", column), "pass a trial frame from gr.studies")
+    rows = []
+    for (trial, ticker), part in frame.partition_by("trial", "ticker", as_dict=True, maintain_order=True).items():
+        r = part[column].drop_nulls()
+        sr, so = sharpe(r), sortino(r)
+        rows.append(
+            {
+                "trial": trial,
+                "ticker": ticker,
+                "periods": r.len(),
+                "cagr": cagr(r, periods_per_year),
+                "sharpe": annualize(sr, periods_per_year),
+                "sortino": annualize(so, periods_per_year),
+                "calmar": calmar(r, periods_per_year),
+                "omega": omega(r),
+                "max_drawdown": max_drawdown(r),
+                "ulcer": ulcer_index(r),
+                "drawdown_periods": drawdown_duration(r),
+            }
+        )
+    schema = {"trial": pl.String, "ticker": pl.String, "periods": pl.Int64, "drawdown_periods": pl.Int64}
+    return pl.DataFrame(rows, schema_overrides=schema, infer_schema_length=None)

@@ -54,7 +54,7 @@ def a_buy_and_hold_is_a_trial():
         }
     )
     got = studies.trial(bars, pl.lit(1.0), "buy and hold")
-    assert got.columns == ["trial", "ticker", "ts", "position", "bar_return", "gross", "net"]
+    assert got.columns == ["trial", "ticker", "ts", "close_ts", "position", "bar_return", "gross", "cost", "net"]
     assert set(got["trial"]) == {"buy and hold"}
 
 

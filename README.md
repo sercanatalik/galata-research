@@ -330,6 +330,15 @@ still works and `gr.models` is refused by name.
 | `hayashi_yoshida(x, y, lags)` | `lag_ms, hy, rho` | each series on its own clock, y's shifted by θ; the overlap sums telescoped, exact against the double sum |
 | `lead_lag(x, y, lags, *, every)` | `lead_ms, rho_lead, rho_0, llr` per bucket | positive lead, or LLR above 1, means x moves first; within ±50 ms is clock skew |
 
+### Trades and descriptions: `gr.trades`, `gr.stats`
+
+| Call | Returns | The rule it owns |
+|---|---|---|
+| `trades.table(trial, bars=None)` | one row per trade: `side, entry_ts, exit_ts, bars, gross, cost, funding, net, open, spans_gap`; with bars, `entry_price, mae, mfe` | a trade is a stretch held on one side, a resize included; a flip's cost split by size and an exit's charged to the trade that left, so closed trades' costs sum to the frame's; excursions from the deciding close over the held bars only |
+| `trades.summary(trial, bars=None, *, periods_per_year)` | per `(trial, ticker)`: win rate (all, long, short), profit factor, win/loss, mean and median, streaks, lengths, exposure, trades per year, mean MAE and MFE | closed trades only; a trial with no trade keeps its row; a ratio with no denominator is null |
+| `stats.sortino`, `cagr`, `calmar`, `omega`, `ulcer_index`, `drawdown_duration` | one figure per series | Sortino's downside deviation over all N periods (Red Rock's 4.417 pinned) |
+| `stats.rolling_sharpe(trial, window)`, `period_returns(trial, every)`, `describe(trial, periods_per_year)` | a Sharpe per full window; compounded returns per calendar period with `full`; one row of the above per trial | a window or a month cut by a hole is null or not `full`, never shortened |
+
 ### Reference data: `gr.reference` and `galata-fetch`
 
 The record holds one venue, 1h bars from 2026-03, and a week of top of book.
@@ -391,7 +400,8 @@ Over the busiest BTC minute, 3,426 trades matched with a median staleness of
 
 ## Studies
 
-`gr.stats` (Sharpe, PSR, the expected maximum Sharpe, DSR, PBO, the permutation percentile, the Reality Check and SPA, the performance fee, maximum drawdown),
+`gr.stats` (Sharpe, PSR, the expected maximum Sharpe, DSR, PBO, the permutation percentile, the Reality Check and SPA, the performance fee, maximum drawdown; and, as descriptions, Sortino, Calmar, Omega, the Ulcer index, drawdown duration, rolling Sharpe and calendar-period returns),
+`gr.trades` (a trial's positions as trades, each charged its own turnover, with MAE and MFE; win rate, profit factor, streaks and exposure per trial),
 `gr.backtest.returns` (next-bar, fees on turnover, holes not spanned,
 `modelled` on every row; settled funding charged on every hour held when
 `funding=gr.market.funding(...)` is passed, and `funding_charged` says where
@@ -402,6 +412,7 @@ trial, so N is the true N) back these notebooks:
 |---|---|
 | `candles.py`, `ticks.py`, `gaps.py`, `clocks.py`, `account.py` | what the record holds, and how the loaders read it |
 | `moving_average.py`, `momentum.py` | a Sharpe landscape for two example families |
+| `trades.py` | what do the trials' trades look like? Sortino, Calmar, Ulcer and drawdown length per trial, win rate, profit factor and MAE/MFE per trade, the month-by-month table and a rolling Sharpe. Descriptions, not verdicts |
 | `deflated_sharpe.py` | does the best of 66 trials beat what luck would give? DSR 0.67 daily: **no** |
 | `overfitting.py` | does choosing on the past choose well? PBO 0.69 over 12,870 splits: **no** |
 | `donchian_ensemble.py` | the pre-registered test below |

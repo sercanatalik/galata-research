@@ -152,10 +152,12 @@ These are the signal families the framework cannot run. The record holds their d
 
 One OpenSpec change per item, as in [`roadmap`](./roadmap.md). Each item lands with a notebook.
 
-- [ ] 1. **`score-the-trades`**: `gr.stats` adds Sortino, Calmar, Omega, Ulcer, drawdown duration, rolling Sharpe,
+- [x] 1. **`score-the-trades`**: `gr.stats` adds Sortino, Calmar, Omega, Ulcer, drawdown duration, rolling Sharpe,
   monthly table. A new `gr.trades` turns `studies.runs` into trades with win rate, profit factor, MAE/MFE
   (from bar highs and lows), durations and streaks. Each figure is checked against a hand-worked case.
   No new data, no new trials: the cheapest gain.
+  Done 2026-10-03: `gr.trades` (`table`, `summary`), the `gr.stats` additions, and `notebooks/trades.py`. `studies.trial`
+  now carries `close_ts` and `cost`, which a trade needs.
 - [ ] 2. **`indicator-signals`**: `gr.indicators` (EMA, RSI, MACD, Bollinger, ATR, Supertrend, stochastic, z-score)
   as polars expressions over `ticker`. Each value is null for a window that spans a hole. Families A1–A5 go in
   `gr.studies`, and one notebook runs them through DSR, PBO and the permuted-bars test. Register first.
