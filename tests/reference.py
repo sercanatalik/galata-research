@@ -773,3 +773,20 @@ def a_premium_kline_is_read():
     )), day="2024-01-01")  # fmt: skip
     assert got.columns == list(_sources.PREMIUM)
     assert got["close"][0] == 0.00089825 and got["close_ts"][0] == utc("2024-01-01T00:01")
+
+
+def a_body_cut_off_mid_transfer_is_asked_again(monkeypatch):
+    import http.client
+
+    calls = []
+
+    def flaky(url, method, agent="galata-fetch"):
+        calls.append(url)
+        if len(calls) == 1:
+            raise http.client.IncompleteRead(b"x" * 10, 5)
+        return fetch.Response(200, b"whole", 5)
+
+    monkeypatch.setattr(fetch, "_transport", flaky)
+    monkeypatch.setattr(fetch.time, "sleep", lambda _: None)
+    got = fetch.get(_depth_url("2026-09-20"))
+    assert got.body == b"whole" and len(calls) == 2

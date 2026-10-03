@@ -24,6 +24,7 @@ opens a socket.
 
 import argparse
 import hashlib
+import http.client
 import os
 import sys
 import time
@@ -65,14 +66,15 @@ def _transport(url: str, method: str, agent: str = "galata-fetch") -> Response:
 
 
 def get(url: str, method: str = "GET", *, hosts: tuple[str, ...] = HOSTS, agent: str = "galata-fetch") -> Response:
-    """A listed host's answer, retried on a network error or a 5xx; any other host is refused."""
+    """A listed host's answer, retried on a network error, a truncated body or a 5xx; any other host is refused."""
     host = urlsplit(url).hostname
     if host not in hosts:
         raise Refused(f"{host} is not an archive this command fetches from; it fetches from {', '.join(hosts)}")
     for pause in (*_RETRIES, None):
         try:
             response = _transport(url, method, agent)
-        except (urllib.error.URLError, TimeoutError, ConnectionError):
+        # A body cut off mid-transfer (IncompleteRead) is retried like any network error.
+        except (urllib.error.URLError, TimeoutError, ConnectionError, http.client.IncompleteRead):
             if pause is None:
                 raise
             time.sleep(pause)
