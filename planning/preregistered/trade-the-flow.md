@@ -130,7 +130,7 @@ move into Bybit's next second. OFI predicts the next 10 seconds, but explains
 | H1 E, N = 12 | `ofi z>3 60s` | −10.55 | −9.85 | +0.45 / +1.15 | 454 / 300 |
 | H3 E, N = 18 | `lead >10bps 1s` | −10.01 | −10.01 | +0.99 / +0.99 | 252 / 1,110 |
 
-All 60 rule × ticker cells lose between 9.85 and 11.19 bps a trade net, each
+All 30 rule × ticker cells (15 rules) lose between 9.85 and 11.19 bps a trade net, each
 with t below −9. Every rule's gross is within about a basis point of zero.
 The signals are real and point the right way. The gross is that number
 after crossing the spread at the decision second's own touch, which is
