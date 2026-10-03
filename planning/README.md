@@ -18,3 +18,4 @@ proposed.
 |---|---|---|
 | [`galata-research`](./galata-research.md) | 2026-09-25 | redesigned: a Python research environment over the datawatch record |
 | [`roadmap`](./roadmap.md) | 2026-09-27 | the common library (`gr.utils`, `gr.timeseries`, `gr.models`) and the GARCH study that is its first user |
+| [`investing-algorithm-framework`](./investing-algorithm-framework.md) | 2026-10-03 | coding-kitties' framework surveyed: its features and signals against `gr`, and what to onboard |
