@@ -180,8 +180,11 @@ One OpenSpec change per item, as in [`roadmap`](./roadmap.md). Each item lands w
   Hyperliquid's own mark − oracle waits for the record to hold months of marks.
   **Run once, 2026-10-03** (`42bd9de`): H1 supported, H2 supported, H3 not supported. The carry was real and is
   compressing (2026: ~2–3% a year); timing it on funding added nothing over holding it.
-- [ ] 5. **`trade-the-flow`**: B4–B6 on trades, quotes and the Bybit book. Costs come from `liquidity.effective`,
+- [x] 5. **`trade-the-flow`**: B4–B6 on trades, quotes and the Bybit book. Costs come from `liquidity.effective`,
   not a flat fee.
+  Built and run 2026-10-03 on Bybit's book and Binance's trades (reference archives, 12 days): `gr.flow`,
+  `notebooks/flow.py`, registered alone first (`planning/preregistered/trade-the-flow.md`, `5c4e7c2`). **Every
+  statistical part supported, no economic part**: the edges are real and under 1.2 bps gross against 11 bps of taker fees.
 - [ ] 6. **`rank-the-universe`**: lifts D8 (operator's call). `gr.factors` adds cross-sectional `rank`, `top`, `zscore`,
   `neutralize` over `ts`, and A8–A11 run on BTC, ETH, HYPE and the reference venues.
 - [ ] 7. **`build-the-portfolio`**: A12 on DCC Σ per origin. Inverse-vol, HRP (López de Prado 2016, pinned to its

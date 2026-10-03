@@ -92,3 +92,49 @@ counts toward N.
 
 Anything short of a part's criteria is reported as **not supported**.
 Nothing is tuned, dropped or re-run under this name.
+
+---
+
+## Result — run once, 2026-10-03, `notebooks/flow.py`
+
+*Appended after the run. Nothing above this line was changed.* Code at
+`f872b64`. Data fetched the same day into a fresh reference store: all 24
+Bybit book days and 24 Binance trade days `ok`. Two book days were first cut
+off mid-transfer and fetched again whole, after a fix to `galata-fetch`'s
+retry (`IncompleteRead`, the commit after `f872b64`). The 12 days are
+2025-10-01, 11-05, 12-03, 2026-01-07, 02-04, 03-04, 04-01, 05-06, 06-03, 07-01,
+08-05 and 09-02. That is 1,036,784 BTC seconds and 1,036,780 ETH seconds; all
+but 12 and 13 had a Binance price.
+
+### The statistical parts: **all supported**
+
+| claim | ticker | n | estimate | Newey–West t |
+|---|---|---|---|---|
+| H1 S: next-10 s return on OFI/depth | BTC | 103,668 | slope 0.019 bps per unit, R² 0.13% | 10.1 |
+| | ETH | 103,668 | slope 0.013, R² 0.03% | 5.2 |
+| H2 S: mid's error − weighted mid's, 1 s | BTC | 1,036,772 | 0.0019 bps² | 21.0 |
+| | ETH | 1,036,768 | 0.0066 bps² | 19.9 |
+| H2 S: the same, 10 s | BTC | 1,036,664 | 0.0030 bps² | 16.4 |
+| | ETH | 1,036,660 | 0.0095 bps² | 20.7 |
+| H3 S: Bybit's next second on Binance's last | BTC | 1,036,737 | slope 0.132, R² 1.6% | 43.8 |
+| | ETH | 1,036,733 | slope 0.108, R² 1.1% | 31.3 |
+
+Every p is below 1e-7. Binance's last second carries about an eighth of its
+move into Bybit's next second. OFI predicts the next 10 seconds, but explains
+0.03–0.13% of them. The weighted mid is the better mark at both horizons.
+
+### The economic parts: **neither supported**
+
+| family | best rule (mean of tickers) | BTC net bps/trade | ETH | gross before the fee, BTC / ETH | trades BTC / ETH |
+|---|---|---|---|---|---|
+| H1 E, N = 12 | `ofi z>3 60s` | −10.55 | −9.85 | +0.45 / +1.15 | 454 / 300 |
+| H3 E, N = 18 | `lead >10bps 1s` | −10.01 | −10.01 | +0.99 / +0.99 | 252 / 1,110 |
+
+All 60 rule × ticker cells lose between 9.85 and 11.19 bps a trade net, each
+with t below −9. Every rule's gross is within about a basis point of zero.
+The signals are real and point the right way. The gross is that number
+after crossing the spread at the decision second's own touch, which is
+flattering. But it is one to two orders of magnitude short of the 11 bps a
+taker pays Bybit for the round trip. **Even at a maker's 0.02% each way
+(4 bps) no rule would cover its fees.** These signals are worth something to
+a market maker's quoting or an execution schedule's timing, not as trades.
