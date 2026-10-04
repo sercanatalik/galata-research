@@ -172,6 +172,7 @@ does not carry into 2025–2026.
   secondary span, five cannot be told apart from a stock or index by the
   symbol alone: `DRAM`, `LITE`, `ON`, `POWER`, `US`. They were left in, as
   registered.
-- **Turnover.** A weekly rebalance turned over 0.75–0.93 of a gross book of 1
-  for momentum, 0.36–0.70 for the others. At 0.05% that is about 2–2.5% a year
-  of fees for momentum long/short. Fees are not what sank the rules.
+- **Turnover.** A weekly rebalance turned over, on average, between 0.43
+  (`lowvol long_only`) and 1.58 (`mom 7`, both sides) of a gross book of 1;
+  `mom 30 long_short` turned over 0.83. At 0.05% that is 1.1–4.1% a year in
+  fees, about 2.2% for the best rule. Fees are not what sank the rules.
