@@ -67,7 +67,7 @@ def the_private_name_guard_catches_a_planted_call():
 def no_notebook_calls_a_private_name():
     found = [
         f"{path.name}:{line} {name}"
-        for path in sorted(NOTEBOOKS.glob("*.py"))
+        for path in sorted(NOTEBOOKS.rglob("*.py"))
         for line, name in _private_calls(path.read_text())
     ]
     assert not found, "private names in notebooks: " + ", ".join(found)

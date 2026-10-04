@@ -8,7 +8,7 @@ machine. It argues for two OpenSpec changes, in order:
    turns `galata_research` into the shared research library (`gr.utils`,
    `gr.timeseries`, public names for what notebooks now reach for privately).
 2. **`study-garch-volatility`**: `gr.models.vol`, `gr.models.evaluate`, and
-   `notebooks/garch.py`. The GARCH family, walk-forward forecasts at
+   `notebooks/volatility/garch.py`. The GARCH family, walk-forward forecasts at
    several horizons, a forecast scorecard, and a vol-targeting backtest,
    with the theory and the literature in the notebook.
 
@@ -65,18 +65,18 @@ Later work is listed under [Phase 2](#phase-2-follow-ups).
 
 One OpenSpec change per item, each explored (with a literature and docs pass), proposed, applied
 and archived before the next starts. Per `openspec/config.yaml`, each lands with a marimo notebook
-that uses it. The GARCH study grows in `notebooks/garch.py` from item 4 onward.
+that uses it. The GARCH study grows in `notebooks/volatility/garch.py` from item 4 onward.
 
 - [x] 1. **`shape-the-common-library`**: Phase 0. `gr.utils`, `gr.timeseries` (periods_per_year,
   returns, bootstrap moved from `stats`), public `studies.trial` / `replay` / `runs`, notebooks
   off private names. No behaviour changes.
 - [x] 2. **`measure-realized-volatility`**: `timeseries.realized` (CC, Parkinson, GK, RS, YZ,
   realized range, RV from finer bars), `ewma_vol`, `ewma_max`, `signature`. Notebook
-  `notebooks/volatility.py`.
+  `notebooks/volatility/volatility.py`.
 - [x] 3. **`walk-forward-origins-and-seasonality`**: `timeseries.walk_forward_origins`
   (rolling/expanding, refit every k) and `deseasonalize` (hour-of-week, fitted on a window).
 - [x] 4. **`fit-the-garch-family`**: the `[models]` extra, lazy `gr.models`, the `_arch` polars
-  boundary, `gr.models.vol.garch` in-sample fits and summaries. `notebooks/garch.py` ①–⑤b.
+  boundary, `gr.models.vol.garch` in-sample fits and summaries. `notebooks/volatility/garch.py` ①–⑤b.
 - [x] 5. **`forecast-walking-forward`**: `gr.models.vol.walk_forward`, horizons,
   `fitted_through`, `after_gap`, simulation for EGARCH/APARCH, caching. Notebook ⑥–⑦.
 - [x] 6. **`forecast-from-realized-measures`**: `gr.models.vol.har` (HAR-RV, SHAR, HARQ) in the
@@ -157,7 +157,7 @@ depend on it:
   its own parameters; step 2 recovers its (a, b) to 1e-3 from its residuals). cDCC's target is profiled (Aielli's
   Def. 3.3), not iterated. On the record at 4h: all six a 0.0055, b 0.9838 (half-life 42 bars); the main dex alone
   a + b 0.9998 under DCC against 0.9955 under cDCC. A fit takes about a second, a walk of 80 refits 14 s.
-  `notebooks/correlation.py`. Step 1 takes the arch models only; `cgarch`, `betat`, `msgarch`, `rgarch` are refused.
+  `notebooks/correlation/correlation.py`. Step 1 takes the arch models only; `cgarch`, `betat`, `msgarch`, `rgarch` are refused.
   **Compared, as registered — 2026-09-28** (`compare-the-correlations`; `planning/preregistered/correlation-models.md`,
   committed with the library at `c15e3b9` before any loss existed). BTC, ETH and HYPE at 4h, 1,985 origins from
   2025-11-01, GJR-t margins, refit daily. DCC has the lowest mean multivariate QLIKE of the six estimators. The
@@ -166,7 +166,7 @@ depend on it:
   0.97 for each), nor the minimum-variance portfolio (H3, Holm p 0.34). The 90% MCS excludes only CCC. Frobenius,
   reported and not tested, favours EWMA (p 1e-10): large variances dominate it. **Secondary, descriptive:** on all
   six instruments (786 origins from 2026-05-20), CCC has the lowest QLIKE, ahead of cDCC and DCC. Tier 16 runs DCC
-  on those six at 5m, 1h and 4h. `notebooks/correlation_study.py`.
+  on those six at 5m, 1h and 4h. `notebooks/correlation/correlation_study.py`.
   **Read point-in-time — 2026-09-28** (`read-the-signals`). `gr.signals` reads galata-datawatch's `kind=signals`
   on two clocks: `ts`, the grid position, and `computed_ts`, when the figure became known. `history(…, as_of=)`
   keeps what had been computed by then, and a figure computed twice is its latest within the bound. `known_at(when)`
@@ -259,7 +259,7 @@ the loop's second item:
   - **H9 (uSPA p < 0.05):** 1 of 4 cells (ETH 4h only, p 0.000).
   - **H10 (proxy robustness):** robust — 7 of 8 verdicts match across the r² and scaled-RV₅ proxies.
   - **Verdict:** *neither* by the registered "what would count" rule. Separating jumps does not clearly improve HAR.
-  - **Notebook:** `notebooks/har_long.py`, item-34 section; results appended to `planning/preregistered/har-jumps.md`.
+  - **Notebook:** `notebooks/volatility/har_long.py`, item-34 section; results appended to `planning/preregistered/har-jumps.md`.
   - **Branch:** `separate-the-jumps` merged to `main`, archived and pushed.
 
 ---
@@ -607,7 +607,7 @@ targeting input on BTC (an absence, unverified), so this comparison is modestly 
 
 ### The notebook
 
-`notebooks/garch.py`, one ticker at a time.
+`notebooks/volatility/garch.py`, one ticker at a time.
 
 ```
  controls: ticker · bars · estimation [start━━end] · split · window rolling(L)|expanding
@@ -739,7 +739,7 @@ Each is its own change, once Phase 1 has said something.
 
 ### Outcomes (2026-09-27)
 
-What each risk turned into, on BTC (`notebooks/garch.py`, ⑬, which computes these):
+What each risk turned into, on BTC (`notebooks/volatility/garch.py`, ⑬, which computes these):
 
 - **HAR did win the short horizons**, and the longer ones: HARQ, HAR and CARR lead QLIKE at 1, 7 and 30 days
   at 1d (0.95, ~0.75, ~0.45 of EWMA's). The Model Confidence Set cannot separate the nine models at one day.

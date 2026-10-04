@@ -11,13 +11,13 @@ def _check(path: Path) -> subprocess.CompletedProcess:
 
 def every_notebook_passes_marimo_check():
     # A name defined in two cells stops a notebook from running at all; it
-    # reached notebooks/garch.py twice during the volatility study.
+    # reached notebooks/volatility/garch.py twice during the volatility study.
     failing = []
-    for path in sorted(NOTEBOOKS.glob("*.py")):
+    for path in sorted(NOTEBOOKS.rglob("*.py")):
         run = _check(path)
         if run.returncode != 0 or "critical" in run.stdout:
             first = next((line for line in run.stdout.splitlines() if line.strip()), run.stderr.strip()[:200])
-            failing.append(f"{path.name}: {first}")
+            failing.append(f"{path.relative_to(NOTEBOOKS)}: {first}")
     assert not failing, "marimo check: " + "; ".join(failing)
 
 
@@ -40,8 +40,16 @@ def _too_long(paths) -> list[str]:
 
 def no_notebook_grows_past_fifteen_hundred_lines():
     # One notebook per question: liquidity.py reached 2,290 lines and 18 sections before it was split.
-    long = _too_long(sorted(NOTEBOOKS.glob("*.py")))
+    long = _too_long(sorted(NOTEBOOKS.rglob("*.py")))
     assert not long, "notebooks past the limit: " + "; ".join(long)
+
+
+def every_notebook_lives_in_a_category_folder():
+    # The top level holds only the category folders (record, backtests,
+    # volatility, correlation, portfolio, liquidity), so a new notebook
+    # has to say which kind of study it is.
+    stray = sorted(p.name for p in NOTEBOOKS.glob("*.py"))
+    assert not stray, "notebooks outside a category folder: " + "; ".join(stray)
 
 
 def the_size_guard_catches_a_notebook_that_grew(tmp_path):

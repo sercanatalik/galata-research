@@ -118,17 +118,17 @@ One OpenSpec change per item, as in [`roadmap`](./roadmap.md). Each item lands w
   monthly table. A new `gr.trades` turns `studies.runs` into trades with win rate, profit factor, MAE/MFE
   (from bar highs and lows), durations and streaks. Each figure is checked against a hand-worked case.
   No new data, no new trials: the cheapest gain.
-  Done 2026-10-03: `gr.trades` (`table`, `summary`), the `gr.stats` additions, and `notebooks/trades.py`. `studies.trial`
+  Done 2026-10-03: `gr.trades` (`table`, `summary`), the `gr.stats` additions, and `notebooks/backtests/trades.py`. `studies.trial`
   now carries `close_ts` and `cost`, which a trade needs.
 - [x] 2. **`indicator-signals`**: `gr.indicators` (EMA, RSI, MACD, Bollinger, ATR, Supertrend, stochastic, z-score)
   as polars expressions over `ticker`. Each value is null for a window that spans a hole. Families A1–A5 go in
   `gr.studies`, and one notebook runs them through DSR, PBO and the permuted-bars test. Register first.
-  Built 2026-10-03: `gr.indicators`, the five families in `gr.studies`, `notebooks/indicator_signals.py`. Registered alone
+  Built 2026-10-03: `gr.indicators`, the five families in `gr.studies`, `notebooks/backtests/indicator_signals.py`. Registered alone
   first (`planning/preregistered/indicator-signals.md`, `020ef19`); **the run on the record is still to do**, where the record lives.
 - [x] 3. **`overlay-the-positions`**: stop-loss (fixed, trailing), take-profit, cooldown, scale-in, as functions on a
   position series. Stops trigger on the bar's high or low, never on the close that decided the position.
   Every overlay variant counts as a trial.
-  Built 2026-10-03: `gr.overlays` (`apply`, `grid`), `studies.shared_days`, `notebooks/overlays.py`. Registered alone first
+  Built 2026-10-03: `gr.overlays` (`apply`, `grid`), `studies.shared_days`, `notebooks/backtests/overlays.py`. Registered alone first
   (`planning/preregistered/overlay-the-positions.md`, `f96b81a`): 12 overlays on three bases, N = 78. **The run on the
   record is still to do.** Two choices made after the registration, stated in the notebook: an overlay that never fired
   equals its base and is left out of that base's Reality Check (counted); and **scale-in is not built**, since these
@@ -136,7 +136,7 @@ One OpenSpec change per item, as in [`roadmap`](./roadmap.md). Each item lands w
 - [x] 4. **`trade-the-funding`**: B1–B3 on settled funding and marks, through `join_recv`.
   Built 2026-10-03, on **Binance's published archives, not the record**: the record's settled funding is days long,
   and settled point 8 rules out a venue's API. `galata-fetch funding|premium binance-um` (`cdacf2c`), `gr.carry`
-  (`b46db00`), `notebooks/carry.py`. Registered alone first (`planning/preregistered/trade-the-funding.md`, `d82ee2b`):
+  (`b46db00`), `notebooks/backtests/carry.py`. Registered alone first (`planning/preregistered/trade-the-funding.md`, `d82ee2b`):
   H1 hedged carry (N = 26), H2 persistence, H3 the fade (N = 16). B3 (basis) is H1's hedged leg, the premium index;
   Hyperliquid's own mark − oracle waits for the record to hold months of marks.
   **Run once, 2026-10-03** (`42bd9de`): H1 supported, H2 supported, H3 not supported. The carry was real and is
@@ -144,19 +144,19 @@ One OpenSpec change per item, as in [`roadmap`](./roadmap.md). Each item lands w
 - [x] 5. **`trade-the-flow`**: B4–B6 on trades, quotes and the Bybit book. Costs come from `liquidity.effective`,
   not a flat fee.
   Built and run 2026-10-03 on Bybit's book and Binance's trades (reference archives, 12 days): `gr.flow`,
-  `notebooks/flow.py`, registered alone first (`planning/preregistered/trade-the-flow.md`, `5c4e7c2`). **Every
+  `notebooks/backtests/flow.py`, registered alone first (`planning/preregistered/trade-the-flow.md`, `5c4e7c2`). **Every
   statistical part supported, no economic part**: the edges are real and under 1.2 bps gross against 11 bps of taker fees.
 - [x] 6. **`rank-the-universe`**: lifts D8 (operator's call). `gr.factors` adds cross-sectional `rank`, `top`, `zscore`,
   `neutralize` over `ts`, and A8–A11 run on BTC, ETH, HYPE and the reference venues.
   D8 lifted by the operator 2026-10-04 ("use all available tickers"). Registered alone first
   (`planning/preregistered/rank-the-universe.md`, `d333e55`): every Binance USDT perpetual, point in time with delisted
   coins, the 50 most liquid each day, 6 rankings × 2 sides (N = 12). Built: `galata-fetch daily|funding binance-um --all`,
-  `gr.factors`, `notebooks/universe.py` (`068cd1f`). **Run once, 2026-10-04: not supported.** The best on 2020–2024,
+  `gr.factors`, `notebooks/portfolio/universe.py` (`068cd1f`). **Run once, 2026-10-04: not supported.** The best on 2020–2024,
   30-day momentum long/short, Sharpe 0.86, DSR 0.70, Reality Check p 0.09, PBO 0.86; momentum reversed in 2025–2026.
 - [x] 7. **`build-the-portfolio`**: A12 on DCC Σ per origin. Inverse-vol, HRP (López de Prado 2016, pinned to its
   example) and minimum variance, scored with `gr.stats`.
   Registered alone first (`planning/preregistered/build-the-portfolio.md`, `b63b2ad`), built (`c73d595`:
-  `gr.models.portfolio`, `notebooks/portfolio.py`) and **run once, 2026-10-04: H1, H2 and H3 not supported.** Nothing
+  `gr.models.portfolio`, `notebooks/portfolio/portfolio.py`) and **run once, 2026-10-04: H1, H2 and H3 not supported.** Nothing
   beats 1/N after the search; HRP's variance is above minimum variance's under every Σ; DCC's gain is not significant.
   HRP is pinned to a hand-worked block case: the paper's own example is simulated and cannot be reproduced.
 

@@ -30,7 +30,8 @@ jobs:
         run: uv sync --locked
       - name: Tests
         # -rs reports each skip and why, so a record test that stopped
-        # skipping for the wrong reason would show.
-        run: uv run pytest -q -rs
+        # skipping for the wrong reason would show. tests/sessions.py
+        # exercises gr.calendar, which refuses without the calendars extra.
+        run: uv run --extra calendars pytest -q -rs
       - name: Notebooks
-        run: uv run marimo check notebooks/*.py
+        run: uv run marimo check notebooks/*/*.py

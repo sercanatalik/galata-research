@@ -2,7 +2,7 @@
 
 **Written 2026-09-27**, after `fetch-reference-market-data` (archived) put Binance depth, klines and Bybit trades
 and books beside the record. The loop runs five changes, one at a time, each explored (the web and the legacy
-repos), proposed, applied and archived before the next starts. Each lands in `notebooks/liquidity.py`.
+repos), proposed, applied and archived before the next starts. Each lands in `notebooks/liquidity/liquidity.py`.
 
 - [x] 1. **`estimate-the-spread`**: `gr.liquidity`, which covers:
   - quoted spread from quotes and the rebuilt book;

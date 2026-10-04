@@ -218,7 +218,7 @@ git clone https://github.com/sercanatalik/galata-research
 cd galata-research
 uv sync                                # add --extra models for gr.models (arch, scipy)
 uv run pytest                          # fixture tapes, plus the real record when found
-uv run marimo edit notebooks/candles.py
+uv run marimo edit notebooks/record/candles.py
 ```
 
 The record is found at `GALATA_VAR`, else `var_root` in
@@ -510,7 +510,7 @@ trial, so N is the true N) back these notebooks:
 
 **Pre-registered forward claims.** `planning/preregistered/liquidity-forward.md`
 froze seven of the liquidity study's findings on 2026-09-28, committed alone
-before the data that tests them exists. `notebooks/liquidity_forward.py` scores
+before the data that tests them exists. `notebooks/liquidity/liquidity_forward.py` scores
 them from 2026-09-29, once each sample is complete: fetch new days with
 `galata-fetch` to keep it current.
 
@@ -530,7 +530,7 @@ the studies above predate it and were run without it.
 
 ## The volatility study
 
-`notebooks/garch.py` and `notebooks/volatility.py`, built in ten changes
+`notebooks/volatility/garch.py` and `notebooks/volatility/volatility.py`, built in ten changes
 (`planning/roadmap.md`). The question: which of the GARCH family, GARCH-t and
 their variations forecasts crypto volatility best out of sample, and does a
 better forecast earn anything once it sizes a position? Each section carries
@@ -641,7 +641,7 @@ the HAC version rejects 7.25% (their 7.2%).
 
 **Replicated on ETH and HYPE, most claims hold only in part.**
 `planning/preregistered/replication.md` (commit `20fbe74`) set BTC's verdicts as
-predictions before any other ticker was run. `notebooks/replication.py` then
+predictions before any other ticker was run. `notebooks/volatility/replication.py` then
 replays `garch.py` unchanged for ETH and HYPE at 1d, 4h and 1h. ETH repeats 21
 of BTC's 28 decided verdicts, and HYPE 12 (6 differ). HYPE 1d decided nothing
 in the registered run: its EGARCH-t forecasts overflowed and `garch.py` failed.
@@ -682,7 +682,7 @@ Mazibas's genuine long memory. The hourly unit root is the daily cycle, which
 deseasonalising removes.
 
 **What survives.** ⑬ decides each claim from the notebook's own results, by
-a rule stated beside it. `notebooks/replication.py` replays that notebook,
+a rule stated beside it. `notebooks/volatility/replication.py` replays that notebook,
 unchanged, for each ticker and bar, and generates the table below
 (`survival_table`). It was run on 2026-09-28, with the record through
 2026-09-27 and the code after item 22. `yes` means the claim holds there, `no`
@@ -749,7 +749,13 @@ show (Menkveld et al. 2024, *Nonstandard Errors*, *JF* 79(3):2339–2390).
       evaluate.py  proxies, losses, DM, MZ-GLS, MCS, SPA, fluctuation, VaR/ES backtests
       discovery.py VECM, information and component shares, ILS
       intraday.py  seasonal-plus-HAR liquidity forecasts, scored against persistence
-  notebooks/       marimo, one per question
+  notebooks/       marimo, one per question, grouped by what kind of study it is
+    record/        what the record holds, and how the loaders read it
+    backtests/     signal families, overlays, and the statistics that judge a backtest
+    volatility/    realized measures, the GARCH family and HAR, and their replays
+    correlation/   covariance forecasting from the volatility fit
+    portfolio/     the cross-section and the book: ranking the universe, weighting it
+    liquidity/     the liquidity study, its claims and its forward tests
   scripts/         one-off store migrations
   tests/           fixture tapes written per test, plus claims about the real record
   planning/        features before they are changes; preregistered/ for studies; roadmap.md
@@ -777,7 +783,7 @@ Four rules shape it:
 uv sync --extra models                 # gr.models: arch and scipy
 uv run pytest -q -rs                   # every test; record tests skip without a record
 uv run pytest -m record                # only the claims about the real record
-uv run marimo check notebooks/*.py     # every notebook, as CI and tests/notebooks.py run it
+uv run marimo check notebooks/*/*.py   # every notebook, as CI and tests/notebooks.py run it
 ```
 
 - **Tests are named after the claim they defend**, such as
@@ -828,7 +834,7 @@ uv run marimo check notebooks/*.py     # every notebook, as CI and tests/noteboo
 | Phase 2: feedback-controlled targeting | done: hits the target; the Sharpe gain refuted by a registered test |
 | Phase 2: variance breaks | done: none under κ₂; persistence is not breaks |
 | Phase 2: multi-horizon confidence set | done: CARR, HARQ, HAR, GJR; GARCH and EWMA out |
-| Correlation from the volatility fit: DCC, cDCC and EWMA covariance, walked forward | done (item 25, `notebooks/correlation.py`): 4h, all six, a 0.006 and b 0.984 |
+| Correlation from the volatility fit: DCC, cDCC and EWMA covariance, walked forward | done (item 25, `notebooks/correlation/correlation.py`): 4h, all six, a 0.006 and b 0.984 |
 | DCC against the simpler estimators, registered | done: DCC beats constant correlation (R alone); against EWMA and the sample covariance, undecided |
 | The stored signals, read point-in-time (`gr.signals`) | done: `history`, `known_at`, `matrix` |
 | Replication on ETH and HYPE, registered | done: ETH 21/28, HYPE 12/28; every claim mixed |

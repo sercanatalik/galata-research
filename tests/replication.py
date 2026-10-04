@@ -10,8 +10,8 @@ NOTEBOOKS = Path(__file__).resolve().parent.parent / "notebooks"
 
 @pytest.fixture(scope="module", name="table")
 def _table():
-    sys.path.insert(0, str(NOTEBOOKS))
-    spec = importlib.util.spec_from_file_location("replication_notebook", NOTEBOOKS / "replication.py")
+    sys.path.insert(0, str(NOTEBOOKS / "volatility"))
+    spec = importlib.util.spec_from_file_location("replication_notebook", NOTEBOOKS / "volatility" / "replication.py")
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module.survival_table
