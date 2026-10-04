@@ -385,6 +385,15 @@ registered 50-rule search (`planning/preregistered/indicator-signals.md`).
 | `scores(panel, members)` | `mom 7/30/90`, `lowvol`, `resmom` (against BTC's β), `small` | each from bars up to its close; a window holding a hole is null |
 | `rebalances`, `weights`, `portfolio`, `rules` | the registered 12 and the equal-weight traded set, as trial frames under the ticker `universe` | weights fixed between weekly rebalances; turnover charged the fee on the first day held; funding charged per day held; a delisted holding earns nothing after its last bar |
 
+### Weighting a book: `gr.models.portfolio` (the `[models]` extra)
+
+| Call | Returns | The rule it owns |
+|---|---|---|
+| `ivp(cov)`, `hrp(cov)`, `minvar(cov)` | long-only weights summing to one | HRP as López de Prado (2016): single linkage on the distances between the distance matrix's columns, quasi-diagonal order, bisection by inverse cluster variance, pinned to a hand-worked block case; minimum variance with w ≥ 0 |
+| `ewma(returns, lam)` | RiskMetrics' covariance after the last row | zero mean, started from the first rows' mean outer product |
+| `book(panel, members, on)`, `schedule(start, end)` | the ex-ante book; weekly rebalance days | chosen on data known that day, never revisited |
+| `study(panel, book, on, end)` | the registered 9 (method × estimator) and 1/N, as trial frames, and the weights | Σ from data up to each rebalance's close; after a delisting every estimator starts again on the survivors, DCC walked forward afresh |
+
 ### Reference data: `gr.reference` and `galata-fetch`
 
 The record holds one venue, 1h bars from 2026-03, and a week of top of book.
@@ -466,6 +475,7 @@ trial, so N is the true N) back these notebooks:
 | `carry.py` | does funding pay? Pre-registered (`d82ee2b`), run once on Binance 2020–2026. **Hedged carry: supported** (best of 26: `always` short the perp, long the index, Sharpe 9.2 per unit notional, DSR 1.00, Reality Check p 0.002, PBO 0.00), but no timing rule beat holding it, and its income fell from 17–31% a year in 2020–21 to about 2–3% in 2026. **Funding persists** (lag-one ρ 0.85 BTC, 0.82 ETH). **The unhedged fade: not supported** (DSR 0.62, Reality Check p 0.93) |
 | `flow.py` | does order flow pay a taker? Pre-registered (`5c4e7c2`), run once on Bybit's per-second book and Binance's trades, 12 days, 2025-10 to 2026-09. **All three predict** (OFI the next 10 s, t 10.1 and 5.2; the weighted mid beats the mid, t 16–21; Binance's last second carries about an eighth of its move into Bybit's next, t 44 and 31). **No taker rule pays**: all 15 rules lose 9.9–11.2 bps a trade net on both tickers, since the gross edge is under 1.2 bps against 11 bps of fees |
 | `universe.py` | does any cross-sectional rule pay across every Binance perpetual? Pre-registered (`d333e55`), run once: the 50 most liquid each day out of 899, point in time with delisted coins, 6 rankings × long/short and long-only (N = 12), weekly, fees and funding charged. **Not supported**: the best on 2020–2024, 30-day momentum long/short, has Sharpe 0.86 but DSR 0.70, Reality Check p 0.09, PBO 0.86; in 2025–2026 every momentum rule lost |
+| `portfolio.py` | how should a fixed book be weighted? Pre-registered (`b63b2ad`): the ten most liquid Binance perpetuals at the end of 2021, weekly from 2022; inverse variance, HRP and long-only minimum variance on a 90-day sample, EWMA and DCC Σ (N = 9) against 1/N |
 | `trades.py` | what do the trials' trades look like? Sortino, Calmar, Ulcer and drawdown length per trial, win rate, profit factor and MAE/MFE per trade, the month-by-month table and a rolling Sharpe. Descriptions, not verdicts |
 | `deflated_sharpe.py` | does the best of 66 trials beat what luck would give? DSR 0.67 daily: **no** |
 | `overfitting.py` | does choosing on the past choose well? PBO 0.69 over 12,870 splits: **no** |

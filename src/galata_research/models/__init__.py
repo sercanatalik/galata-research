@@ -5,6 +5,7 @@
     gr.models.corr.walk_forward(returns, model="gjr", split=t)  # Σ from the same fit (DCC)
     gr.models.memory.qu_test(x)  # true long memory against level shifts (Qu 2011)
     gr.models.levels.walk_forward(returns, split=t, every=30)  # random level shift forecasts (Lu and Perron 2010)
+    gr.models.portfolio.hrp(cov)  # Hierarchical Risk Parity (López de Prado 2016)
 
 Loaded on first use, so the core never needs numpy. pandas, which arch
 returns, stays inside `_arch` and never reaches a caller.
@@ -18,6 +19,6 @@ try:
 except ImportError as missing:
     raise Refused(f"gr.models needs the models extra ({missing.name} is missing): uv sync --extra models") from None
 
-from . import corr, discovery, evaluate, intraday, levels, memory, vol
+from . import corr, discovery, evaluate, intraday, levels, memory, portfolio, vol
 
-__all__ = ["corr", "discovery", "evaluate", "intraday", "levels", "memory", "vol"]
+__all__ = ["corr", "discovery", "evaluate", "intraday", "levels", "memory", "portfolio", "vol"]
