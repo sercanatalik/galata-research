@@ -87,3 +87,68 @@ Anything short of a hypothesis's criterion is reported as **not supported**.
 maximum drawdown and Ulcer index (`gr.stats.describe`); its weights' effective
 number of coins (1/Σw²); its mean turnover; the funding it paid; and how each
 behaved through the coin delisted in the span, if any.
+
+---
+
+## Result — run once, 2026-10-04, `notebooks/portfolio.py`
+
+*Appended after the run. Nothing above this line was changed.* Code at
+`c73d595`, on the reference store fetched for `rank-the-universe` (899
+perpetuals). The run took 157 s.
+
+**The book**, chosen on 2021-12-31: **BTC, ETH, XRP, BNB, ADA, DOGE, ATOM,
+LINK, EOS, LTC.** The registered 500-bar rule, there so DCC could be fitted,
+left out several of that day's most liquid perpetuals that were younger than
+500 days: LUNA (third by 30-day dollar volume, $1.64bn a day, 338 bars),
+MATIC, SAND, NEAR and SOL. **So the book did not hold LUNA through its May 2022
+collapse.** The rule was registered for another reason, but it is a selection
+on age that kept the year's worst event out, and this result says nothing
+about how the methods would have weathered it. **EOS** traded until
+2025-05-21 (Binance's EOS perpetual ended there) and is the one delisting in
+the span. 1,733 days, 2022-01-02 to 2026-09-30.
+
+### H1, beating 1/N: **not supported**
+
+White's Reality Check over the 9 against 1/N: **p = 0.167** (best by mean
+excess: `ivp sample`). Every one of the 9 had a higher Sharpe than 1/N's 0.16,
+and a smaller drawdown or one within two points of it. But no optimised book
+beat equal weight by more than the search over 9 explains.
+
+### H2, HRP below minimum variance: **not supported, and the opposite holds**
+
+| estimator | DM (HRP's squared returns − minvar's), h = 7 | one-sided p for HRP lower |
+|---|---|---|
+| sample | +7.19 | 1.000 |
+| ewma | +4.64 | 1.000 |
+| dcc | +5.95 | 1.000 |
+
+HRP's realised variance is significantly **higher** than long-only minimum
+variance's under every estimator. HRP spreads the book over 7.1–7.6
+effective coins, while minimum variance concentrates it in 1.8–2.1.
+
+### H3, DCC below the sample for minimum variance: **not supported**
+
+DM −1.42 for `minvar dcc` against `minvar sample`, a one-sided **p = 0.077**.
+Lower, as Engle's model predicts, but short of 0.05.
+
+### Described, not tested
+
+| trial | volatility | Sharpe | CAGR | max drawdown | Ulcer | effective coins | turnover / rebalance | funding paid |
+|---|---|---|---|---|---|---|---|---|
+| minvar dcc | 50.1% | 0.39 | +7.0% | 64.7% | 0.35 | 1.84 | 0.38 | 19.5% |
+| minvar sample | 51.5% | 0.47 | +11.6% | 60.5% | 0.30 | 2.09 | 0.21 | 14.3% |
+| minvar ewma | 52.8% | 0.32 | +3.2% | 61.0% | 0.34 | 1.94 | 0.46 | 14.1% |
+| ivp dcc | 58.2% | 0.18 | −6.5% | 66.6% | 0.42 | 7.46 | 0.16 | 20.1% |
+| hrp ewma | 58.4% | 0.26 | −1.7% | 69.1% | 0.41 | 7.06 | 0.28 | 18.1% |
+| ivp ewma | 58.4% | 0.22 | −4.1% | 67.3% | 0.41 | 7.53 | 0.15 | 19.8% |
+| hrp sample | 58.6% | 0.25 | −2.6% | 68.1% | 0.41 | 7.41 | 0.18 | 18.4% |
+| ivp sample | 58.7% | 0.26 | −2.3% | 66.8% | 0.40 | 7.76 | 0.07 | 19.6% |
+| hrp dcc | 58.9% | 0.20 | −5.5% | 68.7% | 0.43 | 7.56 | 0.24 | 18.8% |
+| 1/N | 64.0% | 0.16 | −10.1% | 68.7% | 0.47 | 9.70 | 0.47 | 21.1% |
+
+Every long-only book of these coins lost 60–69% at its worst: the 2022 bear
+market is in the span, and weighting only changed how much. Minimum
+variance's lower volatility comes from concentration, about two effective
+coins (mostly BTC with one other), not from diversification. Over the 10 days
+to EOS's last bar, the minimum-variance books gained 1.5–2.2% while 1/N lost
+5.3%. Minimum variance had already moved EOS's weight to 0.
