@@ -41,9 +41,12 @@ from .. import _root as _record_root
 from .._errors import Refused
 from . import _events, _instruments, _manifest, _root, _sources
 
-HOSTS = ("data.binance.vision", "public.bybit.com", "quote-saver.bycsi.com", "static.okx.com")
+# s3-ap-northeast-1.amazonaws.com is the bucket behind data.binance.vision, asked only for its listing.
+HOSTS = ("data.binance.vision", "s3-ap-northeast-1.amazonaws.com", "public.bybit.com", "quote-saver.bycsi.com", "static.okx.com")
 HEAVY = {("bybit-linear", "book"), ("binance-um", "trades"), ("okx-swap", "trades")}
 MAX_JOBS = 4
+MAX_JOBS_LIGHT = 16  # for the kinds of a few kilobytes a file
+_FLUSH = 500  # manifest rows written together
 _WEEKDAYS = ("mon", "tue", "wed", "thu", "fri", "sat", "sun")
 _RETRIES = (1.0, 2.0, 4.0)
 
@@ -83,6 +86,43 @@ def get(url: str, method: str = "GET", *, hosts: tuple[str, ...] = HOSTS, agent:
             return response
         time.sleep(pause)
     raise AssertionError("unreachable")
+
+
+def listing(prefix: str) -> tuple[list[str], list[str]]:
+    """The archive's sub-prefixes and keys one level under `prefix`, every page of them."""
+    import re as _re
+
+    prefixes: list[str] = []
+    keys: list[str] = []
+    marker = ""
+    while True:
+        response = get(_sources.listing_url(prefix, marker))
+        if response.status != 200:
+            raise Refused(f"the archive's listing of {prefix} answered HTTP {response.status}")
+        text = response.body.decode()
+        prefixes += [p for p in _re.findall(r"<Prefix>([^<]*)</Prefix>", text) if p != prefix]
+        keys += _re.findall(r"<Key>([^<]*)</Key>", text)
+        if "<IsTruncated>true</IsTruncated>" not in text:
+            return prefixes, keys
+        found = _re.search(r"<NextMarker>([^<]*)</NextMarker>", text)
+        marker = found.group(1) if found else (keys or prefixes)[-1]
+
+
+def universe(kind: str) -> list[str]:
+    """Every USDT perpetual the archive holds a kind for, as base-asset tickers, delisted ones included."""
+    prefixes, _ = listing(_sources.monthly_prefix(kind))
+    symbols = sorted(p.rstrip("/").rsplit("/", 1)[1] for p in prefixes)
+    return [s.removesuffix("USDT") for s in symbols if s.endswith("USDT") and len(s) > 4]
+
+
+def held_months(kind: str, ticker: str) -> list[date]:
+    """The months the archive holds a monthly kind for one ticker, from its listing: no month is guessed."""
+    import re as _re
+
+    symbol = _instruments.instrument("binance-um", ticker).symbol
+    _, keys = listing(_sources.monthly_prefix(kind, symbol))
+    months = {_re.search(r"-(\d{4})-(\d{2})\.zip$", k) for k in keys if k.endswith(".zip")}
+    return sorted(date(int(m.group(1)), int(m.group(2)), 1) for m in months if m)
 
 
 def days_between(first: date, last: date) -> list[date]:
@@ -318,8 +358,23 @@ def run(argv: list[str] | None = None, say=print) -> int:
     args = _parser().parse_args(argv)
     if args.to < getattr(args, "from"):
         raise Refused("--to is before --from")
-    if not 1 <= args.jobs <= MAX_JOBS:
-        raise Refused(f"--jobs {args.jobs} is outside 1..{MAX_JOBS}")
+    most = MAX_JOBS_LIGHT if args.kind in _instruments.LIGHT else MAX_JOBS
+    if args.jobs is None:
+        args.jobs = most
+    if not 1 <= args.jobs <= most:
+        raise Refused(f"--jobs {args.jobs} is outside 1..{most} for {args.kind}")
+    months: dict[str, list[date]] | None = None
+    if args.all:
+        if args.tickers:
+            raise Refused("--all names every ticker the archive holds; give no tickers with it")
+        if args.venue != _instruments.OPEN_VENUE or args.kind not in _instruments.MONTHLY:
+            raise Refused(f"--all lists {_instruments.OPEN_VENUE}'s monthly kinds ({', '.join(sorted(_instruments.MONTHLY))}) only")
+        args.tickers = universe(args.kind)
+        say(f"the archive lists {len(args.tickers)} USDT perpetuals with {args.kind}")
+        with ThreadPoolExecutor(max_workers=args.jobs) as pool:
+            months = dict(zip(args.tickers, pool.map(lambda t: held_months(args.kind, t), args.tickers), strict=True))
+    elif not args.tickers:
+        raise Refused("name the tickers, or give --all")
     for ticker in args.tickers:
         _instruments.instrument(args.venue, ticker)
     _instruments.first_day(args.venue, args.kind, args.tickers[0])
@@ -331,16 +386,12 @@ def run(argv: list[str] | None = None, say=print) -> int:
     work: list[tuple[str, date]] = []
     skipped = 0
     for ticker in args.tickers:
-        for day in plan(
-            args.kind,
-            args.venue,
-            ticker,
-            getattr(args, "from"),
-            args.to,
-            args.days,
-            args.sample,
-            say,
-        ):
+        asked = plan(args.kind, args.venue, ticker, getattr(args, "from"), args.to, args.days, args.sample, say)
+        if months is not None:
+            # Only the months the listing shows: a delisted coin's months stop where its archive does.
+            listed = set(months[ticker])
+            asked = [d for d in asked if d in listed]
+        for day in asked:
             row = held.get((args.kind, args.venue, ticker, day))
             if (
                 row is None
@@ -363,6 +414,7 @@ def run(argv: list[str] | None = None, say=print) -> int:
         return 0
 
     failed = 0
+    pending: list[dict] = []
     with ThreadPoolExecutor(max_workers=args.jobs) as pool:
         futures = {
             pool.submit(
@@ -384,9 +436,14 @@ def run(argv: list[str] | None = None, say=print) -> int:
                 failed += 1
                 say(f"{day} {args.kind} {args.venue} {ticker} FAILED: {e}")
                 continue
-            _manifest.upsert(store, [row])
+            pending.append(row)
+            if len(pending) >= _FLUSH:
+                _manifest.upsert(store, pending)
+                pending = []
             failed += row["status"] == "mismatch"
             say(line)
+    if pending:
+        _manifest.upsert(store, pending)
     say(f"{len(work)} day(s) asked, {failed} failed or mismatched; {skipped} were already in the manifest")
     return 1 if failed else 0
 
@@ -401,7 +458,8 @@ def _parser() -> argparse.ArgumentParser:
     )
     p.add_argument("kind", choices=_instruments.KINDS, help=", ".join(_instruments.KINDS))
     p.add_argument("venue", choices=_instruments.VENUES)
-    p.add_argument("tickers", nargs="+", metavar="TICKER")
+    p.add_argument("tickers", nargs="*", metavar="TICKER")
+    p.add_argument("--all", action="store_true", help="every USDT perpetual the archive lists (binance-um, monthly kinds)")
     p.add_argument(
         "--from",
         required=True,
@@ -412,7 +470,7 @@ def _parser() -> argparse.ArgumentParser:
     p.add_argument("--days", help="comma-separated UTC days, instead of every day")
     p.add_argument("--sample", help="weekly:<mon..sun>, monthly:<mon..sun> (the first of the month) or every:<n>, instead of every day")
     p.add_argument("--dry-run", action="store_true", help="state days and bytes; download nothing")
-    p.add_argument("--jobs", type=int, default=MAX_JOBS, help=f"parallel days, at most {MAX_JOBS}")
+    p.add_argument("--jobs", type=int, default=None, help=f"parallel requests: at most {MAX_JOBS}, or {MAX_JOBS_LIGHT} for the light kinds")
     p.add_argument("--refetch", action="store_true", help="ask again for days held ok, and compare")
     p.add_argument(
         "--refetch-absent",

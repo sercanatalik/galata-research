@@ -5,6 +5,8 @@ MEASURED 2026-09-27, the first file each archive holds:
     binance-um    bookDepth   BTCUSDT, ETHUSDT 2023-01-01   HYPEUSDT 2025-05-30   XAUUSDT 2025-12-11
                   fundingRate (monthly files only) BTCUSDT, ETHUSDT 2020-01   HYPEUSDT 2025-06
                   premiumIndexKlines 1m   BTCUSDT 2020-01-01   HYPEUSDT by 2025-06-01
+                  klines 1d (monthly files)   900 USDT perpetuals listed 2026-10-04, the delisted
+                              among them (LUNAUSDT, FTTUSDT, SRMUSDT to 2024-05)
                   aggTrades   BTCUSDT, ETHUSDT 2019-12-31   HYPEUSDT 2025-05-30   XAUUSDT 2025-12-11
                   klines 1m   BTCUSDT, ETHUSDT 2019-12-31   HYPEUSDT 2025-05-30   XAUUSDT 2025-12-11
     bybit-linear  trading     BTCUSDT 2020-03-25   ETHUSDT 2020-10-21   HYPEUSDT 2024-12-05   XAUUSDT 2026-03-09
@@ -22,15 +24,18 @@ The record's ticker is kept, and the venue's symbol travels on every row: a
 USDT book is not a USD book, and XAUUSDT is not Hyperliquid's GOLD.
 """
 
+import re
 from dataclasses import dataclass
 from datetime import date, timedelta
 
 from .._errors import Refused
 
 VENUES = ("binance-um", "bybit-linear", "okx-swap")
-KINDS = ("trades", "depth", "book", "candles", "funding", "premium")
+KINDS = ("trades", "depth", "book", "candles", "funding", "premium", "daily")
 # Kinds archived one file per month, held under the month's first day.
-MONTHLY = frozenset({"funding"})
+MONTHLY = frozenset({"funding", "daily"})
+# Kinds whose files are a few kilobytes: fetched with more parallel requests.
+LIGHT = frozenset({"funding", "daily"})
 
 
 @dataclass(frozen=True)
@@ -53,6 +58,13 @@ INSTRUMENTS: dict[tuple[str, str], Instrument] = {
     ("okx-swap", "ETH"): Instrument("ETH-USDT-SWAP", date(2021, 10, 1), contract=0.1),
 }
 
+# The venue whose every USDT perpetual can be named by its base asset, for a point-in-time universe.
+OPEN_VENUE = "binance-um"
+OPEN_LISTED = date(2019, 9, 1)  # BTCUSDT, the first USDⓈ-M perpetual
+_SYMBOL = re.compile(r"[0-9A-Z]{1,20}")
+# The record's HIP-3 markets: their names on Binance, if any, are other assets.
+RECORD_ONLY = frozenset({"CL", "XYZ100"})
+
 # The day each venue's archive of a kind begins, whatever the symbol.
 ARCHIVE_FROM: dict[tuple[str, str], date] = {
     ("binance-um", "depth"): date(2023, 1, 1),
@@ -60,6 +72,7 @@ ARCHIVE_FROM: dict[tuple[str, str], date] = {
     ("binance-um", "candles"): date(2019, 12, 31),
     ("binance-um", "funding"): date(2020, 1, 1),
     ("binance-um", "premium"): date(2020, 1, 1),
+    ("binance-um", "daily"): date(2019, 9, 1),
     ("bybit-linear", "trades"): date(2020, 3, 25),
     ("bybit-linear", "book"): date(2023, 1, 18),
     ("okx-swap", "trades"): date(2021, 11, 1),
@@ -82,6 +95,18 @@ def instrument(venue: str, ticker: str) -> Instrument:
     """The venue's listing of a ticker; a venue or ticker it has not is refused with what it has."""
     if venue not in VENUES:
         raise Refused(f"venue={venue!r} is not one of {', '.join(VENUES)}")
+    if (venue, ticker) not in INSTRUMENTS and venue == OPEN_VENUE and ticker in RECORD_ONLY:
+        held = sorted(t for v, t in INSTRUMENTS if v == venue)
+        raise Refused(
+            f"{venue} lists no {ticker}; it lists {', '.join(held)} and any USDT perpetual by its base asset, "
+            f"but {ticker} is the record's HIP-3 market, and a Binance symbol of that name is another asset"
+        )
+    if (venue, ticker) not in INSTRUMENTS and venue == OPEN_VENUE:
+        # Binance's whole USDⓈ-M list is fetchable: any ticker is its USDT perpetual, and an archive
+        # that lacks it answers 404, recorded absent. The record's own tickers keep their mapping above.
+        if not _SYMBOL.fullmatch(ticker):
+            raise Refused(f"{ticker!r} is not a Binance base asset name")
+        return Instrument(f"{ticker}USDT", OPEN_LISTED)
     try:
         return INSTRUMENTS[(venue, ticker)]
     except KeyError:

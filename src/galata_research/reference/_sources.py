@@ -83,11 +83,14 @@ PREMIUM = {
     "ts": UTC_US, "close_ts": UTC_US,
     **{c: pl.Float64 for c in ["open", "high", "low", "close"]},
 }  # fmt: skip
-SCHEMAS = {"trades": TRADES, "depth": DEPTH, "book": BOOK, "candles": CANDLES, "funding": FUNDING, "premium": PREMIUM}
+SCHEMAS = {"trades": TRADES, "depth": DEPTH, "book": BOOK, "candles": CANDLES, "funding": FUNDING, "premium": PREMIUM, "daily": CANDLES}
 
 _BINANCE = "https://data.binance.vision/data/futures/um/daily"
 _BINANCE_MONTHLY = "https://data.binance.vision/data/futures/um/monthly"
-_BINANCE_KIND = {"depth": "bookDepth", "trades": "aggTrades", "candles": "klines", "funding": "fundingRate", "premium": "premiumIndexKlines"}
+_BINANCE_KIND = {"depth": "bookDepth", "trades": "aggTrades", "candles": "klines", "funding": "fundingRate", "premium": "premiumIndexKlines", "daily": "klines"}
+LISTING = "https://s3-ap-northeast-1.amazonaws.com/data.binance.vision"
+_MONTHLY_PREFIX = {"funding": "data/futures/um/monthly/fundingRate/", "daily": "data/futures/um/monthly/klines/"}
+_DAY_US = 86_400_000_000
 _BINANCE_COLUMNS = {
     "bookDepth": ["timestamp", "percentage", "depth", "notional"],
     "aggTrades": ["agg_trade_id", "price", "quantity", "first_trade_id", "last_trade_id", "transact_time", "is_buyer_maker"],
@@ -108,6 +111,8 @@ def url(kind: str, venue: str, ticker: str, day: date) -> str:
             return f"{_BINANCE}/{name}/{symbol}/1m/{symbol}-1m-{d}.zip"
         if kind == "funding":
             return f"{_BINANCE_MONTHLY}/{name}/{symbol}/{symbol}-{name}-{day:%Y-%m}.zip"
+        if kind == "daily":
+            return f"{_BINANCE_MONTHLY}/klines/{symbol}/1d/{symbol}-1d-{day:%Y-%m}.zip"
         return f"{_BINANCE}/{name}/{symbol}/{symbol}-{name}-{d}.zip"
     if venue == "okx-swap":
         return f"https://static.okx.com/cdn/okex/traderecords/trades/daily/{day:%Y%m%d}/{symbol}-trades-{d}.zip"
@@ -115,6 +120,23 @@ def url(kind: str, venue: str, ticker: str, day: date) -> str:
         return f"https://public.bybit.com/trading/{symbol}/{symbol}{d}.csv.gz"
     depth = 200 if day >= OB200_FROM else 500
     return f"https://quote-saver.bycsi.com/orderbook/linear/{symbol}/{d}_{symbol}_ob{depth}.data.zip"
+
+
+def listing_url(prefix: str, marker: str = "") -> str:
+    """The archive's own bucket listing (S3 ListObjects) under `prefix`, one level deep, from `marker`."""
+    from urllib.parse import quote
+
+    return f"{LISTING}?prefix={quote(prefix)}&delimiter=/&marker={quote(marker)}"
+
+
+def monthly_prefix(kind: str, symbol: str | None = None) -> str:
+    """Where the archive lists a monthly kind's symbols, or one symbol's files."""
+    if kind not in _MONTHLY_PREFIX:
+        raise Refused(f"{kind} is not listed month by month; the listing covers {', '.join(_MONTHLY_PREFIX)}")
+    base = _MONTHLY_PREFIX[kind]
+    if symbol is None:
+        return base
+    return f"{base}{symbol}/1d/" if kind == "daily" else f"{base}{symbol}/"
 
 
 def checksum_url(venue: str, archive: str) -> str | None:
@@ -229,10 +251,17 @@ def _binance(kind: str, text: bytes, name: str, day: date) -> pl.DataFrame:
     frame = raw.with_columns(_epoch("open_time", 1000))
     _check_years(frame, "open_time", name)
     columns = ["open", "high", "low", "close"] + ([] if kind == "premium" else ["volume"])
+    width = _DAY_US if kind == "daily" else _MINUTE_US
+    if kind == "daily":
+        lo = int(datetime(day.year, day.month, 1, tzinfo=UTC).timestamp()) * 1_000_000
+        hi = int(datetime(day.year + day.month // 12, day.month % 12 + 1, 1, tzinfo=UTC).timestamp()) * 1_000_000
+        outside = frame.filter((pl.col("open_time") < lo) | (pl.col("open_time") >= hi))
+        if outside.height:
+            raise Refused(f"{name}: {outside.height} bar(s) fall outside {day:%Y-%m}")
     return frame.select(
-        pl.lit("1m").alias("interval"),
+        pl.lit("1d" if kind == "daily" else "1m").alias("interval"),
         pl.col("open_time").cast(UTC_US).alias("ts"),
-        (pl.col("open_time") + _MINUTE_US).cast(UTC_US).alias("close_ts"),
+        (pl.col("open_time") + width).cast(UTC_US).alias("close_ts"),
         *[pl.col(c).cast(pl.Float64) for c in columns],
         *([] if kind == "premium" else [pl.col("count").cast(pl.UInt32).alias("trade_count")]),
     ).sort("ts", maintain_order=True)

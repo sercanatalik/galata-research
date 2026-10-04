@@ -6,6 +6,7 @@
     gr.reference.candles(["ETH"], start, end, as_of=t)              # Binance 1m, known at close_ts
     gr.reference.funding(["BTC"], start, end)                       # Binance's settled funding, each with its interval
     gr.reference.premium(["BTC"], start, end)                       # Binance's 1m premium index: the perp over its index
+    gr.reference.daily(None, start, end)                            # every Binance USDT perpetual held, daily bars
     gr.reference.coverage()                                         # which days each series holds
 
 The rules are the record's where the meaning is the same: `ts` is the
@@ -36,6 +37,7 @@ __all__ = [
     "book",
     "candles",
     "coverage",
+    "daily",
     "depth",
     "funding",
     "funding_hours",
@@ -165,6 +167,16 @@ def funding(tickers, start, end, *, venues=None, as_of=None, engine: str = "pola
     return _finish(_load("funding", tickers, start, end, venues, as_of), "funding", engine)
 
 
+def daily(tickers, start, end, *, venues=None, as_of=None, engine: str = "polars"):
+    """Binance's daily bars of USDT perpetuals, known at `close_ts`: `tickers=None` is every one held.
+
+    Fetched with `galata-fetch daily binance-um --all`, which lists the
+    archive, so a coin delisted since is held up to its last month, and a
+    universe built from these is the one a reader had at each day.
+    """
+    return _finish(_load("daily", tickers, start, end, venues, as_of), "daily", engine)
+
+
 def premium(tickers, start, end, *, venues=None, as_of=None, engine: str = "polars"):
     """Binance's premium index in 1m bars, known at `close_ts`: (the perp's impact price − its index) / its index.
 
@@ -248,7 +260,7 @@ def _load(kind, tickers, start, end, venues, as_of) -> pl.LazyFrame | None:
     lf = pl.scan_parquet(files, hive_partitioning=False).filter((pl.col("ts") >= at(lo)) & (pl.col("ts") < at(hi)))
     if bound is not None:
         # A bar is known at its close, a snapshot or an execution at its time.
-        known = "close_ts" if kind in ("candles", "premium") else "ts"
+        known = "close_ts" if kind in ("candles", "premium", "daily") else "ts"
         lf = lf.filter(pl.col(known) <= at(bound))
     return lf
 

@@ -790,3 +790,62 @@ def a_body_cut_off_mid_transfer_is_asked_again(monkeypatch):
     monkeypatch.setattr(fetch.time, "sleep", lambda _: None)
     got = fetch.get(_depth_url("2026-09-20"))
     assert got.body == b"whole" and len(calls) == 2
+
+
+# ---- the whole Binance list -------------------------------------------------------------
+
+LIST = "https://s3-ap-northeast-1.amazonaws.com/data.binance.vision"
+
+
+def _listing_page(prefixes=(), keys=(), truncated=False, next_marker=None) -> bytes:
+    body = "".join(f"<CommonPrefixes><Prefix>{p}</Prefix></CommonPrefixes>" for p in prefixes)
+    body += "".join(f"<Contents><Key>{k}</Key></Contents>" for k in keys)
+    more = f"<NextMarker>{next_marker}</NextMarker>" if next_marker else ""
+    return f'<?xml version="1.0"?><ListBucketResult><IsTruncated>{"true" if truncated else "false"}</IsTruncated>{more}{body}</ListBucketResult>'.encode()
+
+
+def _daily_file(month: str, symbol: str, rows: list[str]) -> bytes:
+    return _zip(f"{symbol}-1d-{month}.csv", "\n".join(rows) + "\n")
+
+
+def every_listed_perpetual_is_fetched_for_the_months_it_has(store, archive):
+    from galata_research.reference import _sources as src
+
+    base = "data/futures/um/monthly/klines/"
+    archive.publish(src.listing_url(base), _listing_page([base + "AAAUSDT/", base + "GONEUSDT/"], truncated=True, next_marker=base + "GONEUSDT/"), checksum=False)
+    archive.publish(src.listing_url(base, base + "GONEUSDT/"), _listing_page([base + "BBBUSDC/"]), checksum=False)
+    for sym, months in (("AAAUSDT", ["2024-01", "2024-02"]), ("GONEUSDT", ["2024-01"])):
+        keys = [f"{base}{sym}/1d/{sym}-1d-{m}.zip" for m in months] + [f"{base}{sym}/1d/{sym}-1d-{m}.zip.CHECKSUM" for m in months]
+        archive.publish(src.listing_url(f"{base}{sym}/1d/"), _listing_page(keys=keys), checksum=False)
+    archive.publish(f"https://data.binance.vision/{base}AAAUSDT/1d/AAAUSDT-1d-2024-01.zip", _daily_file("2024-01", "AAAUSDT", ["1704067200000,1,2,0.5,1.5,10,1704153599999,15,3,5,7,0"]))
+    archive.publish(f"https://data.binance.vision/{base}AAAUSDT/1d/AAAUSDT-1d-2024-02.zip", _daily_file("2024-02", "AAAUSDT", ["1706745600000,1.5,2,1,1.8,10,1706831999999,18,3,5,7,0"]))
+    archive.publish(f"https://data.binance.vision/{base}GONEUSDT/1d/GONEUSDT-1d-2024-01.zip", _daily_file("2024-01", "GONEUSDT", ["1704067200000,9,9,8,8.5,1,1704153599999,8.5,1,0,0,0"]))
+    code, said = _run("daily", "binance-um", "--all", "--from", "2024-01-01", "--to", "2024-03-31")
+    assert code == 0, said
+    assert said[0] == "the archive lists 2 USDT perpetuals with daily"  # the USDC-margined one is not a USDT perpetual
+    m = _manifest.read(store)
+    # GONE's listing stops in January: February and March are never asked.
+    assert sorted(zip(m["ticker"], m["date"])) == [("AAA", date(2024, 1, 1)), ("AAA", date(2024, 2, 1)), ("GONE", date(2024, 1, 1))]
+    got = gr.reference.daily(None, "2024-01-01T00:00Z", "2024-03-01T00:00Z").collect()
+    assert got.sort("ticker", "ts")["close"].to_list() == [1.5, 1.8, 8.5]
+    assert got["close_ts"][0] == utc("2024-01-02T00:00")
+
+
+def an_all_with_tickers_is_refused(store, archive):
+    with pytest.raises(Refused, match="no tickers"):
+        _run("daily", "binance-um", "BTC", "--all", "--from", "2024-01-01", "--to", "2024-01-31")
+
+
+def a_daily_bar_outside_its_month_is_refused():
+    blob = _daily_file("2024-02", "BTCUSDT", ["1704067200000,1,2,0.5,1.5,10,1704153599999,15,3,5,7,0"])
+    with pytest.raises(Refused, match="outside 2024-02"):
+        _sources.parse("daily", "binance-um", "BTC", date(2024, 2, 1), blob, "x.zip")
+
+
+def every_binance_base_asset_is_its_usdt_perpetual():
+    from galata_research.reference import _instruments
+
+    assert _instruments.instrument("binance-um", "1000PEPE").symbol == "1000PEPEUSDT"
+    assert _instruments.instrument("binance-um", "GOLD").symbol == "XAUUSDT"  # the record's own mapping is kept
+    with pytest.raises(Refused, match="base asset"):
+        _instruments.instrument("binance-um", "btc/usdt")
