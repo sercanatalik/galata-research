@@ -61,7 +61,8 @@ INSTRUMENTS: dict[tuple[str, str], Instrument] = {
 # The venue whose every USDT perpetual can be named by its base asset, for a point-in-time universe.
 OPEN_VENUE = "binance-um"
 OPEN_LISTED = date(2019, 9, 1)  # BTCUSDT, the first USDⓈ-M perpetual
-_SYMBOL = re.compile(r"[0-9A-Z]{1,20}")
+# Binance lists symbols in other scripts too (币安人生USDT, 2025): anything without a space, a slash or a dot.
+_SYMBOL = re.compile(r"[^\s/\\.]{1,30}")
 # The record's HIP-3 markets: their names on Binance, if any, are other assets.
 RECORD_ONLY = frozenset({"CL", "XYZ100"})
 

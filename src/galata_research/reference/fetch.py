@@ -29,6 +29,7 @@ import os
 import sys
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import UTC, date, datetime, timedelta
@@ -58,6 +59,8 @@ class Response:
 
 def _transport(url: str, method: str, agent: str = "galata-fetch") -> Response:
     """The one place a socket opens. Tests replace it with a fixture archive."""
+    # A symbol in another script (币安人生USDT) is percent-encoded; an encoded URL is left as it is.
+    url = urllib.parse.quote(url, safe=":/?&=%~+")
     request = urllib.request.Request(url, method=method, headers={"User-Agent": agent})
     try:
         with urllib.request.urlopen(request, timeout=120) as r:

@@ -847,5 +847,6 @@ def every_binance_base_asset_is_its_usdt_perpetual():
 
     assert _instruments.instrument("binance-um", "1000PEPE").symbol == "1000PEPEUSDT"
     assert _instruments.instrument("binance-um", "GOLD").symbol == "XAUUSDT"  # the record's own mapping is kept
+    assert _instruments.instrument("binance-um", "币安人生").symbol == "币安人生USDT"
     with pytest.raises(Refused, match="base asset"):
         _instruments.instrument("binance-um", "btc/usdt")
