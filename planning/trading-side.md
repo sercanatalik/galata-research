@@ -153,8 +153,12 @@ One OpenSpec change per item, as in [`roadmap`](./roadmap.md). Each item lands w
   coins, the 50 most liquid each day, 6 rankings × 2 sides (N = 12). Built: `galata-fetch daily|funding binance-um --all`,
   `gr.factors`, `notebooks/universe.py` (`068cd1f`). **Run once, 2026-10-04: not supported.** The best on 2020–2024,
   30-day momentum long/short, Sharpe 0.86, DSR 0.70, Reality Check p 0.09, PBO 0.86; momentum reversed in 2025–2026.
-- [ ] 7. **`build-the-portfolio`**: A12 on DCC Σ per origin. Inverse-vol, HRP (López de Prado 2016, pinned to its
+- [x] 7. **`build-the-portfolio`**: A12 on DCC Σ per origin. Inverse-vol, HRP (López de Prado 2016, pinned to its
   example) and minimum variance, scored with `gr.stats`.
+  Registered alone first (`planning/preregistered/build-the-portfolio.md`, `b63b2ad`), built (`c73d595`:
+  `gr.models.portfolio`, `notebooks/portfolio.py`) and **run once, 2026-10-04: H1, H2 and H3 not supported.** Nothing
+  beats 1/N after the search; HRP's variance is above minimum variance's under every Σ; DCC's gain is not significant.
+  HRP is pinned to a hand-worked block case: the paper's own example is simulated and cannot be reproduced.
 
 ---
 
