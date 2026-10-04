@@ -372,8 +372,17 @@ def run(argv: list[str] | None = None, say=print) -> int:
             raise Refused("--all names every ticker the archive holds; give no tickers with it")
         if args.venue != _instruments.OPEN_VENUE or args.kind not in _instruments.MONTHLY:
             raise Refused(f"--all lists {_instruments.OPEN_VENUE}'s monthly kinds ({', '.join(sorted(_instruments.MONTHLY))}) only")
-        args.tickers = universe(args.kind)
-        say(f"the archive lists {len(args.tickers)} USDT perpetuals with {args.kind}")
+        listed = universe(args.kind)
+        args.tickers, skipped_names = [], []
+        for t in listed:
+            try:
+                _instruments.instrument(args.venue, t)
+                args.tickers.append(t)
+            except Refused:
+                skipped_names.append(t)
+        say(f"the archive lists {len(listed)} USDT perpetuals with {args.kind}")
+        if skipped_names:
+            say(f"not fetched, as the record's names for other assets: {', '.join(skipped_names)}")
         with ThreadPoolExecutor(max_workers=args.jobs) as pool:
             months = dict(zip(args.tickers, pool.map(lambda t: held_months(args.kind, t), args.tickers), strict=True))
     elif not args.tickers:

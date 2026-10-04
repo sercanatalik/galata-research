@@ -813,7 +813,7 @@ def every_listed_perpetual_is_fetched_for_the_months_it_has(store, archive):
 
     base = "data/futures/um/monthly/klines/"
     archive.publish(src.listing_url(base), _listing_page([base + "AAAUSDT/", base + "GONEUSDT/"], truncated=True, next_marker=base + "GONEUSDT/"), checksum=False)
-    archive.publish(src.listing_url(base, base + "GONEUSDT/"), _listing_page([base + "BBBUSDC/"]), checksum=False)
+    archive.publish(src.listing_url(base, base + "GONEUSDT/"), _listing_page([base + "BBBUSDC/", base + "CLUSDT/"]), checksum=False)
     for sym, months in (("AAAUSDT", ["2024-01", "2024-02"]), ("GONEUSDT", ["2024-01"])):
         keys = [f"{base}{sym}/1d/{sym}-1d-{m}.zip" for m in months] + [f"{base}{sym}/1d/{sym}-1d-{m}.zip.CHECKSUM" for m in months]
         archive.publish(src.listing_url(f"{base}{sym}/1d/"), _listing_page(keys=keys), checksum=False)
@@ -822,7 +822,9 @@ def every_listed_perpetual_is_fetched_for_the_months_it_has(store, archive):
     archive.publish(f"https://data.binance.vision/{base}GONEUSDT/1d/GONEUSDT-1d-2024-01.zip", _daily_file("2024-01", "GONEUSDT", ["1704067200000,9,9,8,8.5,1,1704153599999,8.5,1,0,0,0"]))
     code, said = _run("daily", "binance-um", "--all", "--from", "2024-01-01", "--to", "2024-03-31")
     assert code == 0, said
-    assert said[0] == "the archive lists 2 USDT perpetuals with daily"  # the USDC-margined one is not a USDT perpetual
+    assert said[0] == "the archive lists 3 USDT perpetuals with daily"  # the USDC-margined one is not a USDT perpetual
+    # Binance's CLUSDT is crude oil, not the record's CL: listed, and not fetched.
+    assert said[1] == "not fetched, as the record's names for other assets: CL"
     m = _manifest.read(store)
     # GONE's listing stops in January: February and March are never asked.
     assert sorted(zip(m["ticker"], m["date"])) == [("AAA", date(2024, 1, 1)), ("AAA", date(2024, 2, 1)), ("GONE", date(2024, 1, 1))]
