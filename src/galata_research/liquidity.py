@@ -17,7 +17,7 @@ Kroencke's EDGE (2024). A pair is a bar and the one before it, contiguous
 (`ts == previous close_ts`) and neither `in_gap`. On Hyperliquid's 1m bars, EDGE
 over a week read BTC's spread at 0.13 bps against 0.12 quoted, and HYPE's at
 0.94 against 0.11. So an estimate is calibrated against a measured spread on
-the same venue and days before it is read (`notebooks/liquidity.py` ⑤).
+the same venue and days before it is read (`notebooks/liquidity/liquidity.py` ⑤).
 
 The core stays free of numpy: everything here is polars, or plain Python.
 """

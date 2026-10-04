@@ -131,7 +131,8 @@ exists.
       market.py                    one function per dataset, its rules
       account.py                   snapshots now, fills later
       frontier.py
-    notebooks/                     marimo, one per question
+    notebooks/                     marimo, one per question, grouped by kind of study
+      record/ · backtests/ · volatility/ · correlation/ · portfolio/ · liquidity/
     tests/                         against a fixture tape written in the test
     design/ · planning/ · openspec/
 ```

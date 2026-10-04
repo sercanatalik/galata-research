@@ -33,4 +33,4 @@ jobs:
         # skipping for the wrong reason would show.
         run: uv run pytest -q -rs
       - name: Notebooks
-        run: uv run marimo check notebooks/*.py
+        run: uv run marimo check notebooks/*/*.py
