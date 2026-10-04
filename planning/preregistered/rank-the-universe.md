@@ -101,3 +101,77 @@ borderline name would have entered the traded set.
 ---
 
 *Edited 2026-10-04 at the operator's request: a reference to an external repository was removed from the motivation above. The specification and the criteria are unchanged.*
+
+---
+
+## Result — run once, 2026-10-04, `notebooks/universe.py`
+
+*Appended after the run. Nothing above the edit note was changed by the run.*
+Code at `068cd1f`, wording at `c297e01`. Data fetched 2026-10-04 into a fresh reference store
+with `galata-fetch daily|funding binance-um --all --from 2019-09-01 --to
+2026-09-30`. That gave **22,246 symbol-months of daily bars and 21,087 of funding**,
+with none failed or mismatched. `CL` was listed and not fetched (Binance's is
+crude oil), so 899 perpetuals are in the panel: 663,048 coin-days, 2020-01-01
+to 2026-09-30. Across both spans and all rules, a held coin-day had no
+funding archive on fewer than 0.9 coins a day on average.
+
+### Primary, 2020–2024: **not supported**
+
+The first rebalance with a full traded set of 50 (each with 90 days of
+history) was **2020-12-13**, which left 1,480 days. **234 perpetuals** were
+traded at some point.
+
+| criterion | value | met |
+|---|---|---|
+| DSR of the best, N = 12 | 0.696 | no |
+| Reality Check p within its side (long_short, against cash) | 0.093 | no |
+| PBO, 16 blocks | 0.86 | no |
+
+The best is **`mom 30 long_short`, annualised net Sharpe 0.86**, +146% over the
+span. The long-only rules (0.66–0.83) beat the equal-weight traded set's 0.60,
+but they are mostly its beta. `lowvol long_short` lost 52% (Sharpe −0.38).
+The PBO of 0.86 says that choosing the best rule in one half picks a
+below-median rule in the other most of the time.
+
+| trial | Sharpe | total net |
+|---|---|---|
+| mom 30 long_short | 0.86 | +146% |
+| mom 7 long_only | 0.83 | +277% |
+| mom 90 long_only | 0.82 | +265% |
+| mom 30 long_only | 0.82 | +255% |
+| resmom long_short | 0.70 | +99% |
+| resmom long_only | 0.69 | +108% |
+| lowvol long_only | 0.67 | +136% |
+| *ew universe (benchmark)* | *0.60* | *+66%* |
+| mom 7 long_short | 0.58 | +73% |
+| small long_only | 0.58 | +43% |
+| mom 90 long_short | 0.48 | +50% |
+| small long_short | 0.08 | −3% |
+| lowvol long_short | −0.38 | −52% |
+
+### Secondary, 2025-01 to 2026-09: **not supported**, and momentum reversed
+
+637 days. Only `lowvol long_short` had a positive Sharpe (0.89; DSR 0.31,
+Reality Check p 0.21). Every momentum rule lost: `mom 30 long_short` −0.72,
+`mom 7 long_only` −1.62. The equal-weight traded set fell 77% (Sharpe −0.73).
+Long momentum **received** 60% (2025) and 119% (2026, to September) of
+notional in funding, and still lost 82% and 69%. It held the squeezed coins
+whose shorts paid 1-hour funding of up to 38% of notional a day (MYX
+2025-08-05, COAI 2025-10-16; checked against the archive's raw settlements,
+which sit within Binance's caps of 2–4% each). Momentum's 2020–2024 Sharpe
+does not carry into 2025–2026.
+
+### Described
+
+- **Exclusion mattered.** Without the registered non-crypto list, 22 such
+  perpetuals would have entered the 2025–2026 top 50. They were, by days:
+  PAXG 293, XAU 205, XAG 178, CRCL 145, INTC 133, MSTR 96, BZ 94, MU 88,
+  SNDK 88, EWY 85, NVDA 82, QQQ 81, SOXL 50, SPCX 44, MRVL 37, TSLA 37,
+  SKHYNIX 32, SAMSUNG 32, KORU 12, NBIS 7, GOOGL 4 and AMD 1.
+- **Kept names a reader should check.** Of the 298 names traded in the
+  secondary span, five cannot be told apart from a stock or index by the
+  symbol alone: `DRAM`, `LITE`, `ON`, `POWER`, `US`. They were left in, as
+  registered.
+- **Turnover.** A weekly rebalance turned over 0.75–0.93 of a gross book of 1
+  for momentum, 0.36–0.70 for the others. At 0.05% that is about 2–2.5% a year
+  of fees for momentum long/short. Fees are not what sank the rules.

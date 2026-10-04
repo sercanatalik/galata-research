@@ -146,12 +146,13 @@ One OpenSpec change per item, as in [`roadmap`](./roadmap.md). Each item lands w
   Built and run 2026-10-03 on Bybit's book and Binance's trades (reference archives, 12 days): `gr.flow`,
   `notebooks/flow.py`, registered alone first (`planning/preregistered/trade-the-flow.md`, `5c4e7c2`). **Every
   statistical part supported, no economic part**: the edges are real and under 1.2 bps gross against 11 bps of taker fees.
-- [ ] 6. **`rank-the-universe`**: lifts D8 (operator's call). `gr.factors` adds cross-sectional `rank`, `top`, `zscore`,
+- [x] 6. **`rank-the-universe`**: lifts D8 (operator's call). `gr.factors` adds cross-sectional `rank`, `top`, `zscore`,
   `neutralize` over `ts`, and A8–A11 run on BTC, ETH, HYPE and the reference venues.
   D8 lifted by the operator 2026-10-04 ("use all available tickers"). Registered alone first
   (`planning/preregistered/rank-the-universe.md`, `d333e55`): every Binance USDT perpetual, point in time with delisted
   coins, the 50 most liquid each day, 6 rankings × 2 sides (N = 12). Built: `galata-fetch daily|funding binance-um --all`,
-  `gr.factors`, `notebooks/universe.py` (`068cd1f`). **The run follows the download.**
+  `gr.factors`, `notebooks/universe.py` (`068cd1f`). **Run once, 2026-10-04: not supported.** The best on 2020–2024,
+  30-day momentum long/short, Sharpe 0.86, DSR 0.70, Reality Check p 0.09, PBO 0.86; momentum reversed in 2025–2026.
 - [ ] 7. **`build-the-portfolio`**: A12 on DCC Σ per origin. Inverse-vol, HRP (López de Prado 2016, pinned to its
   example) and minimum variance, scored with `gr.stats`.
 
