@@ -11,8 +11,8 @@ Kaminski and Lo, "When do stop-loss rules stop losses?" (*Journal of
 Financial Markets* 18, 2014), show that a stop-loss with re-entry adds to
 expected return only when returns have momentum (positive serial
 correlation), and costs return under a random walk. Practitioner
-frameworks (investing-algorithm-framework's `StopLossRule`, `TakeProfitRule`,
-`CooldownRule`) ship stops as a default, implying they help. The claim tested
+frameworks ship stop-loss, take-profit and cooldown rules as defaults,
+implying they help. The claim tested
 here: **on this record, some stop or take-profit overlay improves a daily
 rule's net Sharpe by more than the search over overlays would give by
 chance.**
@@ -72,3 +72,7 @@ it can be met by a base alone.
 **Described, not tested:** each overlay's maximum drawdown and Ulcer index
 as a ratio to its base's, the share of trades closed by the stop or the take-profit,
 and `gr.trades.summary` per trial.
+
+---
+
+*Edited 2026-10-04 at the operator's request: a reference to an external repository was removed from the motivation above. The specification and the criteria are unchanged.*

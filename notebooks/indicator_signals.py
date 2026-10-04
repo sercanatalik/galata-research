@@ -22,8 +22,8 @@ def _(mo):
     # A pre-registered test: five indicator families
 
     EMA crossovers, RSI and Bollinger mean reversion, MACD and Supertrend are
-    the standard vocabulary of the trading side: they are what
-    investing-algorithm-framework and its `pyindicators` ship as strategies.
+    the standard vocabulary of the trading side: they are what trading
+    frameworks ship as strategies.
     The families, their grids, N and what would count as support were frozen
     in `planning/preregistered/indicator-signals.md` and committed alone
     (`020ef19`), before this notebook or the code it runs existed. It runs

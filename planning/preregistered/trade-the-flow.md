@@ -12,8 +12,7 @@ Each claim has a **statistical** part (S: is there predictability at all?)
 and an **economic** part (E: does a taker rule that uses it pay, after
 crossing the spread and paying the fee both ways?). The literature mostly
 supports the S parts and is silent or negative on the E parts at a taker's
-costs. That is the gap investing-algorithm-framework marks as "not possible"
-(showcase 22, 24) and this record can measure.
+costs. Spot OHLCV backtesters cannot measure it; this record can.
 
 - **H1, order-flow imbalance.** Cont, Kukanov and Stoikov (2014) show OFI
   moves the price in the same interval. The claim tested is that **it also
@@ -138,3 +137,7 @@ flattering. But it is one to two orders of magnitude short of the 11 bps a
 taker pays Bybit for the round trip. **Even at a maker's 0.02% each way
 (4 bps) no rule would cover its fees.** These signals are worth something to
 a market maker's quoting or an execution schedule's timing, not as trades.
+
+---
+
+*Edited 2026-10-04 at the operator's request: a reference to an external repository was removed from the motivation above. The specification, the criteria and the result are unchanged.*

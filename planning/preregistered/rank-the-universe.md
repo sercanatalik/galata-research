@@ -14,8 +14,7 @@ tickers"). This is the repository's first study across many tickers.
 Liu, Tsyvinski and Wu ("Common Risk Factors in Cryptocurrency", *Journal of
 Finance* 77, 2022) find cross-sectional momentum over one to four weeks and
 size effects in crypto returns. Practitioner frameworks ship the same
-pipeline: rank a universe, hold the top, short the bottom
-(investing-algorithm-framework's `Returns(30).rank().top(n)`). The claim
+pipeline: rank a universe, hold the top, short the bottom. The claim
 tested here: **some standard cross-sectional rule, ranked point in time
 across the liquid Binance perpetuals, earns a net Sharpe that survives the
 search over rules, after taker fees and funding.**
@@ -98,3 +97,7 @@ can say whether a verdict held, and it cannot rescue a failure.
 **Described, not tested:** each rule's net Sharpe per year, its mean weekly
 turnover, the funding it paid or received, and how often each excluded or
 borderline name would have entered the traded set.
+
+---
+
+*Edited 2026-10-04 at the operator's request: a reference to an external repository was removed from the motivation above. The specification and the criteria are unchanged.*

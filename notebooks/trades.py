@@ -25,8 +25,8 @@ def _(mo):
     trial wins, what a winning trade is worth against a losing one, how far a
     trade goes against the position before it closes, or how long a
     drawdown lasts. This notebook gives those figures for the trials the
-    other studies run. The metrics come from investing-algorithm-framework's
-    list (`planning/investing-algorithm-framework.md`), and each one is pinned
+    other studies run. The metrics are the standard backtest report's
+    (`planning/trading-side.md`), and each one is pinned
     to a hand-worked case in `tests/stats.py` and `tests/trades.py`.
 
     - **A trade** is a stretch of bars held on one side. A resize stays in

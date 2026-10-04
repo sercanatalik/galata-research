@@ -15,12 +15,12 @@ Every value at a bar uses that bar and earlier ones only, so it is known at
 the bar's `close_ts`; a test truncates the bars and checks that no earlier
 value moves. The smoothed indicators follow their authors' seeding (Wilder
 1978 for RSI and ATR; the EMA seeded with the simple mean of its first n
-values, as in TA-Lib and StockCharts), and RSI is pinned to StockCharts'
+values, as StockCharts does), and RSI is pinned to StockCharts'
 worked example. They are polars-native and need no numpy.
 
-Indicators are the trading side's standard vocabulary (investing-algorithm-framework
-and its `pyindicators`). A family of them is a family of trials: each
-parameter set counts toward N for the Deflated Sharpe Ratio.
+Indicators are the trading side's standard vocabulary. A family of them is a
+family of trials: each parameter set counts toward N for the Deflated Sharpe
+Ratio.
 """
 
 import polars as pl

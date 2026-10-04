@@ -8,9 +8,8 @@ that says why.
 ## The claim being tested
 
 The trading side's standard vocabulary (EMA crossovers, RSI and Bollinger
-mean reversion, MACD, Supertrend) is what investing-algorithm-framework and
-its `pyindicators` ship as strategies (`planning/investing-algorithm-framework.md`,
-families A1–A5). The implicit claim is that **at least one common indicator
+mean reversion, MACD, Supertrend) is what trading frameworks ship as
+strategies (`planning/trading-side.md`, families A1–A5). The implicit claim is that **at least one common indicator
 rule, with common parameters, earns a Sharpe that survives the search that
 picked it** on liquid crypto perps.
 
@@ -80,3 +79,7 @@ last whole day held at run time, with the same four criteria. This sample is
 longer but from another venue, so it is reported separately and **cannot
 rescue a failure on the record**. It can only say whether a failure is the
 short sample's.
+
+---
+
+*Edited 2026-10-04 at the operator's request: a reference to an external repository was removed from the motivation above. The specification and the criteria are unchanged.*
