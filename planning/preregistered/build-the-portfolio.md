@@ -149,6 +149,7 @@ Lower, as Engle's model predicts, but short of 0.05.
 Every long-only book of these coins lost 60–69% at its worst: the 2022 bear
 market is in the span, and weighting only changed how much. Minimum
 variance's lower volatility comes from concentration, about two effective
-coins (mostly BTC with one other), not from diversification. Over the 10 days
+coins, not from diversification: `minvar sample` held BTC at 51% on average and
+BNB at 33% (held above 5% in 91% and 80% of weeks), with XRP next at 7%. Over the 10 days
 to EOS's last bar, the minimum-variance books gained 1.5–2.2% while 1/N lost
 5.3%. Minimum variance had already moved EOS's weight to 0.
