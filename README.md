@@ -376,6 +376,15 @@ registered 50-rule search (`planning/preregistered/indicator-signals.md`).
 | `taker(grid, signals, horizon)`, `score(trades)` | each signal bought at the ask or sold at the bid and closed at the touch, net of the fee both ways; per rule, the t over the days' mean returns | the decision second's own touch (flattering, stated); no trade closes on another day; Student's t on days − 1, the tail computed here and pinned to the tables |
 | `ofi_frame`, `ofi_rules`, `microprice_frame`, `lead_frame`, `lead_rules` | the registered H1–H3 rows and rules | an OFI bucket decided at its last second; its z from the previous buckets only |
 
+### Across the universe: `gr.factors`
+
+| Call | Returns | The rule it owns |
+|---|---|---|
+| `panel(daily, settled)` | per (ticker, day): close, return (null after a hole), dollar volume, bars held so far, the day's funding | midnight's settlement closes the day before |
+| `members(panel, *, exclude, top, history, window)` | per (ticker, day): `dv`, `eligible`, `traded` | point in time: a coin is a candidate only on days it has a bar, so a delisted one is in until it went; the traded set is ranked on dollar volume up to the day |
+| `scores(panel, members)` | `mom 7/30/90`, `lowvol`, `resmom` (against BTC's β), `small` | each from bars up to its close; a window holding a hole is null |
+| `rebalances`, `weights`, `portfolio`, `rules` | the registered 12 and the equal-weight traded set, as trial frames under the ticker `universe` | weights fixed between weekly rebalances; turnover charged the fee on the first day held; funding charged per day held; a delisted holding earns nothing after its last bar |
+
 ### Reference data: `gr.reference` and `galata-fetch`
 
 The record holds one venue, 1h bars from 2026-03, and a week of top of book.
@@ -405,6 +414,7 @@ galata-fetch update  --dry-run    # each declared series from its last day to ye
 | `gr.reference.candles(...)` | Binance 1m bars | known at `close_ts`; `as_of` filters on it |
 | `gr.reference.funding(...)`, `funding_hours(settled)` | Binance's settled funding, `rate` and `interval_hours`; as hourly rows for `backtest.returns(funding=)` | published a month at a time (no daily file), held under the month's first day; the rate on its settlement hour and 0 on the hours before it, so a missing settlement leaves its bars uncharged |
 | `gr.reference.premium(...)` | Binance's 1m premium index: the perp's premium over its index | known at `close_ts`; the input to Binance's funding |
+| `gr.reference.daily(None, ...)` | daily bars of every Binance USDT perpetual held | fetched by `galata-fetch daily binance-um --all`, which lists the archive's bucket, so delisted coins are held to their last month; any base asset names its perpetual (the record's HIP-3 `CL` and `XYZ100` excepted) |
 | `gr.reference.events(start, end, *, sources)` | CPI, jobs and FOMC with their UTC release instants | fetched from bls.gov and federalreserve.gov by `galata-fetch events`; BLS only with `GALATA_CONTACT`, which is never stored |
 | `gr.reference.coverage()` | per series: `first, last, days_ok, days_absent, days_mismatch, days_missing` | absent (the archive lacked it) is not missing (never fetched) |
 
@@ -455,6 +465,7 @@ trial, so N is the true N) back these notebooks:
 | `overlays.py` | do stops help? The pre-registered test of 12 stop and take-profit overlays on buy-and-hold, an MA rule and the Donchian ensemble, BTC and ETH daily (N = 78): a Reality Check per base against the base itself, then DSR and PBO over all. Registered (`f96b81a`); **not yet run on the record** |
 | `carry.py` | does funding pay? Pre-registered (`d82ee2b`), run once on Binance 2020–2026. **Hedged carry: supported** (best of 26: `always` short the perp, long the index, Sharpe 9.2 per unit notional, DSR 1.00, Reality Check p 0.002, PBO 0.00), but no timing rule beat holding it, and its income fell from 17–31% a year in 2020–21 to about 2–3% in 2026. **Funding persists** (lag-one ρ 0.85 BTC, 0.82 ETH). **The unhedged fade: not supported** (DSR 0.62, Reality Check p 0.93) |
 | `flow.py` | does order flow pay a taker? Pre-registered (`5c4e7c2`), run once on Bybit's per-second book and Binance's trades, 12 days, 2025-10 to 2026-09. **All three predict** (OFI the next 10 s, t 10.1 and 5.2; the weighted mid beats the mid, t 16–21; Binance's last second carries about an eighth of its move into Bybit's next, t 44 and 31). **No taker rule pays**: all 15 rules lose 9.9–11.2 bps a trade net on both tickers, since the gross edge is under 1.2 bps against 11 bps of fees |
+| `universe.py` | does any cross-sectional rule pay across every Binance perpetual? Pre-registered (`d333e55`): the 50 most liquid each day, point in time with delisted coins, 6 rankings × long/short and long-only (N = 12), weekly, fees and funding charged; primary 2020–2024, secondary 2025-01 to 2026-09 |
 | `trades.py` | what do the trials' trades look like? Sortino, Calmar, Ulcer and drawdown length per trial, win rate, profit factor and MAE/MFE per trade, the month-by-month table and a rolling Sharpe. Descriptions, not verdicts |
 | `deflated_sharpe.py` | does the best of 66 trials beat what luck would give? DSR 0.67 daily: **no** |
 | `overfitting.py` | does choosing on the past choose well? PBO 0.69 over 12,870 splits: **no** |

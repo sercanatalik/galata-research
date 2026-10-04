@@ -46,7 +46,7 @@ from . import _events, _instruments, _manifest, _root, _sources
 HOSTS = ("data.binance.vision", "s3-ap-northeast-1.amazonaws.com", "public.bybit.com", "quote-saver.bycsi.com", "static.okx.com")
 HEAVY = {("bybit-linear", "book"), ("binance-um", "trades"), ("okx-swap", "trades")}
 MAX_JOBS = 4
-MAX_JOBS_LIGHT = 16  # for the kinds of a few kilobytes a file
+MAX_JOBS_LIGHT = 64  # for the kinds of a few kilobytes a file: latency-bound, not bandwidth
 _FLUSH = 500  # manifest rows written together
 _WEEKDAYS = ("mon", "tue", "wed", "thu", "fri", "sat", "sun")
 _RETRIES = (1.0, 2.0, 4.0)
