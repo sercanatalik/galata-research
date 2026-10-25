@@ -22,15 +22,65 @@ values were not confirmed from a published page, so they are not mapped.
 
 The record's ticker is kept, and the venue's symbol travels on every row: a
 USDT book is not a USD book, and XAUUSDT is not Hyperliquid's GOLD.
+
+MEASURED 2026-10-25, Hyperliquid's own fills (`hyperliquid-s3`), by a full
+listing of the requester-pays bucket `hl-mainnet-node-data` (ap-northeast-1)
+and one sample hour per prefix:
+
+    node_trades           2025-03-22 10:00 .. 2025-05-25 14:00 used, no hour missing in it;
+                          15.1 GB all told, 8.5 MB the median hour. It runs on to 06-21 with
+                          26 whole days missing, which is not read.
+    node_fills            2025-05-25 14:00 .. 2025-07-27 08:00, no hour missing; 31.8 GB, 18.3 MB
+    node_fills_by_block   2025-07-27 08:00 .. now, no hour missing in 456 days; 321.4 GB,
+                          25.5 MB the median hour, 359 MB the largest
+
+- Keys are `<prefix>/hourly/YYYYMMDD/H.lz4`, the hour not zero-padded.
+- Each handover hour is held by both formats (05-25 hour 14, 07-27 hour 8),
+  and no hour by neither; `CUTS` reads each from the later format.
+- A file holds the trades the node received in its hour: up to ~30 fills
+  stamped in the hour's last second land in the next file (4 in node_fills
+  2025-07-01 12, 30 in by_block 2026-09-24 14), none in an earlier one.
+- Every trade in node_fills and by_block is two fills under one
+  `(coin, tid)`, exactly one `crossed`, for the 13 coins measured (the 11
+  below, and xyz:JPY and xyz:EUR, since left out as too thin). node_trades
+  has no `tid`: one row per trade, the taker's `side`, and rows that share
+  every field are distinct trades of one block (1,183 in the sample hour).
+- The venue's candles count liquidations in volume and trade count but
+  leave their prices out of high and low: the 2026-09-24 14:00 hour built
+  from by_block equals the venue's 1h candle on open, close, volume and
+  trade count for all 13 coins measured, and on high and low except BTC (83,350
+  against 83,351) and SILVER (63.275 against 63.28), where every fill below
+  the venue's low was a liquidation. Over the week 2026-09-21..27 (the
+  first fetch, 175 files, 8.2 GB, ~$0.94), every one of the 1,848 hours of
+  the 11 tickers below, built from the 1m bars, equals the venue's 1h
+  candle on open, high, low, close, volume and trade count, the same hours
+  held on both sides, no gap; `high_all` or `low_all` differs in 25 of them,
+  each a liquidation wick.
+- The venue's candles leave out node_trades' `NetChildVaultPositions` rows:
+  on 2025-04-01, VVV, AI16Z, COMP, TST and TURBO (842 down to 1 such rows)
+  match the venue's 1d candle in volume and trade count exactly without
+  them, and BTC (377,931 ordinary trades and 922 `LiquidatedMarket`) matches
+  with its liquidations in.
+- The xyz coins are named in the fills as the venue's `meta` spells them
+  (`xyz:CL`, `xyz:SKHX`, ...); spot coins are `@<index>`. Listings are each
+  market's first 1d candle on the venue, read 2026-10-25.
+- Transfer is ~2 GB a month in 2025-03, ~30 GB in 2026-09; the whole archive
+  is ~360 GB, about $41 at ap-northeast-1's $0.114/GB to the internet
+  (AWSDataTransfer price list published 2026-09-16), and GETs are $0.0037
+  per 10,000, LISTs $0.0047 per 1,000 (AmazonS3, published 2026-10-15).
 """
 
 import re
 from dataclasses import dataclass
-from datetime import date, timedelta
+from datetime import UTC, date, datetime, timedelta
 
 from .._errors import Refused
 
-VENUES = ("binance-um", "bybit-linear", "okx-swap")
+VENUES = ("binance-um", "bybit-linear", "okx-swap", "hyperliquid-s3")
+# The venue built from fills rather than fetched as files: one pass over an hour serves every ticker.
+HYPERLIQUID = "hyperliquid-s3"
+# The store's kind for a venue's own hours missing or unreadable, written beside its candles.
+GAPS = "gaps"
 KINDS = ("trades", "depth", "book", "candles", "funding", "premium", "daily")
 # Kinds archived one file per month, held under the month's first day.
 MONTHLY = frozenset({"funding", "daily"})
@@ -56,7 +106,37 @@ INSTRUMENTS: dict[tuple[str, str], Instrument] = {
     ("bybit-linear", "GOLD"): Instrument("XAUUSDT", date(2026, 3, 9)),
     ("okx-swap", "BTC"): Instrument("BTC-USDT-SWAP", date(2021, 10, 1), contract=0.01),
     ("okx-swap", "ETH"): Instrument("ETH-USDT-SWAP", date(2021, 10, 1), contract=0.1),
+    # Hyperliquid under the record's tickers, the venue's coin as the symbol. The crypto perps
+    # start where the archive does; each xyz market at its first 1d candle on the venue.
+    (HYPERLIQUID, "BTC"): Instrument("BTC", date(2025, 3, 22)),
+    (HYPERLIQUID, "ETH"): Instrument("ETH", date(2025, 3, 22)),
+    (HYPERLIQUID, "HYPE"): Instrument("HYPE", date(2025, 3, 22)),
+    (HYPERLIQUID, "XYZ100"): Instrument("xyz:XYZ100", date(2025, 10, 13)),
+    (HYPERLIQUID, "NVDA"): Instrument("xyz:NVDA", date(2025, 11, 12)),
+    (HYPERLIQUID, "GOLD"): Instrument("xyz:GOLD", date(2025, 12, 22)),
+    (HYPERLIQUID, "SILVER"): Instrument("xyz:SILVER", date(2025, 12, 26)),
+    (HYPERLIQUID, "CL"): Instrument("xyz:CL", date(2026, 1, 6)),
+    (HYPERLIQUID, "SKHX"): Instrument("xyz:SKHX", date(2026, 2, 19)),
+    (HYPERLIQUID, "BRENTOIL"): Instrument("xyz:BRENTOIL", date(2026, 3, 4)),
+    (HYPERLIQUID, "SP500"): Instrument("xyz:SP500", date(2026, 3, 18)),
 }
+
+# Which prefix each hour of trade time is read from: the last prefix whose cut is at or before it.
+# Each cut is the later format's first hour, which the earlier one also holds (MEASURED above).
+CUTS = (
+    (datetime(2025, 3, 22, 10, tzinfo=UTC), "node_trades"),
+    (datetime(2025, 5, 25, 14, tzinfo=UTC), "node_fills"),
+    (datetime(2025, 7, 27, 8, tzinfo=UTC), "node_fills_by_block"),
+)
+
+
+def prefix_at(hour: datetime) -> str | None:
+    """The prefix an hour of trade time is read from, or None before the archive begins."""
+    chosen = None
+    for cut, prefix in CUTS:
+        if hour >= cut:
+            chosen = prefix
+    return chosen
 
 # The venue whose every USDT perpetual can be named by its base asset, for a point-in-time universe.
 OPEN_VENUE = "binance-um"
@@ -77,6 +157,7 @@ ARCHIVE_FROM: dict[tuple[str, str], date] = {
     ("bybit-linear", "trades"): date(2020, 3, 25),
     ("bybit-linear", "book"): date(2023, 1, 18),
     ("okx-swap", "trades"): date(2021, 11, 1),
+    (HYPERLIQUID, "candles"): date(2025, 3, 22),
 }
 
 # How far a venue's archive day ends before the UTC day of the same date:

@@ -31,7 +31,9 @@ jobs:
       - name: Tests
         # -rs reports each skip and why, so a record test that stopped
         # skipping for the wrong reason would show. tests/sessions.py
-        # exercises gr.calendar, which refuses without the calendars extra.
-        run: uv run --extra calendars pytest -q -rs
+        # exercises gr.calendar, which refuses without the calendars extra;
+        # tests/hyperliquid.py reads LZ4 hour files and signs with botocore,
+        # the hyperliquid extra.
+        run: uv run --extra calendars --extra hyperliquid pytest -q -rs
       - name: Notebooks
         run: uv run marimo check notebooks/*/*.py

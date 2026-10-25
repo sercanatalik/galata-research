@@ -4,6 +4,9 @@
     gr.reference.trades(["HYPE"], start, end, rpi=False)            # signed trades, no RPI fills
     gr.reference.book(["BTC"], start, end)                          # Bybit's top and near depth, per second
     gr.reference.candles(["ETH"], start, end, as_of=t)              # Binance 1m, known at close_ts
+    gr.reference.candles(["CL"], start, end, venues=["hyperliquid-s3"])  # Hyperliquid's own 1m, built from its fills
+    gr.reference.gaps(["CL"], start, end, venues=["hyperliquid-s3"])     # the hours its archive did not give
+    gr.reference.compare_record("BTC", start, end)                  # those bars against the record's
     gr.reference.funding(["BTC"], start, end)                       # Binance's settled funding, each with its interval
     gr.reference.premium(["BTC"], start, end)                       # Binance's 1m premium index: the perp over its index
     gr.reference.daily(None, start, end)                            # every Binance USDT perpetual held, daily bars
@@ -26,8 +29,8 @@ import polars as pl
 
 from .. import _scan, utils
 from .._errors import Refused
-from . import _manifest, _sources
-from ._instruments import DAY_ENDS_EARLY, INSTRUMENTS, KINDS, MONTHLY, VENUES
+from . import _hyperliquid, _manifest, _sources
+from ._instruments import DAY_ENDS_EARLY, HYPERLIQUID, INSTRUMENTS, KINDS, MONTHLY, VENUES
 from ._root import root
 
 __all__ = [
@@ -36,11 +39,13 @@ __all__ = [
     "VENUES",
     "book",
     "candles",
+    "compare_record",
     "coverage",
     "daily",
     "depth",
     "funding",
     "funding_hours",
+    "gaps",
     "premium",
     "root",
     "trades",
@@ -100,8 +105,102 @@ def book(tickers, start, end, *, venues=None, as_of=None, engine: str = "polars"
 
 
 def candles(tickers, start, end, *, venues=None, as_of=None, engine: str = "polars"):
-    """Binance 1m bars with `ts` in `[start, end)`, known at `close_ts = ts + 1m`: `as_of` filters on it."""
-    return _finish(_load("candles", tickers, start, end, venues, as_of), "candles", engine)
+    """1m bars with `ts` in `[start, end)`, known at `close_ts = ts + 1m`: `as_of` filters on it.
+
+    - **binance-um**: Binance's klines.
+    - **hyperliquid-s3**: Hyperliquid's own, built from its published fills,
+      one bar per minute that traded. They add `notional`,
+      `taker_buy_volume` and `liquidations`, and two highs and lows: `high`
+      and `low` leave out liquidation prices, as the venue's candles do;
+      `high_all` and `low_all` keep them. A minute in one of its gaps
+      (`gaps`) has no bar. Asking for this venue gives every row those
+      columns, null on Binance's.
+    """
+    schema = _hyperliquid.CANDLES if _asks(venues, HYPERLIQUID) else None
+    return _finish(_load("candles", tickers, start, end, venues, as_of), "candles", engine, schema)
+
+
+def gaps(tickers, start, end, *, venues=None) -> pl.DataFrame:
+    """The hours a venue's archive did not give, overlapping `[start, end)`: `venue, ticker, series, cause, from_ts, to_ts`.
+
+    Only a venue built from many files states them (hyperliquid-s3). A null
+    `ticker` is every ticker's, and is kept whatever `tickers` names. The
+    bounds are the venue's clock: an archive has no receipt clock.
+    """
+    lo, hi = utils.window(start, end)
+    store = root()
+    held = sorted(p.name.removeprefix("venue=") for p in (store / "kind=gaps").glob("venue=*"))
+    wanted_venues = _names(venues, held, "gaps venue")
+    first, last = _scan._day(lo), _scan._day(hi - 1)
+    files = [
+        f
+        for v in wanted_venues
+        for d in range((last - first).days + 1)
+        if (f := _manifest.gaps_path(store, v, first + timedelta(days=d))).is_file()
+    ]
+    if not files:
+        return pl.DataFrame(schema=_hyperliquid.GAPS)
+    at = lambda micros: pl.lit(micros).cast(pl.Datetime("us")).dt.replace_time_zone("UTC")
+    frame = pl.read_parquet(files).filter((pl.col("from_ts") < at(hi)) & (pl.col("to_ts") > at(lo)))
+    if tickers is not None:
+        asked = [tickers] if isinstance(tickers, str) else list(tickers)
+        frame = frame.filter(pl.col("ticker").is_null() | pl.col("ticker").is_in(asked))
+    return frame.select(list(_hyperliquid.GAPS)).sort("venue", "from_ts")
+
+
+def compare_record(ticker: str, start, end, *, volume_rtol: float = 1e-9) -> dict:
+    """hyperliquid-s3's 1m bars against the record's, minute by minute, outside either side's gaps.
+
+    Returns `ticker`, `both`, `reference_only`, `record_only` (minutes),
+    `differences` (the minutes where open, high, low, close or trade count
+    differ, or volume by more than `volume_rtol` relatively, with both
+    sides' values) and `statement`, set when there is nothing to compare.
+    `high` and `low` are compared, never `high_all` and `low_all`: the
+    venue's candles leave liquidation prices out.
+    """
+    from .. import gaps as record_gaps
+    from .. import market
+
+    fields = ["open", "high", "low", "close", "volume", "trade_count"]
+    out = {"ticker": ticker, "both": 0, "reference_only": 0, "record_only": 0,
+           "differences": pl.DataFrame(), "statement": None}  # fmt: skip
+    ours = candles([ticker], start, end, venues=[HYPERLIQUID]).collect()
+    try:
+        theirs = market.candles([ticker], "1m", start, end)
+    except Refused:
+        return {**out, "statement": f"the record holds no 1m bars of {ticker} to compare"}
+    theirs = theirs.collect() if isinstance(theirs, pl.LazyFrame) else theirs
+    if theirs.is_empty():
+        return {**out, "statement": f"the record holds no 1m bars of {ticker} between {start} and {end} to compare"}
+    try:
+        theirs = record_gaps.mask_gaps(theirs, "candles").filter(~pl.col("in_gap"))
+        record_holes = record_gaps.gaps([ticker], start, end, series="candles").select(
+            pl.col("from_recv_ts").alias("from_ts"), pl.col("to_recv_ts").alias("to_ts")
+        )
+    except Refused:
+        record_holes = pl.DataFrame(schema={"from_ts": _sources.UTC_US, "to_ts": _sources.UTC_US})
+    holes = pl.concat([gaps([ticker], start, end, venues=[HYPERLIQUID]).select("from_ts", "to_ts"), record_holes])
+    for lo, hi in holes.iter_rows():
+        outside = ~((pl.col("ts") < hi) & (pl.col("close_ts") > lo))
+        ours, theirs = ours.filter(outside), theirs.filter(outside)
+    joined = ours.select("ts", *fields).join(theirs.select("ts", *fields), on="ts", how="full", suffix="_record", coalesce=True)
+    mine, record = pl.col("open").is_not_null(), pl.col("open_record").is_not_null()
+    both = joined.filter(mine & record)
+    differs = pl.any_horizontal(
+        *[pl.col(c) != pl.col(f"{c}_record") for c in fields if c != "volume"],
+        (pl.col("volume") - pl.col("volume_record")).abs() > volume_rtol * pl.col("volume_record").abs(),
+    )
+    return {
+        **out,
+        "both": both.height,
+        "reference_only": joined.filter(mine & ~record).height,
+        "record_only": joined.filter(~mine & record).height,
+        "differences": both.filter(differs).sort("ts"),
+    }
+
+
+def _asks(venues, venue: str) -> bool:
+    return venues is not None and venue in ([venues] if isinstance(venues, str) else list(venues))
 
 
 def events(start, end, *, sources: Sequence[str] | str | None = None) -> pl.DataFrame:
@@ -124,19 +223,22 @@ def events(start, end, *, sources: Sequence[str] | str | None = None) -> pl.Data
 
 
 def coverage() -> pl.DataFrame:
-    """One row per (kind, venue, ticker): `first, last, days_ok, days_absent, days_mismatch, days_missing`.
+    """One row per (kind, venue, ticker): `first, last, days_ok, days_partial, days_absent, days_mismatch, days_missing`.
 
-    `first` and `last` are the first and last `ok` days; `days_missing` counts
+    `first` and `last` are the first and last days with bars (`ok`, or
+    `partial`: some hours a gap, see `gaps`); `days_missing` counts
     days between them with no manifest row at all, fetched never. A sampled
     fetch (`--sample weekly:wed`) shows six missing days in seven, as it should.
     """
     m = _manifest.read(root())
     key = ["kind", "venue", "ticker"]
     ok = pl.col("status") == "ok"
+    held = pl.col("status").is_in(_manifest.HELD)
     series = m.group_by(key).agg(
-        pl.col("date").filter(ok).min().alias("first"),
-        pl.col("date").filter(ok).max().alias("last"),
+        pl.col("date").filter(held).min().alias("first"),
+        pl.col("date").filter(held).max().alias("last"),
         ok.sum().cast(pl.UInt32).alias("days_ok"),
+        (pl.col("status") == "partial").sum().cast(pl.UInt32).alias("days_partial"),
         (pl.col("status") == "absent").sum().cast(pl.UInt32).alias("days_absent"),
         (pl.col("status") == "mismatch").sum().cast(pl.UInt32).alias("days_mismatch"),
     )
@@ -233,7 +335,7 @@ def _load(kind, tickers, start, end, venues, as_of) -> pl.LazyFrame | None:
     lo, hi = utils.window(start, end)
     bound = None if as_of is None else utils.instant("as_of", as_of)
     store = root()
-    m = _manifest.read(store).filter((pl.col("kind") == kind) & (pl.col("status") == "ok"))
+    m = _manifest.read(store).filter((pl.col("kind") == kind) & pl.col("status").is_in(_manifest.HELD))
     if m.is_empty():
         raise Refused(f"the reference store {store} holds no {kind}; fetch it with galata-fetch {kind} ...")
     wanted_venues = _names(venues, sorted(m["venue"].unique()), f"{kind} venue")
@@ -257,7 +359,14 @@ def _load(kind, tickers, start, end, venues, as_of) -> pl.LazyFrame | None:
         return None
 
     at = lambda micros: pl.lit(micros).cast(pl.Datetime("us")).dt.replace_time_zone("UTC")
-    lf = pl.scan_parquet(files, hive_partitioning=False).filter((pl.col("ts") >= at(lo)) & (pl.col("ts") < at(hi)))
+    # One scan per venue, since venues' files can carry different columns, stacked by name.
+    by_venue: dict[str, list] = {}
+    for f in files:
+        by_venue.setdefault(next(part for part in f.parts if part.startswith("venue=")), []).append(f)
+    scans = [pl.scan_parquet(fs, hive_partitioning=False) for fs in by_venue.values()]
+    lf = (scans[0] if len(scans) == 1 else pl.concat(scans, how="diagonal_relaxed")).filter(
+        (pl.col("ts") >= at(lo)) & (pl.col("ts") < at(hi))
+    )
     if bound is not None:
         # A bar is known at its close, a snapshot or an execution at its time.
         known = "close_ts" if kind in ("candles", "premium", "daily") else "ts"
@@ -265,12 +374,15 @@ def _load(kind, tickers, start, end, venues, as_of) -> pl.LazyFrame | None:
     return lf
 
 
-def _finish(lf: pl.LazyFrame | None, kind: str, engine: str):
+def _finish(lf: pl.LazyFrame | None, kind: str, engine: str, schema: dict | None = None):
     if engine not in _scan.ENGINES:
         raise Refused(f"engine={engine!r} is not one of {', '.join(_scan.ENGINES)}")
-    schema = _OUT[kind]
+    schema = schema or _OUT[kind]
     if lf is None:
         return _scan.finish(pl.LazyFrame(schema=schema), engine)
+    names = lf.collect_schema().names()
     # Each file is one day in the venue's order; the sort is stable, so ties keep it.
-    out = lf.select(list(schema)).sort(["venue", "ticker", "ts"], maintain_order=True)
+    out = lf.select(
+        [pl.col(c) if c in names else pl.lit(None, dtype).alias(c) for c, dtype in schema.items()]
+    ).sort(["venue", "ticker", "ts"], maintain_order=True)
     return _scan.finish(out, engine)

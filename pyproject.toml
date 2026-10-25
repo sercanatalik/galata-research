@@ -25,6 +25,9 @@ galata-fetch = "galata_research.reference.fetch:main"
 models = ["arch>=8", "scipy>=1.8"]
 # Exchange sessions and closures (gr.calendar), maintained upstream, never typed in here.
 calendars = ["exchange_calendars>=4.13"]
+# Hyperliquid's requester-pays S3 fills (galata-fetch candles hyperliquid-s3): botocore signs with the
+# AWS credential chain, lz4 opens the hour files. Only that fetch imports them.
+hyperliquid = ["botocore>=1.34", "lz4>=4"]
 
 [dependency-groups]
 dev = [

@@ -2,14 +2,16 @@
 
 Research reads the record and never captures it. This command is the one
 exception, stated as settled point 8: it downloads **published archives**
-only, from the hosts in `HOSTS`. It never calls a venue's live API and
-never my account. Nothing in `galata_research` imports it, so loading never
-opens a socket.
+only, from the hosts in `HOSTS`, and from Hyperliquid's requester-pays
+bucket (`S3_HOSTS`, its three fills prefixes only). It never calls a venue's
+live API and never my trading account. Nothing in `galata_research` imports
+it, so loading never opens a socket.
 
     galata-fetch depth binance-um BTC ETH --from 2023-01-01 --to 2026-09-26 --dry-run
     galata-fetch book bybit-linear BTC --from 2023-01-18 --to 2026-09-26 --sample weekly:wed
     galata-fetch trades okx-swap BTC ETH --from 2023-01-02 --to 2026-09-26 --days 2026-09-26  # files of 09-26 and 09-27
     galata-fetch update --dry-run   # what the forward claims need, from each series' last day to yesterday
+    AWS_PROFILE=my-sso galata-fetch candles hyperliquid-s3 BTC CL --from 2026-09-21 --to 2026-09-27 --sample every:1 --dry-run
 
 - **Idempotent**: a day whose manifest row is `ok` is skipped; `--refetch`
   asks again and records `mismatch` if the bytes changed, keeping the old day.
@@ -20,6 +22,14 @@ opens a socket.
 - **Declared days** for the heavy kinds: Bybit's book is 93 MB zipped a day
   for BTC and Binance's aggTrades 10 MB (2026-09); without `--days` or
   `--sample` the command refuses, stating what the whole range would cost.
+- **hyperliquid-s3** is built, not copied: each day's 25 hour files are
+  listed, downloaded once and read into every asked ticker's 1m bars and
+  the day's gaps (`run_hyperliquid`). The bucket bills the requester, so it
+  is signed (`Signer`: botocore's credential chain, the `[hyperliquid]`
+  extra), always on declared days, and `--dry-run` and the refusal state the
+  files, bytes and dollars. A `partial` day (an hour a gap) is asked again
+  only with `--refetch-absent`; an hour file whose bytes changed since it
+  was read makes the day `mismatch`, and the held day is kept.
 """
 
 import argparse
@@ -40,7 +50,7 @@ import polars as pl
 
 from .. import _root as _record_root
 from .._errors import Refused
-from . import _events, _instruments, _manifest, _root, _sources
+from . import _events, _hyperliquid, _instruments, _manifest, _root, _sources
 
 # s3-ap-northeast-1.amazonaws.com is the bucket behind data.binance.vision, asked only for its listing.
 HOSTS = ("data.binance.vision", "s3-ap-northeast-1.amazonaws.com", "public.bybit.com", "quote-saver.bycsi.com", "static.okx.com")
@@ -53,32 +63,48 @@ _RETRIES = (1.0, 2.0, 4.0)
 
 
 class Response:
-    def __init__(self, status: int, body: bytes = b"", size: int | None = None):
+    def __init__(self, status: int, body: bytes = b"", size: int | None = None, headers: dict[str, str] | None = None):
         self.status, self.body, self.size = status, body, size
+        self.headers = headers or {}
 
 
-def _transport(url: str, method: str, agent: str = "galata-fetch") -> Response:
+def _transport(url: str, method: str, agent: str = "galata-fetch", headers: dict[str, str] | None = None) -> Response:
     """The one place a socket opens. Tests replace it with a fixture archive."""
     # A symbol in another script (币安人生USDT) is percent-encoded; an encoded URL is left as it is.
     url = urllib.parse.quote(url, safe=":/?&=%~+")
-    request = urllib.request.Request(url, method=method, headers={"User-Agent": agent})
+    request = urllib.request.Request(url, method=method, headers={"User-Agent": agent, **(headers or {})})
     try:
         with urllib.request.urlopen(request, timeout=120) as r:
             body = r.read() if method == "GET" else b""
             length = r.headers.get("Content-Length")
-            return Response(r.status, body, int(length) if length else len(body))
+            answer = {k.lower(): v for k, v in r.headers.items()}
+            return Response(r.status, body, int(length) if length else len(body), answer)
     except urllib.error.HTTPError as e:
-        return Response(e.code)
+        return Response(e.code, e.read())
 
 
-def get(url: str, method: str = "GET", *, hosts: tuple[str, ...] = HOSTS, agent: str = "galata-fetch") -> Response:
-    """A listed host's answer, retried on a network error, a truncated body or a 5xx; any other host is refused."""
+def get(
+    url: str,
+    method: str = "GET",
+    *,
+    hosts: tuple[str, ...] = HOSTS,
+    agent: str = "galata-fetch",
+    headers=None,
+) -> Response:
+    """A listed host's answer, retried on a network error, a truncated body or a 5xx; any other host is refused.
+
+    `headers`, when given, is a function of the URL and method returning the
+    request's headers, asked again on every attempt: a signature is dated.
+    """
     host = urlsplit(url).hostname
     if host not in hosts:
         raise Refused(f"{host} is not an archive this command fetches from; it fetches from {', '.join(hosts)}")
     for pause in (*_RETRIES, None):
         try:
-            response = _transport(url, method, agent)
+            if headers is None:
+                response = _transport(url, method, agent)
+            else:
+                response = _transport(url, method, agent, headers(method, url))
         # A body cut off mid-transfer (IncompleteRead) is retried like any network error.
         except (urllib.error.URLError, TimeoutError, ConnectionError, http.client.IncompleteRead):
             if pause is None:
@@ -116,6 +142,279 @@ def universe(kind: str) -> list[str]:
     prefixes, _ = listing(_sources.monthly_prefix(kind))
     symbols = sorted(p.rstrip("/").rsplit("/", 1)[1] for p in prefixes)
     return [s.removesuffix("USDT") for s in symbols if s.endswith("USDT") and len(s) > 4]
+
+
+# ---- hyperliquid-s3: Hyperliquid's own fills, from a requester-pays bucket ----------------------
+
+# The one bucket asked with a signature, and only for its three prefixes (`_hyperliquid.allowed`).
+S3_HOSTS = (_hyperliquid.HOST,)
+# ap-northeast-1's published rates (MEASURED in `_instruments`): transfer to the internet per GB,
+# then each GET and each LIST. The requester pays them, so the estimate is the user's bill.
+TRANSFER_USD_PER_GB = 0.114
+GET_USD = 0.0037 / 10_000
+LIST_USD = 0.0047 / 1_000
+_NO_CREDENTIALS = (
+    "no AWS credentials were found, and the bucket is requester-pays: set AWS_PROFILE to a profile in "
+    "~/.aws/config or ~/.aws/credentials (an SSO profile after aws sso login), or AWS_ACCESS_KEY_ID and "
+    "AWS_SECRET_ACCESS_KEY"
+)
+
+
+class Signer:
+    """SigV4 for the bucket, from botocore's credential chain; the credentials stay in memory, never named."""
+
+    def __init__(self):
+        try:
+            from botocore.auth import S3SigV4Auth
+            from botocore.awsrequest import AWSRequest
+            from botocore.session import Session
+        except ImportError:
+            raise Refused("hyperliquid-s3 signs with botocore: install the extra with uv sync --extra hyperliquid") from None
+        self._auth, self._request = S3SigV4Auth, AWSRequest
+        self.profile = os.environ.get("AWS_PROFILE") or "default"
+        try:
+            credentials = Session().get_credentials()
+        except Exception as e:  # noqa: BLE001 -- the chain's errors (SSO, profiles) are named by type only
+            raise self._unloadable(e) from None
+        if credentials is None:
+            raise Refused(_NO_CREDENTIALS)
+        self._credentials = credentials
+
+    def _unloadable(self, e: Exception) -> Refused:
+        return Refused(
+            f"the AWS credentials of profile {self.profile} could not be loaded ({type(e).__name__}); "
+            f"for an SSO profile, run aws sso login --profile {self.profile}"
+        )
+
+    def __call__(self, method: str, url: str) -> dict[str, str]:
+        try:
+            # Refreshed here if they expire during a long fetch.
+            frozen = self._credentials.get_frozen_credentials()
+        except Exception as e:  # noqa: BLE001
+            raise self._unloadable(e) from None
+        request = self._request(method=method, url=url, headers={"x-amz-request-payer": "requester"})
+        self._auth(frozen, "s3", _hyperliquid.REGION).add_auth(request)
+        return dict(request.headers.items())
+
+
+def _signer() -> Signer:
+    """The run's signer. Tests replace it."""
+    return Signer()
+
+
+def s3(path: str, sign, method: str = "GET") -> Response:
+    """One signed request to the bucket: a key, or `?list-type=2&prefix=...`, only under the three prefixes."""
+    asked = urllib.parse.parse_qs(path[1:]).get("prefix", [""])[0] if path.startswith("?") else path
+    if not _hyperliquid.allowed(asked):
+        raise Refused(
+            f"{asked!r} is outside what hyperliquid-s3 reads: s3://{_hyperliquid.BUCKET}/ under "
+            + ", ".join(f"{p}/hourly/" for p in _hyperliquid.PREFIXES)
+        )
+    response = get(f"https://{_hyperliquid.HOST}/{path}", method, hosts=S3_HOSTS, headers=sign)
+    if response.status in (401, 403):
+        raise Refused(f"the bucket answered HTTP {response.status} ({_s3_code(response)}) for {asked}; is profile {getattr(sign, 'profile', '?')} logged in?")
+    return response
+
+
+def _s3_code(response: Response) -> str:
+    import re as _re
+
+    found = _re.search(rb"<Code>([^<]*)</Code>", response.body or b"")
+    return found.group(1).decode() if found else "no error code"
+
+
+def s3_listing(directory: str, sign) -> tuple[dict[str, tuple[int, str]], int]:
+    """Every key under a day's directory, with its size and ETag, and the LIST requests it took."""
+    from xml.etree import ElementTree
+
+    files: dict[str, tuple[int, str]] = {}
+    token, calls = None, 0
+    while True:
+        query = f"?list-type=2&prefix={urllib.parse.quote(directory, safe='')}"
+        if token:
+            query += f"&continuation-token={urllib.parse.quote(token, safe='')}"
+        response = s3(query, sign)
+        calls += 1
+        if response.status != 200:
+            raise Refused(f"the bucket's listing of {directory} answered HTTP {response.status} ({_s3_code(response)})")
+        root = ElementTree.fromstring(response.body)
+        local = {el: el.tag.rsplit("}", 1)[-1] for el in root.iter()}
+        for item in (el for el, name in local.items() if name == "Contents"):
+            fields = {local[c]: c.text or "" for c in item}
+            files[fields["Key"]] = (int(fields["Size"]), fields["ETag"].strip('"'))
+        truncated = next((el.text for el, name in local.items() if name == "IsTruncated"), "false")
+        if truncated != "true":
+            return files, calls
+        token = next((el.text for el, name in local.items() if name == "NextContinuationToken"), None)
+        if not token:
+            raise Refused(f"the bucket's listing of {directory} is truncated without a continuation token")
+
+
+def estimate(files: int, size: int, lists: int = 0) -> float:
+    """What a fetch costs the requester, in USD, at the rates above."""
+    return size / 1e9 * TRANSFER_USD_PER_GB + files * GET_USD + lists * LIST_USD
+
+
+def run_hyperliquid(args, say) -> int:
+    """`galata-fetch candles hyperliquid-s3 TICKER...`: each day's hour files read once, into every ticker's 1m bars.
+
+    A day is held per ticker in the manifest, `ok` or `partial` (some hour a
+    gap, stated under `kind=gaps`), and its files in the object ledger. A
+    `partial` or `absent` day is asked again only with `--refetch-absent`;
+    the hours the archive lacked are not paid for twice by accident.
+    """
+    venue = _instruments.HYPERLIQUID
+    if args.kind != "candles":
+        raise Refused(f"{venue} is built as candles, its gaps beside them; it publishes no {args.kind}")
+    if args.all or not args.tickers:
+        raise Refused(f"name the {venue} tickers; --all lists {_instruments.OPEN_VENUE}'s monthly kinds only")
+    symbols = _hyperliquid.symbols_for(args.tickers)
+    listed = {t: _instruments.instrument(venue, t).listed for t in args.tickers}
+    _hyperliquid.require_lz4()
+    store, _ = _root.resolve()
+    _refuse_inside_the_record(store)
+    held = {(r["ticker"], r["date"]): r for r in _manifest.read(store).filter(pl.col("venue") == venue).iter_rows(named=True)}
+
+    start = max(getattr(args, "from"), min(listed.values()))
+    if getattr(args, "from") < start:
+        say(f"{venue} holds none of {', '.join(args.tickers)} before {start}; {(start - getattr(args, 'from')).days} earlier day(s) not requested")
+    days = days_between(start, args.to)
+    chosen = declared(days, args.days, args.sample)
+
+    def wanted(day: date) -> list[str]:
+        asked = []
+        for t in args.tickers:
+            row = held.get((t, day))
+            if listed[t] > day:
+                continue
+            if (
+                row is None
+                or (row["status"] in ("absent", "partial") and args.refetch_absent)
+                or (row["status"] in ("ok", "mismatch") and args.refetch)
+            ):
+                asked.append(t)
+        return asked
+
+    work = [(d, w) for d in (days if chosen is None else chosen) if (w := wanted(d))]
+    skipped = sum(len(args.tickers) for d in (days if chosen is None else chosen)) - sum(len(w) for _, w in work)
+    sign = _signer()
+    listings: dict[str, dict[str, tuple[int, str]]] = {}
+    lists = 0
+
+    def held_files(day: date) -> dict[str, tuple[int, str]]:
+        nonlocal lists
+        out = {}
+        for k in _hyperliquid.keys(day):
+            folder = k.rsplit("/", 1)[0] + "/"
+            if folder not in listings:
+                listings[folder], calls = s3_listing(folder, sign)
+                lists += calls
+            if k in listings[folder]:
+                out[k] = listings[folder][k]
+        return out
+
+    if chosen is None or args.dry_run:
+        sizes = {d: held_files(d) for d, _ in work}
+        files = sum(len(s) for s in sizes.values())
+        size = sum(b for s in sizes.values() for b, _ in s.values())
+        cost = estimate(files, size, lists)
+        if chosen is None and work:
+            raise Refused(
+                f"{venue} is fetched on declared days only: {len(work)} days need {files:,} hour files, "
+                f"{size / 1e9:,.1f} GB, about ${cost:,.2f} to the requester (an estimate, at "
+                f"${TRANSFER_USD_PER_GB}/GB from {_hyperliquid.REGION}); name them with --days or --sample weekly:wed"
+            )
+        for day, tickers in work:
+            s = sizes[day]
+            say(f"{day} candles {venue} {', '.join(tickers)}: {len(s)} files, {sum(b for b, _ in s.values()) / 1e6:,.1f} MB")
+        say(
+            f"{len(work)} day(s) to fetch: {files:,} files, {size / 1e6:,.1f} MB, about ${cost:,.2f} "
+            f"(an estimate, {lists} listing requests included); {skipped} ticker-day(s) already in the manifest"
+        )
+        return 0
+
+    ledger = {r["key"]: r for r in _manifest.read_objects(store).iter_rows(named=True)}
+    failed = 0
+    for day, tickers in work:
+        rows, objects, line, bad = _fetch_hyperliquid_day(store, day, tickers, symbols, held_files(day), sign, args.jobs, ledger, held)
+        _manifest.upsert(store, rows)
+        if objects:
+            _manifest.upsert_objects(store, objects)
+            ledger.update({o["key"]: o for o in objects})
+        failed += bad
+        say(line)
+    say(f"{len(work)} day(s) asked, {failed} failed or mismatched; {skipped} ticker-day(s) were already in the manifest")
+    return 1 if failed else 0
+
+
+def _fetch_hyperliquid_day(store, day, tickers, symbols, files, sign, jobs, ledger, held) -> tuple[list[dict], list[dict], str, int]:
+    """Download, check, read and write one day for its tickers: manifest rows, ledger rows, a line, and 1 if it failed."""
+    venue = _instruments.HYPERLIQUID
+    began = time.perf_counter()
+    now = datetime.now(UTC)
+    coins = {symbols[t]: t for t in tickers}
+    folders = sorted({k.rsplit("/", 1)[0] + "/" for k in files})
+    base = {"kind": "candles", "venue": venue, "date": day, "url": " ".join(f"s3://{_hyperliquid.BUCKET}/{f}" for f in folders),
+            "published_sha256": None, "fetched_at_recv": now}  # fmt: skip
+    if not any(h.own in files for h in _hyperliquid.hours(day) if h.own):
+        rows = [{**base, "ticker": t, "url": base["url"] or None, "bytes": None, "sha256": None, "rows": None, "status": "absent"} for t in tickers]
+        return rows, [], f"{day} candles {venue} absent: the archive holds none of the day's hours", 0
+
+    def one(k: str):
+        response = s3(k, sign)
+        if response.status == 404:
+            return k, None, None
+        if response.status != 200:
+            raise Refused(f"{k} answered HTTP {response.status} ({_s3_code(response)})")
+        digest = hashlib.sha256(response.body).hexdigest()
+        etag = response.headers.get("etag", "").strip('"') or files[k][1]
+        record = {"bucket": _hyperliquid.BUCKET, "key": k, "etag": etag, "bytes": len(response.body), "sha256": digest,
+                  "fetched_at_recv": now, "status": "ok"}  # fmt: skip
+        try:
+            trades = _hyperliquid.read(response.body, k, coins)
+        except _hyperliquid.HourFailed as e:
+            trades = e
+            record["status"] = e.cause
+        return k, trades, record
+
+    read_hours: dict = {k: None for k in _hyperliquid.keys(day)}
+    records: list[dict] = []
+    with ThreadPoolExecutor(max_workers=jobs) as pool:
+        for k, trades, record in pool.map(one, sorted(files)):
+            read_hours[k] = trades
+            if record is not None:
+                records.append(record)
+
+    changed = [r["key"] for r in records if (old := ledger.get(r["key"])) is not None and old["sha256"] != r["sha256"]]
+    if changed:
+        # The archive rewrote an hour already read: keep the day as loaded, and say which hour.
+        rows = [{**held[(t, day)], "fetched_at_recv": now, "status": "mismatch"} if (t, day) in held else
+                {**base, "ticker": t, "bytes": None, "sha256": None, "rows": None, "status": "mismatch"} for t in tickers]  # fmt: skip
+        return rows, [], f"{day} candles {venue} MISMATCH: {', '.join(changed)} changed since read; the held day is kept", 1
+
+    bars, gaps = _hyperliquid.assemble(day, read_hours, {t: symbols[t] for t in tickers})
+    for t in tickers:
+        _write(bars.filter(pl.col("ticker") == t), _manifest.day_path(store, "candles", venue, t, day))
+    _write(gaps, _manifest.gaps_path(store, venue, day))
+    status = "partial" if gaps.height else "ok"
+    total = sum(r["bytes"] for r in records)
+    digest = hashlib.sha256("\n".join(f"{r['key']} {r['sha256']}" for r in sorted(records, key=lambda r: r["key"])).encode()).hexdigest()
+    counts = dict(bars.group_by("ticker").len().iter_rows())
+    rows = [{**base, "ticker": t, "bytes": total, "sha256": digest, "rows": counts.get(t, 0), "status": status} for t in tickers]
+    causes = gaps.group_by("cause").agg(pl.len(), (pl.col("to_ts") - pl.col("from_ts")).sum().alias("span")).sort("cause")
+    stated = "; gaps: " + ", ".join(f"{c} {n} ({s})" for c, n, s in causes.iter_rows()) if gaps.height else ""
+    line = (
+        f"{day} candles {venue} {status} {bars.height:,} bars ({', '.join(f'{t} {counts.get(t, 0)}' for t in tickers)}) "
+        f"from {len(records)} files, {total / 1e6:,.1f} MB, {time.perf_counter() - began:.1f}s{stated}"
+    )
+    return rows, records, line, 0
+
+
+def _write(frame: pl.DataFrame, path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(".tmp")
+    frame.write_parquet(tmp)
+    tmp.replace(path)
 
 
 def held_months(kind: str, ticker: str) -> list[date]:
@@ -361,6 +660,12 @@ def run(argv: list[str] | None = None, say=print) -> int:
     args = _parser().parse_args(argv)
     if args.to < getattr(args, "from"):
         raise Refused("--to is before --from")
+    if args.venue == _instruments.HYPERLIQUID:
+        if args.jobs is None:
+            args.jobs = MAX_JOBS
+        if not 1 <= args.jobs <= MAX_JOBS:
+            raise Refused(f"--jobs {args.jobs} is outside 1..{MAX_JOBS} for {args.venue}")
+        return run_hyperliquid(args, say)
     most = MAX_JOBS_LIGHT if args.kind in _instruments.LIGHT else MAX_JOBS
     if args.jobs is None:
         args.jobs = most

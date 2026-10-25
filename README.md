@@ -403,8 +403,14 @@ apart from the record: `var/reference/`, or `GALATA_REFERENCE`, or
 `reference_root` in `galata-research.toml`. It is the one command here that
 downloads, and settled point 8 says what it may do:
 - archives only, from `data.binance.vision`, `public.bybit.com`,
-  `quote-saver.bycsi.com` and `static.okx.com`;
-- never a venue's live API, and never my account.
+  `quote-saver.bycsi.com` and `static.okx.com`, and Hyperliquid's
+  requester-pays bucket `s3://hl-mainnet-node-data` (its three fills
+  prefixes, nothing else);
+- never a venue's live API, and never my trading account. The bucket bills
+  the AWS account that asks, so `hyperliquid-s3` signs with that account's
+  credentials (the `[hyperliquid]` extra, botocore's chain: `AWS_PROFILE`, an
+  SSO profile after `aws sso login`, or keys in the environment) and keeps
+  none of them.
 
 ```sh
 galata-fetch depth   binance-um   BTC ETH --from 2023-01-01 --to 2026-09-26 --dry-run
@@ -412,6 +418,8 @@ galata-fetch candles binance-um   BTC     --from 2019-12-31 --to 2026-09-26
 galata-fetch trades  bybit-linear BTC     --from 2023-01-01 --to 2026-09-26 --sample every:3
 galata-fetch book    bybit-linear BTC     --from 2023-01-18 --to 2026-09-26 --sample weekly:wed
 galata-fetch trades  okx-swap     BTC ETH --from 2023-01-02 --to 2026-09-26 --days 2026-09-26
+AWS_PROFILE=my-sso uv run --extra hyperliquid \
+galata-fetch candles hyperliquid-s3 BTC ETH HYPE CL GOLD --from 2026-09-21 --to 2026-09-27 --sample every:1 --dry-run
 galata-fetch update  --dry-run    # each declared series from its last day to yesterday
 ```
 
@@ -420,12 +428,14 @@ galata-fetch update  --dry-run    # each declared series from its last day to ye
 | `gr.reference.depth(tickers, start, end, *, venues, as_of)` | Binance's cumulative depth per band, every 30 s | `band_pct` signed, bid negative; ±0.2% only in later files |
 | `gr.reference.trades(..., rpi=None)` | signed trades: Binance aggTrades, Bybit and OKX executions | Bybit time exact to 100 µs from its text; OKX sizes in BTC/ETH, not contracts; `rpi=False` drops Bybit's retail-price-improvement and OKX's Enhanced Liquidity Program fills |
 | `gr.reference.book(...)` | Bybit's book replayed, one row per second: top, depth within 2 and 10 bps, each side's reach | a band past the deepest level held is null, never a truncated sum |
-| `gr.reference.candles(...)` | Binance 1m bars | known at `close_ts`; `as_of` filters on it |
+| `gr.reference.candles(...)` | 1m bars: Binance's klines; Hyperliquid's own (`venues=["hyperliquid-s3"]`), built from its published fills | known at `close_ts`; `as_of` filters on it. Hyperliquid's add `notional`, `taker_buy_volume`, `liquidations`, and `high_all`/`low_all`: `high`/`low` leave liquidation prices out, as the venue's candles do, and the `_all` pair keeps them |
+| `gr.reference.gaps(tickers, start, end, *, venues)` | the hours hyperliquid-s3's archive did not give, with `cause` (`archive-missing`, `unreadable`, `unparsed`) | on the venue's clock; a null `ticker` is every ticker's; no bar is written in a gap |
+| `gr.reference.compare_record(ticker, start, end)` | hyperliquid-s3's 1m bars against the record's, minute by minute | outside both sides' gaps; prices exact, volume to 1e-9; never `high_all`/`low_all`; a ticker the record lacks is stated, not matched |
 | `gr.reference.funding(...)`, `funding_hours(settled)` | Binance's settled funding, `rate` and `interval_hours`; as hourly rows for `backtest.returns(funding=)` | published a month at a time (no daily file), held under the month's first day; the rate on its settlement hour and 0 on the hours before it, so a missing settlement leaves its bars uncharged |
 | `gr.reference.premium(...)` | Binance's 1m premium index: the perp's premium over its index | known at `close_ts`; the input to Binance's funding |
 | `gr.reference.daily(None, ...)` | daily bars of every Binance USDT perpetual held | fetched by `galata-fetch daily binance-um --all`, which lists the archive's bucket, so delisted coins are held to their last month; any base asset names its perpetual (the record's HIP-3 `CL` and `XYZ100` excepted) |
 | `gr.reference.events(start, end, *, sources)` | CPI, jobs and FOMC with their UTC release instants | fetched from bls.gov and federalreserve.gov by `galata-fetch events`; BLS only with `GALATA_CONTACT`, which is never stored |
-| `gr.reference.coverage()` | per series: `first, last, days_ok, days_absent, days_mismatch, days_missing` | absent (the archive lacked it) is not missing (never fetched) |
+| `gr.reference.coverage()` | per series: `first, last, days_ok, days_partial, days_absent, days_mismatch, days_missing` | absent (the archive lacked it) is not missing (never fetched); partial is a day with bars and a gap |
 
 The fetch has these rules:
 - **One manifest row per day**, holding the URL, sha256 and Binance's published checksum. It makes every day refetchable and checkable. The raw archive is not kept.
@@ -435,6 +445,7 @@ The fetch has these rules:
 - **Sized first:** `--dry-run` states the days and bytes and downloads nothing.
 - **Heavy kinds on declared days only.** A Bybit BTC book day is 93–167 MB zipped. `book`, Binance `trades` and OKX `trades` need `--days` or `--sample` (`weekly:<dow>`, or `every:<n>`, which turns through the week).
 - **Kept current by `galata-fetch update`.** It brings the forward claims' series (BTC depth and candles, ETH candles, BTC trades on both venues every ninth day) from each one's last `ok` day to yesterday, and asks again for days recorded `absent` because they were asked before publication. galata-datawatch's cereyan lane runs it daily at 07:30 UTC as the flow `update-the-reference`, from `py/signals`' pinned environment, with the store named by `GALATA_REFERENCE`. Without `GALATA_CONTACT` it keeps the BLS events already held.
+- **Hyperliquid's own fills, `hyperliquid-s3`.** 11 tickers under the record's names (BTC, ETH, HYPE, and the xyz dex's BRENTOIL, CL, GOLD, NVDA, SILVER, SKHX, SP500, XYZ100; its FX perps EUR and JPY are left out, since they trade in too few minutes), from 2025-03-22 or each market's listing. The archive is three formats in turn, each handover hour read from the later one; a day is 25 hour files (its own and the next day's first, whose first second holds the day's last), each read once for every ticker asked, and recorded in an object ledger (`objects.parquet`) by key, ETag and sha256. One row per trade, placed by its own time; the venue's `NetChildVaultPositions` rows are not trades. A day is `partial` when an hour is a gap, and asked again only with `--refetch-absent`. Always on declared days: the whole archive is ~360 GB, about $41 to the requester (2026-10-25), and the refusal states the range's files, GB and dollars. The figures, and how the bars were checked against the venue's own candles, are the MEASURED block in `reference/_instruments.py`.
 - **OKX's day is Beijing's.** Its file for a date runs 16:00 to 16:00 UTC and is stored under that date; a named UTC day fetches that date's file and the next. Its archive is taken from 2021-11-01: October 2021 lists every trade twice, as a BUY and a SELL, and is refused.
 
 No frame has `recv_ts`: an archive has no receipt clock, and none is made up.
@@ -469,6 +480,7 @@ trial, so N is the true N) back these notebooks:
 | Notebook | Asks |
 |---|---|
 | `candles.py`, `ticks.py`, `gaps.py`, `clocks.py`, `account.py` | what the record holds, and how the loaders read it |
+| `hyperliquid_archive.py` | Hyperliquid's own archive from its S3 fills: coverage, gaps, and its 1m bars against the record's |
 | `moving_average.py`, `momentum.py` | a Sharpe landscape for two example families |
 | `indicator_signals.py` | do the standard indicators survive their search? The pre-registered test of five families (EMA, RSI, Bollinger, MACD, Supertrend), 50 rules × BTC, ETH, N = 100, against DSR, PBO, the Reality Check and permuted bars, with six years of Binance as a secondary. Registered (`020ef19`); **not yet run on the record** |
 | `overlays.py` | do stops help? The pre-registered test of 12 stop and take-profit overlays on buy-and-hold, an MA rule and the Donchian ensemble, BTC and ETH daily (N = 78): a Reality Check per base against the base itself, then DSR and PBO over all. Registered (`f96b81a`); **not yet run on the record** |
@@ -740,8 +752,9 @@ show (Menkveld et al. 2024, *Nonstandard Errors*, *JF* 79(3):2339–2390).
     reference/     published archives, apart from the record
       _instruments.py  what each archive lists, from when, in which units
       _sources.py      each archive's layout and its parse; no network
+      _hyperliquid.py  Hyperliquid's fills into trades, 1m bars and gaps; no network
       _events.py       FOMC and BLS calendars
-      _manifest.py     one row per day: URL, sha256, status
+      _manifest.py     one row per day: URL, sha256, status; the object ledger
       fetch.py         galata-fetch, the one command that downloads
     models/        the [models] extra, loaded on first use
       _arch.py     the only place arch's pandas output is taken apart

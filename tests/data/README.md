@@ -17,3 +17,20 @@ its joint log-likelihood −10111.2993183835, Q̄, the last R, the one-step R
 forecast, and the residuals and σ. `tests/corr.py` evaluates
 `gr.models.corr`'s filter and likelihood at R's parameters on R's residuals, and
 re-estimates (a, b) end to end, the two levels pymgarch checks.
+
+`hyperliquid_s3/` holds three hours of Hyperliquid's published fills from the
+requester-pays bucket `s3://hl-mainnet-node-data`, under the bucket's own keys,
+trimmed on 2026-10-25 and recompressed with LZ4 frames as the bucket writes them:
+
+- `node_trades/hourly/20250401/12.lz4`: the hour's first 300 trades, and every
+  `LiquidatedMarket` and `NetChildVaultPositions` row in it;
+- `node_fills/hourly/20250701/12.lz4`: both fills of BTC's first 150 trades, of
+  40 liquidations, of 20 trades in the spot coin `@107`, and the four fills
+  stamped in the previous hour;
+- `node_fills_by_block/hourly/20260924/14.lz4`: 92 blocks (the previous hour's
+  last second; BTC's and SILVER's liquidation lows, see `reference/_instruments.py`;
+  xyz:CL and `@107` blocks), each cut to the events of BTC, xyz:CL, xyz:SILVER
+  and `@107`, and a cascade block to 24 liquidations and 16 ordinary trades.
+
+Every kept trade keeps both of its fills. Addresses and order ids are the chain's
+own public data.
