@@ -16,6 +16,7 @@ check them all as CI does with `uv run marimo check notebooks/*/*.py`.
 | `gaps.py` | where the capture has holes, loaded on the receipt clock |
 | `clocks.py` | the two clocks: the venue's time and the receipt time |
 | `account.py` | my margin snapshots, positions, fills and ledger history |
+| `hyperliquid_archive.py` | Hyperliquid's own archive (`hyperliquid-s3`): what the store holds, its gaps, and its 1m bars against the record's |
 
 ## `backtests/` — signal families, overlays, and the statistics that judge a backtest
 
