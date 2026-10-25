@@ -121,9 +121,11 @@ def candles(tickers, start, end, *, venues=None, as_of=None, engine: str = "pola
 
 
 def gaps(tickers, start, end, *, venues=None) -> pl.DataFrame:
-    """The hours a venue's archive did not give, overlapping `[start, end)`: `venue, ticker, series, cause, from_ts, to_ts`.
+    """The spans a venue's archive did not give, overlapping `[start, end)`: `venue, ticker, series, cause, from_ts, to_ts`.
 
-    Only a venue built from many files states them (hyperliquid-s3). A null
+    Only a venue built from many files states them (hyperliquid-s3): an hour
+    `archive-missing`, `unreadable` or `unparsed`, or `archive-silent`, 10 s
+    or more in which no coin traded, the archiving node stopped. A null
     `ticker` is every ticker's, and is kept whatever `tickers` names. The
     bounds are the venue's clock: an archive has no receipt clock.
     """

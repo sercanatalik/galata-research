@@ -336,7 +336,14 @@ def run_hyperliquid(args, say) -> int:
     ledger = {r["key"]: r for r in _manifest.read_objects(store).iter_rows(named=True)}
     failed = 0
     for day, tickers in work:
-        rows, objects, line, bad = _fetch_hyperliquid_day(store, day, tickers, symbols, held_files(day), sign, args.jobs, ledger, held)
+        try:
+            rows, objects, line, bad = _fetch_hyperliquid_day(store, day, tickers, symbols, held_files(day), sign, args.jobs, ledger, held)
+        except Refused:
+            raise  # credentials, a 403, a host or key refused: every later day would fail the same way
+        except Exception as e:  # noqa: BLE001 -- one day's failure is named, and the others still land
+            failed += 1
+            say(f"{day} candles {venue} FAILED: {type(e).__name__}: {e}")
+            continue
         _manifest.upsert(store, rows)
         if objects:
             _manifest.upsert_objects(store, objects)
@@ -356,7 +363,7 @@ def _fetch_hyperliquid_day(store, day, tickers, symbols, files, sign, jobs, ledg
     folders = sorted({k.rsplit("/", 1)[0] + "/" for k in files})
     base = {"kind": "candles", "venue": venue, "date": day, "url": " ".join(f"s3://{_hyperliquid.BUCKET}/{f}" for f in folders),
             "published_sha256": None, "fetched_at_recv": now}  # fmt: skip
-    if not any(h.own in files for h in _hyperliquid.hours(day) if h.own):
+    if not any(p.own in files for p in _hyperliquid.parts(day) if p.own):
         rows = [{**base, "ticker": t, "url": base["url"] or None, "bytes": None, "sha256": None, "rows": None, "status": "absent"} for t in tickers]
         return rows, [], f"{day} candles {venue} absent: the archive holds none of the day's hours", 0
 
@@ -371,7 +378,7 @@ def _fetch_hyperliquid_day(store, day, tickers, symbols, files, sign, jobs, ledg
         record = {"bucket": _hyperliquid.BUCKET, "key": k, "etag": etag, "bytes": len(response.body), "sha256": digest,
                   "fetched_at_recv": now, "status": "ok"}  # fmt: skip
         try:
-            trades = _hyperliquid.read(response.body, k, coins)
+            trades = _hyperliquid.scan(response.body, k, coins)
         except _hyperliquid.HourFailed as e:
             trades = e
             record["status"] = e.cause

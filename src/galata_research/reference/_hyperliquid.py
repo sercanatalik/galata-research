@@ -12,15 +12,20 @@ its `events`. A trade in the fills formats is two fills under one
 - **Placed by its own time.** A file holds what the node received in its
   hour, so a trade stamped in an hour's last second can be in the next
   file: an hour is read from its own file and the next.
-- **Each hour from one format.** Formats overlap at each handover, and
-  `node_trades` has no `tid` to match a trade across them, so an hour of
-  trade time is read from the format `CUTS` gives it and from no other.
+- **Each instant from one format.** Formats overlap at each handover, and
+  `node_trades` has no `tid` to match a trade across them, so each instant
+  of trade time is read from the format `CUTS` gives it: a later format
+  from its own first trade, the earlier one up to it.
 - **Bars as the venue's.** Volume, trade count, open and close take every
   trade; `high` and `low` leave out liquidation prices, as the venue's
   candles do, and `high_all` and `low_all` keep them. `node_trades`'
   `NetChildVaultPositions` rows are not trades the venue's candles count.
 - **An hour not read is a gap**, with its cause, for every ticker: no bar
   is written in it, and a bar is never shortened by one.
+- **So is a silence.** The archiving node stops for minutes at a time
+  inside files that exist. Across every coin, an ordinary hour's longest
+  step between trades is 2.5 s (MEASURED in `_instruments`); a step of
+  `SILENCE` or more over the files a day is read from is `archive-silent`.
 """
 
 import io
@@ -37,14 +42,18 @@ BUCKET = "hl-mainnet-node-data"
 REGION = "ap-northeast-1"
 HOST = f"{BUCKET}.s3.{REGION}.amazonaws.com"
 PREFIXES = ("node_trades", "node_fills", "node_fills_by_block")
-CAUSES = ("archive-missing", "unreadable", "unparsed")
+CAUSES = ("archive-missing", "unreadable", "unparsed", "archive-silent")
+# The shortest step between two trades, across every coin, that is the archive's silence and not the market's.
+SILENCE_US = 10_000_000
 
 UTC_US = pl.Datetime("us", "UTC")
 _HOUR = timedelta(hours=1)
 _MINUTE_US = 60_000_000
-_SECOND = timedelta(seconds=1)
+_EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
 # node_trades' trade_dir_override: what each says, and whether the venue counts the row as a trade.
 _OVERRIDES = {"Na": (False, True), "LiquidatedMarket": (True, True), "NetChildVaultPositions": (False, False)}
+# The override as an object, `{"LiquidatedCross": "B"}`: a liquidation of that margin mode, with a side.
+_LIQUIDATED = frozenset({"LiquidatedCross", "LiquidatedIsolated"})
 
 TRADES = {"ticker": pl.String, "micros": pl.Int64, "price": pl.Float64, "size": pl.Float64,
           "taker_buy": pl.Boolean, "liquidation": pl.Boolean, "seq": pl.Int64}  # fmt: skip
@@ -85,46 +94,67 @@ def allowed(path: str) -> bool:
 
 
 @dataclass(frozen=True)
-class Hour:
-    """One hour of trade time: the format it is read from, its own file, and the next (its last second's spill)."""
+class Part:
+    """A span of trade time read from one format: its hour's own file, and, when it runs to the hour's end, the next
+    (its last second's spill). An hour is one part, or two where a cut falls inside it."""
 
     start: datetime
+    end: datetime
     prefix: str | None
     own: str | None
     spill: str | None
 
 
-def hours(day: date) -> list[Hour]:
-    """The 24 hours of a UTC day, each with the files that hold it."""
+def parts(day: date) -> list[Part]:
+    """A UTC day's spans of trade time, in order, each with the format and files that hold it."""
+    from ._instruments import CUTS
+
     midnight = datetime(day.year, day.month, day.day, tzinfo=UTC)
     out = []
     for h in range(24):
-        start = midnight + h * _HOUR
-        prefix = prefix_at(start)
-        if prefix is None:
-            out.append(Hour(start, None, None, None))
-        else:
-            out.append(Hour(start, prefix, key(prefix, start), key(prefix, start + _HOUR)))
+        hour, end = midnight + h * _HOUR, midnight + (h + 1) * _HOUR
+        edges = [hour, *sorted(cut for cut, _ in CUTS if hour < cut < end), end]
+        for lo, hi in zip(edges, edges[1:], strict=False):
+            prefix = prefix_at(lo)
+            if prefix is None:
+                out.append(Part(lo, hi, None, None, None))
+            else:
+                out.append(Part(lo, hi, prefix, key(prefix, hour), key(prefix, end) if hi == end else None))
     return out
 
 
 def keys(day: date) -> list[str]:
     """Every file a day needs: 25 on an ordinary day, more on a handover day."""
-    return sorted({k for h in hours(day) for k in (h.own, h.spill) if k is not None})
+    return sorted({k for p in parts(day) for k in (p.own, p.spill) if k is not None})
+
+
+@dataclass(frozen=True)
+class Read:
+    """One hour file read: its trades in the coins asked, and the time of every trade in it, every coin's."""
+
+    trades: pl.DataFrame
+    times: pl.Series
 
 
 def read(blob: bytes, name: str, coins: dict[str, str]) -> pl.DataFrame:
-    """One hour file's trades in `coins` (the venue's coin → the store's ticker), one row per trade.
+    """One hour file's trades in `coins` (the venue's coin → the store's ticker), one row per trade."""
+    return scan(blob, name, coins).trades
+
+
+def scan(blob: bytes, name: str, coins: dict[str, str]) -> Read:
+    """One hour file's trades in `coins`, one row per trade, and every coin's trade times (micros, sorted).
 
     `seq` is the file's order, which breaks a tie in time. A file that does
     not decompress is `unreadable`; a line of no known shape, a side or
     override of another word, or a fills trade without exactly one taker is
-    `unparsed`.
+    `unparsed`. The times are every fill's and every row's, vault rows
+    included: they say when the archive was writing, not what traded.
     """
     import lz4.frame
 
     rows: dict[str, list] = {c: [] for c in TRADES}
     fills: dict[tuple[str, int], list[dict]] = {}
+    times: list[int] = []
     try:
         with lz4.frame.open(io.BytesIO(blob), "rb") as lines:
             for n, line in enumerate(lines):
@@ -134,19 +164,34 @@ def read(blob: bytes, name: str, coins: dict[str, str]) -> pl.DataFrame:
                     record = json.loads(line)
                 except ValueError as e:
                     raise HourFailed("unparsed", f"{name} line {n + 1} is not JSON ({e})") from None
-                if isinstance(record, dict) and "events" in record:
-                    for _, fill in record["events"]:
-                        _keep_fill(fill, coins, fills, n)
-                elif isinstance(record, list) and len(record) == 2 and isinstance(record[1], dict):
-                    _keep_fill(record[1], coins, fills, n)
-                elif isinstance(record, dict) and "side_info" in record:
-                    _keep_trade(record, coins, rows, n, name)
-                else:
-                    raise HourFailed("unparsed", f"{name} line {n + 1} is no shape this reader knows")
+                try:
+                    if isinstance(record, dict) and "events" in record:
+                        for _, fill in record["events"]:
+                            times.append(int(fill["time"]) * 1000)
+                            _keep_fill(fill, coins, fills, n)
+                    elif isinstance(record, list) and len(record) == 2 and isinstance(record[1], dict):
+                        times.append(int(record[1]["time"]) * 1000)
+                        _keep_fill(record[1], coins, fills, n)
+                    elif isinstance(record, dict) and "side_info" in record:
+                        times.append(_iso_micros(record["time"], name))
+                        _keep_trade(record, coins, rows, n, name)
+                    else:
+                        raise HourFailed("unparsed", f"{name} line {n + 1} is no shape this reader knows")
+                except (KeyError, TypeError, ValueError, AttributeError) as e:
+                    # A field missing or of another type fails this hour, never the run.
+                    raise HourFailed("unparsed", f"{name} line {n + 1}: {type(e).__name__} {e}") from None
     except HourFailed:
         raise
     except (RuntimeError, EOFError, OSError, ValueError) as e:
         raise HourFailed("unreadable", f"{name} does not decompress ({e})") from None
+    try:
+        _fills_to_rows(fills, coins, rows, name)
+    except (KeyError, TypeError, ValueError, AttributeError) as e:
+        raise HourFailed("unparsed", f"{name}: a fill is missing a field or has one of another type ({type(e).__name__} {e})") from None
+    return Read(pl.DataFrame(rows, schema=TRADES).sort("micros", "seq"), pl.Series("micros", times, dtype=pl.Int64).sort())
+
+
+def _fills_to_rows(fills: dict, coins: dict[str, str], rows: dict, name: str) -> None:
     for (coin, tid), group in fills.items():
         takers = [f for f in group if f["crossed"] is True]
         if len(takers) != 1:
@@ -159,7 +204,6 @@ def read(blob: bytes, name: str, coins: dict[str, str]) -> pl.DataFrame:
         rows["taker_buy"].append(_side(taker["side"], name))
         rows["liquidation"].append(any(f.get("liquidation") for f in group))
         rows["seq"].append(taker["_seq"])
-    return pl.DataFrame(rows, schema=TRADES).sort("micros", "seq")
 
 
 def _keep_fill(fill: dict, coins: dict[str, str], fills: dict, n: int) -> None:
@@ -174,9 +218,13 @@ def _keep_trade(record: dict, coins: dict[str, str], rows: dict, n: int, name: s
     if coin not in coins:
         return
     override = record.get("trade_dir_override")
-    if override not in _OVERRIDES:
-        raise HourFailed("unparsed", f"{name} line {n + 1}: trade_dir_override {override!r} is not one of {', '.join(_OVERRIDES)}")
-    liquidation, counted = _OVERRIDES[override]
+    if isinstance(override, dict) and len(override) == 1 and set(override) <= _LIQUIDATED and set(override.values()) <= {"A", "B"}:
+        liquidation, counted = True, True
+    elif isinstance(override, str) and override in _OVERRIDES:
+        liquidation, counted = _OVERRIDES[override]
+    else:
+        known = ", ".join([*_OVERRIDES, *(f"{{{k!r}: side}}" for k in sorted(_LIQUIDATED))])
+        raise HourFailed("unparsed", f"{name} line {n + 1}: trade_dir_override {override!r} is not one of {known}")
     if not counted:
         return
     rows["ticker"].append(coins[coin])
@@ -204,48 +252,89 @@ def _iso_micros(text: str, name: str) -> int:
     return int(second.timestamp()) * 1_000_000 + int((fraction + "000000")[:6])
 
 
-def assemble(day: date, read_hours: dict[str, pl.DataFrame | HourFailed | None], symbols: dict[str, str]) -> tuple[pl.DataFrame, pl.DataFrame]:
+def assemble(day: date, read_hours: dict[str, "Read | HourFailed | None"], symbols: dict[str, str]) -> tuple[pl.DataFrame, pl.DataFrame]:
     """A day's 1m bars for each ticker in `symbols` (ticker → coin), and its gaps.
 
-    `read_hours` maps each of `keys(day)` to its trades, its failure, or
-    None when the archive does not hold it. An hour whose own file is not
-    read is a gap; an hour whose next file is not read loses its last
-    second, which is a gap too. A bar that overlaps a gap is not written.
+    `read_hours` maps each of `keys(day)` to its `Read`, its failure, or
+    None when the archive does not hold it. A span whose own file is not
+    read is a gap; one whose next file is not read loses its last second,
+    a gap too. Over each run of spans read, a step of `SILENCE_US` or more
+    between trades of any coin is an `archive-silent` gap. A bar that
+    overlaps a gap is not written.
     """
-    gaps: list[tuple[datetime, datetime, str]] = []
-    frames = []
-    for hour in hours(day):
-        end = hour.start + _HOUR
-        own = read_hours.get(hour.own) if hour.own else None
-        if hour.prefix is None or not isinstance(own, pl.DataFrame):
-            gaps.append((hour.start, end, own.cause if isinstance(own, HourFailed) else "archive-missing"))
+    gaps: list[tuple[int, int, str]] = []
+    frames, covered = [], []
+    for part in parts(day):
+        lo, hi = _micros(part.start), _micros(part.end)
+        own = read_hours.get(part.own) if part.own else None
+        if part.prefix is None or not isinstance(own, Read):
+            gaps.append((lo, hi, own.cause if isinstance(own, HourFailed) else "archive-missing"))
             continue
-        lo, hi = _micros(hour.start), _micros(end)
-        if own.filter(pl.col("micros") >= hi).height:
+        hour_end = _micros(part.start.replace(minute=0, second=0, microsecond=0) + _HOUR)
+        if own.trades.filter(pl.col("micros") >= hour_end).height:
             # A file holds what arrived in its hour: a trade stamped after it would be lost by every hour's read.
-            gaps.append((hour.start, end, "unparsed"))
+            gaps.append((lo, hi, "unparsed"))
             continue
-        spill = read_hours.get(hour.spill)
-        if not isinstance(spill, pl.DataFrame):
-            gaps.append((end - _SECOND, end, spill.cause if isinstance(spill, HourFailed) else "archive-missing"))
-        for part, rank in ((own, 0), (spill, 1)):
-            if isinstance(part, pl.DataFrame):
-                frames.append(part.filter((pl.col("micros") >= lo) & (pl.col("micros") < hi)).with_columns(pl.lit(rank).alias("_file")))
+        sources = [(own, 0)]
+        if part.spill is not None:
+            spill = read_hours.get(part.spill)
+            if isinstance(spill, Read):
+                sources.append((spill, 1))
+            else:
+                gaps.append((hi - 1_000_000, hi, spill.cause if isinstance(spill, HourFailed) else "archive-missing"))
+        within = lambda c: (pl.col(c) >= lo) & (pl.col(c) < hi)  # noqa: E731
+        for source, rank in sources:
+            frames.append(source.trades.filter(within("micros")).with_columns(pl.lit(rank).alias("_file")))
+        covered.append((lo, hi, [s.times.filter((s.times >= lo) & (s.times < hi)) for s, _ in sources]))
+    gaps += _silences(covered, gaps)
     trades = pl.concat(frames) if frames else pl.DataFrame(schema={**TRADES, "_file": pl.Int32})
     bars = _bars(trades.sort("micros", "_file", "seq"), symbols)
     for lo, hi, _ in gaps:
         # A bar overlapping a gap would be a minute with trades missing: none is written.
-        bars = bars.filter(~((pl.col("ts") < hi) & (pl.col("close_ts") > lo)))
+        bars = bars.filter(~((pl.col("ts") < _at(hi)) & (pl.col("close_ts") > _at(lo))))
+    gaps.sort()
     gap_frame = pl.DataFrame(
         {"venue": [HYPERLIQUID] * len(gaps), "ticker": [None] * len(gaps), "series": ["candles"] * len(gaps),
          "cause": [c for _, _, c in gaps], "from_ts": [lo for lo, _, _ in gaps], "to_ts": [hi for _, hi, _ in gaps]},
-        schema=GAPS,
-    )  # fmt: skip
+        schema={**GAPS, "from_ts": pl.Int64, "to_ts": pl.Int64},
+    ).with_columns(pl.col("from_ts").cast(UTC_US), pl.col("to_ts").cast(UTC_US))  # fmt: skip
     return bars, gap_frame
 
 
+def _silences(covered: list[tuple[int, int, list[pl.Series]]], gaps: list[tuple[int, int, str]]) -> list[tuple[int, int, str]]:
+    """Each step of `SILENCE_US` or more between trades, over each run of adjacent spans read, as a gap.
+
+    A run's start and end count as trades, so a file that begins or ends in
+    silence is caught; a step that a gap already covers is not stated twice.
+    """
+    out = []
+    runs: list[list] = []
+    for lo, hi, series in covered:
+        if runs and runs[-1][1] == lo:
+            runs[-1][1] = hi
+            runs[-1][2].extend(series)
+        else:
+            runs.append([lo, hi, list(series)])
+    for lo, hi, series in runs:
+        points = pl.concat([pl.Series("micros", [lo, hi], dtype=pl.Int64), *series]).unique().sort()
+        steps = pl.DataFrame({"a": points.head(-1), "b": points.tail(-1)}).filter(pl.col("b") - pl.col("a") >= SILENCE_US)
+        for a, b in steps.iter_rows():
+            if any(g_lo <= a and b <= g_hi for g_lo, g_hi, _ in gaps):
+                continue
+            if out and out[-1][1] == a:
+                # Silences that touch, a lone trade between them, are one outage.
+                out[-1] = (out[-1][0], b, "archive-silent")
+            else:
+                out.append((a, b, "archive-silent"))
+    return out
+
+
+def _at(micros: int) -> datetime:
+    return _EPOCH + timedelta(microseconds=micros)
+
+
 def _micros(t: datetime) -> int:
-    return int(t.timestamp()) * 1_000_000
+    return (t - _EPOCH) // timedelta(microseconds=1)
 
 
 def _bars(trades: pl.DataFrame, symbols: dict[str, str]) -> pl.DataFrame:

@@ -35,8 +35,20 @@ and one sample hour per prefix:
                           25.5 MB the median hour, 359 MB the largest
 
 - Keys are `<prefix>/hourly/YYYYMMDD/H.lz4`, the hour not zero-padded.
-- Each handover hour is held by both formats (05-25 hour 14, 07-27 hour 8),
-  and no hour by neither; `CUTS` reads each from the later format.
+- Each handover hour has a file in both formats (05-25 hour 14, 07-27 hour
+  8), but neither format holds the whole hour: node_trades' last trade is
+  14:23:41.017 and node_fills' first 14:32:53.109; node_fills' last is
+  08:45:48.664 and node_fills_by_block's first 08:50:10.273. `CUTS` reads
+  each later format from its first trade, and the holes between are
+  silences. The first backfill's code read those hours from the later
+  format alone, and lost 14:00..14:23 and 08:00..08:45 of those days.
+- The archiving node goes silent inside files that exist. Across every
+  coin, the longest step between two trades in an ordinary hour is 2.5 s
+  (9 hours sampled, 2025-04 to 2026-09, all three formats); 2025-07-27's
+  hours 8 to 12 hold steps of 48 to 178 s, many an hour. A step of 10 s or
+  more is `archive-silent`. BTC, which trades every minute, was short of
+  1,440 bars on 25 of the backfill's first 120 days, mostly by 2 to 6
+  minutes on Sundays.
 - A file holds the trades the node received in its hour: up to ~30 fills
   stamped in the hour's last second land in the next file (4 in node_fills
   2025-07-01 12, 30 in by_block 2026-09-24 14), none in an earlier one.
@@ -61,6 +73,14 @@ and one sample hour per prefix:
   match the venue's 1d candle in volume and trade count exactly without
   them, and BTC (377,931 ordinary trades and 922 `LiquidatedMarket`) matches
   with its liquidations in.
+- node_trades also writes a liquidation as an object naming its margin
+  mode and side, `{"LiquidatedCross": "B"}` or `{"LiquidatedIsolated": "B"}`
+  (first seen 2025-04-06, one of each on ETH); both are read as
+  liquidations. That day's ETH counts 237,510 trades without them and
+  237,512 with, against the venue's 1d candle's 237,511 (1.1248 ETH more
+  volume than without, matching neither row), so a one-trade residual
+  remains that these rows do not explain; the venue no longer serves the
+  1h candles that would place it.
 - The xyz coins are named in the fills as the venue's `meta` spells them
   (`xyz:CL`, `xyz:SKHX`, ...); spot coins are `@<index>`. Listings are each
   market's first 1d candle on the venue, read 2026-10-25.
@@ -121,20 +141,20 @@ INSTRUMENTS: dict[tuple[str, str], Instrument] = {
     (HYPERLIQUID, "SP500"): Instrument("xyz:SP500", date(2026, 3, 18)),
 }
 
-# Which prefix each hour of trade time is read from: the last prefix whose cut is at or before it.
-# Each cut is the later format's first hour, which the earlier one also holds (MEASURED above).
+# Which prefix each instant of trade time is read from: the last prefix whose cut is at or before it.
+# Each cut is the later format's own first trade (MEASURED above); the earlier format is read up to it.
 CUTS = (
     (datetime(2025, 3, 22, 10, tzinfo=UTC), "node_trades"),
-    (datetime(2025, 5, 25, 14, tzinfo=UTC), "node_fills"),
-    (datetime(2025, 7, 27, 8, tzinfo=UTC), "node_fills_by_block"),
+    (datetime(2025, 5, 25, 14, 32, 53, 109000, tzinfo=UTC), "node_fills"),
+    (datetime(2025, 7, 27, 8, 50, 10, 273000, tzinfo=UTC), "node_fills_by_block"),
 )
 
 
-def prefix_at(hour: datetime) -> str | None:
-    """The prefix an hour of trade time is read from, or None before the archive begins."""
+def prefix_at(instant: datetime) -> str | None:
+    """The prefix an instant of trade time is read from, or None before the archive begins."""
     chosen = None
     for cut, prefix in CUTS:
-        if hour >= cut:
+        if instant >= cut:
             chosen = prefix
     return chosen
 

@@ -11,7 +11,7 @@ trimmed hours under `data/hyperliquid_s3/` are the bucket's real formats
 import hashlib
 import json
 import urllib.parse
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 
 import lz4.frame
@@ -83,6 +83,27 @@ def _key(prefix: str, hour_iso: str) -> str:
 
 BLOCK = "node_fills_by_block"
 K14 = _key(BLOCK, "2026-09-24T14:00:00")
+HEARTBEAT = 5  # seconds between the background coin's trades: a live archive is never silent this long
+
+
+def _alive(key: str, body: bytes = EMPTY, *, quiet=()) -> bytes:
+    """`body` with a background coin (SOL) trading every `HEARTBEAT` seconds through the key's hour, as a real
+    hour file always has some coin trading. `quiet` is a list of (from, to) ISO spans with no heartbeat."""
+    prefix, _, day, hour = key.removesuffix(".lz4").split("/")
+    start = utc(f"{day[:4]}-{day[4:6]}-{day[6:]}T{int(hour):02d}:00:00")
+    spans = [(utc(a), utc(b)) for a, b in quiet]
+    beats = [start + timedelta(seconds=s) for s in range(0, 3600, HEARTBEAT)]
+    beats = [b for b in beats if not any(a <= b < z for a, z in spans)]
+    lines = lz4.frame.decompress(body).decode().splitlines()
+    for n, b in enumerate(beats):
+        at = b.strftime("%Y-%m-%dT%H:%M:%S")
+        if prefix == "node_trades":
+            lines.append(json.dumps(_node_trade("SOL", at + ".000000000", 150), separators=(",", ":")))
+        elif prefix == "node_fills":
+            lines += [json.dumps(f, separators=(",", ":")) for f in _pair("SOL", 10**9 + n, at, 150)]
+        else:
+            lines.append(json.dumps({"local_time": "", "block_time": "", "block_number": n, "events": _pair("SOL", 10**9 + n, at, 150)}, separators=(",", ":")))
+    return _lz4(lines)
 
 
 # ---- the bucket ----------------------------------------------------------------
@@ -127,7 +148,7 @@ class Bucket:
         """Every file a day needs, empty unless given, except `missing`."""
         for k in _hyperliquid.keys(day):
             if k not in missing:
-                self.objects[k] = (bodies or {}).get(k, EMPTY)
+                self.objects[k] = _alive(k, (bodies or {}).get(k, EMPTY))
         return self
 
 
@@ -177,14 +198,16 @@ def _keys(monkeypatch):
     monkeypatch.setenv("AWS_SESSION_TOKEN", TOKEN)
 
 
-def _assemble(day, bodies, missing=(), coins=COINS, symbols=SYMBOLS):
+def _assemble(day, bodies, missing=(), coins=COINS, symbols=SYMBOLS, raw=(), quiet=()):
+    """Each of the day's files read, with the heartbeat unless it is in `raw` (served as given) or `missing`."""
     read = {}
     for k in _hyperliquid.keys(day):
         if k in missing:
             read[k] = None
             continue
+        body = bodies.get(k, EMPTY) if k in raw else _alive(k, bodies.get(k, EMPTY), quiet=quiet)
         try:
-            read[k] = _hyperliquid.read(bodies.get(k, EMPTY), k, coins)
+            read[k] = _hyperliquid.scan(body, k, coins)
         except _hyperliquid.HourFailed as e:
             read[k] = e
     return _hyperliquid.assemble(day, read, symbols)
@@ -214,12 +237,18 @@ def no_xyz_ticker_is_another_venues_symbol():
     assert {ours[t] for t in ("BTC", "ETH", "HYPE")} == {"BTC", "ETH", "HYPE"}
 
 
-def the_handovers_read_each_hour_from_one_format():
+def the_handovers_read_each_instant_from_one_format():
     assert _instruments.prefix_at(utc("2025-03-22T09:00:00")) is None
-    assert _instruments.prefix_at(utc("2025-05-25T13:00:00")) == "node_trades"
-    assert _instruments.prefix_at(utc("2025-05-25T14:00:00")) == "node_fills"
-    assert _instruments.prefix_at(utc("2025-07-27T07:00:00")) == "node_fills"
-    assert _instruments.prefix_at(utc("2025-07-27T08:00:00")) == BLOCK
+    assert _instruments.prefix_at(utc("2025-05-25T14:32:53.108")) == "node_trades"
+    assert _instruments.prefix_at(utc("2025-05-25T14:32:53.109")) == "node_fills"
+    assert _instruments.prefix_at(utc("2025-07-27T08:50:10.272")) == "node_fills"
+    assert _instruments.prefix_at(utc("2025-07-27T08:50:10.273")) == BLOCK
+
+
+def a_handover_day_reads_both_formats_files_for_its_cut_hour():
+    keys = _hyperliquid.keys(date(2025, 7, 27))
+    assert len(keys) == 26
+    assert {"node_fills/hourly/20250727/8.lz4", f"{BLOCK}/hourly/20250727/8.lz4"} <= set(keys)
 
 
 def an_ordinary_day_is_twenty_five_files():
@@ -350,6 +379,22 @@ def a_vault_row_is_not_a_trade_and_a_liquidation_is():
     assert got["micros"].to_list() == [utc("2025-04-01T12:00:00").timestamp() * 1e6, utc("2025-04-01T12:00:01.5").timestamp() * 1e6]
 
 
+def a_cross_or_isolated_liquidation_is_a_liquidation():
+    blob = _trades(
+        _node_trade("ETH", "2025-04-06T16:59:19.220953997", 1718.89, sz="0.0059", override={"LiquidatedCross": "B"}),
+        _node_trade("ETH", "2025-04-06T20:36:29.745043424", 1561.58, sz="58.0597", override={"LiquidatedIsolated": "B"}),
+    )
+    got = _hyperliquid.read(blob, "t", {"ETH": "ETH"})
+    assert got.select("price", "liquidation").rows() == [(1718.89, True), (1561.58, True)]
+
+
+def an_override_of_another_shape_fails_the_hour_rather_than_the_run():
+    for odd in ({"Something": "B"}, {"LiquidatedCross": "X"}, ["Na"], None):
+        with pytest.raises(_hyperliquid.HourFailed) as e:
+            _hyperliquid.read(_trades(_node_trade("BTC", "2025-04-01T12:00:00", 1, override=odd)), "t", {"BTC": "BTC"})
+        assert e.value.cause == "unparsed"
+
+
 def an_override_of_another_word_fails_the_hour():
     with pytest.raises(_hyperliquid.HourFailed, match="trade_dir_override 'Other'") as e:
         _hyperliquid.read(_trades(_node_trade("BTC", "2025-04-01T12:00:00", 1, override="Other")), "t", {"BTC": "BTC"})
@@ -370,6 +415,18 @@ def a_trade_with_two_takers_fails_its_hour():
     with pytest.raises(_hyperliquid.HourFailed, match="BTC trade 7 has 2 taker fills") as e:
         _hyperliquid.read(_fills(_pair("BTC", 7, "2026-09-24T14:00:01", 100, crossed=(True, True))), "f", COINS)
     assert e.value.cause == "unparsed"
+
+
+def a_field_missing_or_mistyped_fails_the_hour_rather_than_the_run():
+    no_tid = _pair("BTC", 1, "2026-09-24T14:00:01", 100)
+    del no_tid[0][1]["tid"]
+    bad_px = _pair("BTC", 2, "2026-09-24T14:00:01", "abc")
+    no_time = _node_trade("BTC", "2025-04-01T12:00:00", 1)
+    del no_time["time"]
+    for blob in (_blocks(no_tid), _fills(bad_px), _trades(no_time), _lz4(['{"events":[["0x1"]]}'])):
+        with pytest.raises(_hyperliquid.HourFailed) as e:
+            _hyperliquid.read(blob, "x", COINS | {"BTC": "BTC"})
+        assert e.value.cause == "unparsed"
 
 
 def a_line_of_no_known_shape_fails_the_hour():
@@ -474,7 +531,7 @@ def an_absent_hour_is_a_gap_for_every_ticker():
 
 def an_unreadable_or_unparsed_hour_is_a_gap_with_its_cause():
     k15 = _key(BLOCK, "2026-09-24T15:00:00")
-    bars, gaps = _assemble(D, {K14: _blocks(_pair("BTC", 1, "2026-09-24T14:05:00", 1))[:-6], k15: _lz4(["not json"])})
+    bars, gaps = _assemble(D, {K14: _blocks(_pair("BTC", 1, "2026-09-24T14:05:00", 1))[:-6], k15: _lz4(["not json"])}, raw=(K14, k15))
     causes = dict(gaps.filter(pl.col("to_ts") - pl.col("from_ts") == pl.duration(hours=1)).select("from_ts", "cause").iter_rows())
     assert causes == {utc("2026-09-24T14:00:00"): "unreadable", utc("2026-09-24T15:00:00"): "unparsed"}
     assert bars.is_empty()
@@ -489,28 +546,72 @@ def the_archives_first_hours_are_gaps():
 # ---- the handovers -------------------------------------------------------------
 
 
-def the_handover_hour_comes_from_the_later_format_only():
+def the_handover_hour_takes_each_format_on_its_side_of_the_cut():
     day = date(2025, 5, 25)
+    nt14, nf14 = _key("node_trades", "2025-05-25T14:00:00"), _key("node_fills", "2025-05-25T14:00:00")
     bodies = {
         _key("node_trades", "2025-05-25T13:00:00"): _trades(_node_trade("BTC", "2025-05-25T13:10:00.000000001", 3)),
-        _key("node_trades", "2025-05-25T14:00:00"): _trades(_node_trade("BTC", "2025-05-25T14:10:00", 1)),
-        _key("node_fills", "2025-05-25T14:00:00"): _fills(_pair("BTC", 9, "2025-05-25T14:10:00", 2)),
+        nt14: _trades(_node_trade("BTC", "2025-05-25T14:10:00", 1), _node_trade("BTC", "2025-05-25T14:40:00", 7)),
+        nf14: _fills(_pair("BTC", 9, "2025-05-25T14:10:00", 2), _pair("BTC", 10, "2025-05-25T14:40:00", 4)),
     }
-    bars, _ = _assemble(day, bodies)
+    bars, gaps = _assemble(day, bodies)
     assert _bar(bars, "BTC", "2025-05-25T13:10:00")["close"] == 3
-    hand = _bar(bars, "BTC", "2025-05-25T14:10:00")
-    assert (hand["close"], hand["trade_count"]) == (2, 1)
+    before, after = _bar(bars, "BTC", "2025-05-25T14:10:00"), _bar(bars, "BTC", "2025-05-25T14:40:00")
+    assert (before["close"], before["trade_count"]) == (1, 1)  # node_trades' side of 14:32:53.109
+    assert (after["close"], after["trade_count"]) == (4, 1)  # node_fills' side
+    assert gaps.is_empty()
 
 
 def the_second_handover_reads_by_block_from_its_cut():
     day = date(2025, 7, 27)
     bodies = {
         _key("node_fills", "2025-07-27T08:00:00"): _fills(_pair("BTC", 1, "2025-07-27T08:10:00", 1)),
-        _key(BLOCK, "2025-07-27T08:00:00"): _blocks(_pair("BTC", 1, "2025-07-27T08:10:00", 2)),
+        _key(BLOCK, "2025-07-27T08:00:00"): _blocks(_pair("BTC", 1, "2025-07-27T08:10:00", 2), _pair("BTC", 2, "2025-07-27T08:55:00", 5)),
     }
     bars, _ = _assemble(day, bodies)
-    hand = _bar(bars, "BTC", "2025-07-27T08:10:00")
-    assert (hand["close"], hand["trade_count"]) == (2, 1)
+    assert _bar(bars, "BTC", "2025-07-27T08:10:00")["close"] == 1  # node_fills' side of 08:50:10.273
+    assert _bar(bars, "BTC", "2025-07-27T08:55:00")["close"] == 5
+
+
+def the_hole_between_two_formats_is_a_silence():
+    day = date(2025, 7, 27)
+    quiet = [("2025-07-27T08:45:48.664", "2025-07-27T08:50:10.273")]
+    bodies = {_key("node_fills", "2025-07-27T08:00:00"): EMPTY, _key(BLOCK, "2025-07-27T08:00:00"): EMPTY}
+    _, gaps = _assemble(day, bodies, quiet=quiet)
+    silent = gaps.filter(pl.col("cause") == "archive-silent").select("from_ts", "to_ts").rows()
+    assert silent == [(utc("2025-07-27T08:45:45"), utc("2025-07-27T08:50:15"))]  # the heartbeats either side of it
+
+
+# ---- silences ------------------------------------------------------------------
+
+
+def a_two_minute_stop_is_a_silence_and_its_minutes_have_no_bar():
+    trades = [_pair("BTC", n, f"2026-09-24T14:0{n}:30", 100 + n) for n in range(10)]
+    bars, gaps = _assemble(D, {K14: _blocks(*[t for n, t in enumerate(trades) if n not in (4, 5, 6)])}, quiet=[("2026-09-24T14:04:03", "2026-09-24T14:07:01")])
+    silent = gaps.filter(pl.col("cause") == "archive-silent").select("from_ts", "to_ts").rows()
+    assert silent == [(utc("2026-09-24T14:04:00"), utc("2026-09-24T14:07:05"))]
+    held = bars.filter(pl.col("ticker") == "BTC")["ts"].dt.minute().to_list()
+    assert held == [0, 1, 2, 3, 8, 9]  # 14:04 to 14:07 overlap the silence
+
+
+def a_quiet_ticker_is_not_a_silence():
+    bars, gaps = _assemble(D, {K14: _blocks(_pair("BTC", 1, "2026-09-24T14:00:30", 100), _pair("BTC", 2, "2026-09-24T14:12:30", 100))})
+    assert gaps.is_empty()
+    assert bars.filter(pl.col("ticker") == "BTC").height == 2
+
+
+def a_silence_inside_a_missing_hour_is_not_stated_twice():
+    k7 = _key(BLOCK, "2026-09-24T07:00:00")
+    _, gaps = _assemble(D, {}, missing=(k7,))
+    assert gaps.filter(pl.col("from_ts").dt.hour() == 7)["cause"].to_list() == ["archive-missing"]
+    assert gaps.filter(pl.col("cause") == "archive-silent").is_empty()
+
+
+def a_file_with_no_trade_at_all_is_one_silence():
+    k9 = _key(BLOCK, "2026-09-24T09:00:00")
+    _, gaps = _assemble(D, {}, raw=(k9,))
+    silent = gaps.filter(pl.col("cause") == "archive-silent").select("from_ts", "to_ts").rows()
+    assert silent == [(utc("2026-09-24T08:59:55"), utc("2026-09-24T10:00:00"))]
 
 
 # ---- fetching ------------------------------------------------------------------
@@ -593,10 +694,26 @@ def a_day_with_a_gap_is_partial_and_asked_again_only_when_told(store, bucket):
     asked = len(bucket.asked)
     _fetch("BTC")
     assert len(bucket.asked) == asked
-    bucket.objects[k7] = EMPTY
+    bucket.objects[k7] = _alive(k7)
     _fetch("BTC", extra=("--refetch-absent",))
     assert _manifest.read(store)["status"].to_list() == ["ok"]
     assert gr.reference.gaps(["BTC"], "2026-09-24T00:00Z", "2026-09-25T00:00Z", venues=[VENUE]).is_empty()
+
+
+def a_failed_day_is_named_and_the_others_still_land(store, bucket, monkeypatch):
+    for d in (D, date(2026, 9, 25)):
+        _trading_day(bucket, d)
+    real = _hyperliquid.assemble
+
+    def broken(day, *a):
+        if day == D:
+            raise RuntimeError("boom")
+        return real(day, *a)
+
+    monkeypatch.setattr(_hyperliquid, "assemble", broken)
+    code, said = _run("candles", VENUE, "BTC", "--from", "2026-09-24", "--to", "2026-09-25", "--sample", "every:1")
+    assert code == 1 and said[0] == "2026-09-24 candles hyperliquid-s3 FAILED: RuntimeError: boom"
+    assert _manifest.read(store).select("date", "status").rows() == [(date(2026, 9, 25), "ok")]
 
 
 def a_day_the_archive_lacks_is_absent(store, bucket):
