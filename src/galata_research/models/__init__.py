@@ -19,6 +19,6 @@ try:
 except ImportError as missing:
     raise Refused(f"gr.models needs the models extra ({missing.name} is missing): uv sync --extra models") from None
 
-from . import corr, discovery, evaluate, intraday, levels, memory, portfolio, vol
+from . import corr, direction, discovery, evaluate, intraday, levels, memory, portfolio, vol
 
-__all__ = ["corr", "discovery", "evaluate", "intraday", "levels", "memory", "portfolio", "vol"]
+__all__ = ["corr", "direction", "discovery", "evaluate", "intraday", "levels", "memory", "portfolio", "vol"]
