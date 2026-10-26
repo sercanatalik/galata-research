@@ -163,3 +163,105 @@ Reported beside (a). It cannot change a verdict on (a).
 - the share of rows lost to holes, per year.
 
 ---
+
+## Result — run once, 2026-10-26, `notebooks/forecasting/direction.py`
+
+*Appended after the run. Nothing above this line was changed.* Code at
+`a0960a7`. The run took 35 minutes (08:44–09:20 UTC), on a reference store
+fetched the same day: 4,930 1m kline days for BTC and ETH, all `ok`, and 81
+funding months each. The E table was recomputed after one fix, `e944497`,
+described under E.
+
+**The data.** Binance's archive missed no minute: 3,549,600 of 3,549,600 per
+ticker. The registered refusal of untraded bars dropped **273 BTC and 302
+ETH minutes**. They have zero volume and zero trades at a frozen price, and
+are exchange halts (40 episodes on ETH, for example 74 minutes on
+2024-10-28). Each one breaks a 5m bar, and with no window spanning a hole,
+it nulls the 4-week z for the four weeks after it. Out-of-sample rows lost:
+**15% in 2023, 8% in 2024, 19% in 2025 and 0% in 2026**, the same on both
+tickers. That share was found before the run, and the operator chose to run
+as registered. The rows lost are chosen on information known at the time
+(a halt in the last four weeks), so nothing leaks, but the verdicts below
+are about the rows after no recent halt.
+
+### S, statistical: **supported at 5m, 30m and 5h; not at 1d**
+
+| horizon | cells met (of 6) | DM t, range | Holm p, worst cell met | B's hit rate | Brier skill of B against climatology |
+|---|---|---|---|---|---|
+| 5m | 6 | −9.3 to −16.5 | < 1e-15 | 52.0–52.4% | 0.20–0.38% |
+| 30m | 6 | −7.4 to −10.9 | < 1e-10 | 52.3–53.2% | 0.35–0.55% |
+| 5h | 5 | −2.7 to −3.8 | 0.012 (`ternary BTC` 0.050, not met) | 52.2–53.3% | 0.28–0.53% |
+| 1d | 0 | −0.01 to −0.98 | 1.0 | 51.3–52.2% | −0.01 to 0.19% |
+
+At 1d, B's mean log loss is below A's in every cell, but no cell is close to
+significant, and on BTC the second half's sign flips. At 5h every encoding
+met criteria 1–3 on both tickers except `ternary` on BTC (Holm p 0.0504).
+Against the expectation (mixed at 5h), 5h is supported as registered.
+
+**Read with these, all described rather than tested:**
+- **Pesaran–Timmermann decided nothing.** On every 5m origin the targets
+  overlap h-fold, and the test assumes independent rows: it gave p < 1e-30
+  in every cell, including 1d at a 51.3% hit rate. Criteria 1 and 3 carried
+  the verdict.
+- **On non-overlapping origins only, 5h does not hold.** 5m and 30m are
+  still met in every cell. At 5h, Holm p is 0.09–1.0 (raw DM p
+  0.007–0.33), on 5,821 origins per cell. **The 5h verdict rests on the
+  overlapping comparison's HAC correction**, and it is the claim most in
+  need of the forward data.
+- **The information is mostly reversal, not continuation.** At each cell's
+  last refit (score encoding), the short lookbacks' coefficients are
+  negative on both tickers at 5m, 30m and 5h (15m and 1h around −0.07 at 5m
+  and 30m; 4h and 1d around −0.08 at 5h). The 4-week coefficient is
+  positive at 5h and 1d (+0.04 to +0.07). The ladder is collinear, so no
+  single coefficient is read alone. But the signs agree across tickers and
+  horizons: what B adds over A at 5m to 5h is that **recent moves tend to
+  reverse**.
+- **Calibration.** B's forecasts sit in 0.4–0.6 almost everywhere. At 5m
+  to 5h each well-populated bin's share up is within about 1.5 points of
+  its mean forecast. At 1d B is overconfident: its 0.4–0.5 bin forecast
+  47.3–47.5% and realised 49.7–49.9% up.
+
+### E, economic, at 5h and 1d: **not supported**
+
+| criterion | value | met |
+|---|---|---|
+| best cell by net Sharpe | `1d score BTC`, annualised 0.06 | |
+| DSR at N = 24 | 0.011 | no |
+| PBO, 16 blocks, the 12 cells | 0.12 | yes |
+| Sharpe above hold (0.87) and inverse vol (0.71), same days | 0.06 | no |
+
+Every 5h cell lost: annualised net Sharpe −1.28 to −1.74. Only one of the
+six 1d cells was positive. The PBO is low because the cells' ranking
+persists from one half of a split to the other (the 1d cells above the 5h
+cells, which flip more often). That says nothing about whether any of them
+pays.
+
+**The fix behind this table.** The first computation scored buy-and-hold
+and inverse vol over all 1,369 out-of-sample days, while the rule, which has
+no call on the days lost to halts, covered 1,208 (1d) and 1,218 (5h). The
+registration says "over the same days". `e944497` makes the benchmarks hold
+only where the rule has a call, and adds the test that would have caught it.
+Hold BTC moved from 1.00 to 0.87, inverse vol BTC from 0.84 to 0.71, ETH
+hold from 0.54 to 0.59. The rule's figures, the DSR and the PBO are
+unchanged, and so is the verdict.
+
+### (b), secondary: the same three horizons
+
+On the three-class target (flat inside ±9.5 bps), B beats A on multinomial
+log loss with Holm p < 0.05 and the same sign on both tickers and halves in
+every cell at 5m, 30m and 5h, and in none at 1d. It changes no verdict on
+(a).
+
+### What survives
+
+- **Short- and long-term momentum on 1m data carries information about the
+  next 5 minutes to 5 hours' direction beyond volatility and the clock.**
+  It is statistically clear at 5m and 30m on every encoding and both
+  tickers, and supported but fragile at 5h.
+- **Most of that information is reversal of recent moves.**
+- **It is far too small to trade as a taker.** Brier skill is 0.2–0.55% and
+  hit rates are 52–53%, against the 55% (5h) to 89% (5m) needed. At 5h and
+  1d the sign rule loses after 9.5 bps a flip, as the expectation said.
+- Use it, if anywhere, as a conditioning input (execution timing, a regime
+  label), as `trade-the-flow.md` concluded for the order flow. That is a
+  claim for a new registration, on data after 2026-09-30.
