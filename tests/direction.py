@@ -439,3 +439,12 @@ def a_warm_start_reaches_the_same_optimum():
     m_cold = direction.fit_multinomial(x, cls)
     m_warm = direction.fit_multinomial(x, cls, start=m_cold["beta"] - 0.2)
     assert np.allclose(m_cold["beta"], m_warm["beta"], atol=1e-9)
+
+
+def every_trial_is_scored_over_the_same_bars():
+    frame, forecasts, first = _daily_case()
+    gappy = forecasts.filter(pl.int_range(pl.len()) % 7 != 3)
+    out = direction.economic(frame, gappy, split=first.isoformat())
+    days = {name: set(out.filter(pl.col("trial") == name).drop_nulls("net")["ts"].to_list()) for name in ("sign rule", "hold", "inverse vol")}
+    assert days["sign rule"] == days["hold"] == days["inverse vol"]
+    assert len(days["hold"]) < out.filter(pl.col("trial") == "hold").height

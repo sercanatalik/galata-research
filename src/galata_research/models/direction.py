@@ -613,7 +613,8 @@ def economic(
     `frame` is one ticker's decision rows (`close`, `sigma`), `forecasts` its
     sign forecasts for one horizon. The rule holds +1 when the model's P(up)
     exceeds 0.5 and −1 otherwise, decided at every h-th forecast origin and held
-    for h; every trial pays `fee` per unit of position change (4.75 bps, so a
+    for h; the benchmarks hold only on the bars the rule has a call for, so all three
+    are scored over the same bars. Every trial pays `fee` per unit of position change (4.75 bps, so a
     flip pays the 9.5 bps round trip) and, with `funding` from
     `gr.reference.funding_hours`, the settlements it holds through.
     Trials: `sign rule`, `hold`, `inverse vol`.
@@ -631,10 +632,12 @@ def economic(
         pl.when(pl.col("p_up") > 0.5).then(1.0).otherwise(-1.0).alias("_call"),
     )
     bars = oos.join(calls, on="close_ts", how="left").rename({"position": "_inv"})
+    # The benchmarks hold only where the rule has a call, so every trial is scored over the same bars.
+    called = pl.col("_call").is_not_null()
     trials = [
         _trial(bars, pl.col("_call"), "sign rule", fee, funding),
-        _trial(bars, pl.lit(1.0), "hold", fee, funding),
-        _trial(bars, pl.col("_inv"), "inverse vol", fee, funding),
+        _trial(bars, pl.when(called).then(1.0), "hold", fee, funding),
+        _trial(bars, pl.when(called).then(pl.col("_inv")), "inverse vol", fee, funding),
     ]
     return pl.concat(trials).with_columns(pl.lit(f["horizon"][0]).alias("horizon"))
 
