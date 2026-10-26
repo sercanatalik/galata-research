@@ -262,6 +262,17 @@ the loop's second item:
   - **Notebook:** `notebooks/volatility/har_long.py`, item-34 section; results appended to `planning/preregistered/har-jumps.md`.
   - **Branch:** `separate-the-jumps` merged to `main`, archived and pushed.
 
+- [x] 35. **`forecast-the-direction`** — **DONE 2026-10-26.** Registered alone (`d14857e`), code `a0960a7`, run once.
+  - **The question:** does a ladder of short (15m, 1h, 4h) and long (1d, 3d, 1w, 4w) vol-scaled momentum z's on 1m data,
+    encoded binary, ternary or as a score, tell the sign of the next 5m, 30m, 5h or 1d return beyond σ and the clock?
+    `gr.momentum`, `gr.models.direction` (IRLS logit, purged and embargoed weekly walk-forward, DM, Pesaran–Timmermann,
+    reliability, the economic sign rule).
+  - **S:** supported at 5m, 30m and 5h, not at 1d. At 5h not on non-overlapping origins (Holm p 0.09–1.0). PT
+    uninformative on overlapping targets. Most of the information is short-term **reversal**.
+  - **E:** not supported (5h Sharpe −1.3 to −1.7; best 1d DSR 0.011). `e944497` scored the benchmarks on the rule's days.
+  - **Data:** 273/302 untraded (halted) Binance minutes null the 4-week z for four weeks each: 8–19% of OOS rows a year.
+  - **Notebook:** `notebooks/forecasting/direction.py`; result appended to `planning/preregistered/forecast-the-direction.md`.
+
 ---
 
 ## What the record holds

@@ -63,6 +63,12 @@ check them all as CI does with `uv run marimo check notebooks/*/*.py`.
 | `universe.py` | ranking every Binance perpetual: momentum, low volatility, size, pre-registered |
 | `portfolio.py` | weighting a book of perpetuals: three weightings × three covariance estimators against 1/N, pre-registered |
 
+## `forecasting/` — probabilistic forecasts of direction, scored out of sample
+
+| Notebook | Asks |
+|---|---|
+| `direction.py` | does short- and long-term momentum tell the next 5m, 30m, 5h or 1d move's sign beyond volatility and the clock? Pre-registered |
+
 ## `liquidity/` — the liquidity study, its claims and its forward tests
 
 | Notebook | Asks |
